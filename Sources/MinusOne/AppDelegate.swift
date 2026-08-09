@@ -10,6 +10,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var wasReductionEnabledBeforeSleep = false
     private var deviceRebuildWorkItem: DispatchWorkItem?
 
+    private let practiceLibraryStore = ClipLibraryStore()
+    private lazy var practiceSeparationEngine = OfflineSeparationEngine(libraryStore: practiceLibraryStore)
+    private lazy var practiceImportService = ClipImportService(libraryStore: practiceLibraryStore, separationEngine: practiceSeparationEngine)
+    private lazy var practicePlaybackEngine = PracticePlaybackEngine()
+    private var practiceWindowController: PracticeWindowController?
+
     func applicationDidFinishLaunching(_ notification: Notification) {
         if #available(macOS 14.2, *) {
             ProcessTapSession.destroyStaleAggregates()
@@ -22,6 +28,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         )
         audioEngine.onStatusChanged = { [weak self] status in
             self?.menuBarController?.updateStatus(status)
+        }
+        menuBarController?.onOpenPracticeMode = { [weak self] in
+            self?.openPracticeWindow()
         }
 
         deviceMonitor = DeviceMonitor(
@@ -72,6 +81,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
 
         restoreSessionIfNeeded()
+    }
+
+    private func openPracticeWindow() {
+        if practiceWindowController == nil {
+            let controller = PracticeWindowController(
+                libraryStore: practiceLibraryStore,
+                importService: practiceImportService,
+                playbackEngine: practicePlaybackEngine
+            )
+            controller.onWindowClosed = { [weak self] in
+                NSApp.setActivationPolicy(.accessory)
+                self?.practiceWindowController = nil
+            }
+            practiceWindowController = controller
+        }
+        NSApp.setActivationPolicy(.regular)
+        practiceWindowController?.show()
     }
 
     private func restoreSessionIfNeeded() {

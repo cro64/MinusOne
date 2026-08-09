@@ -5,6 +5,28 @@ struct SeparationResult {
     let instrumentalRight: [Float]
 }
 
+/// Individual Demucs source stems (dexxdean CoreML tensor order: vocals, drums, bass, other).
+enum SeparationStem: String, CaseIterable {
+    case vocals
+    case drums
+    case bass
+    case other
+
+    var displayName: String {
+        switch self {
+        case .vocals: return "Vocals"
+        case .drums: return "Drums"
+        case .bass: return "Bass"
+        case .other: return "Other"
+        }
+    }
+}
+
+struct StemChannels {
+    let left: [Float]
+    let right: [Float]
+}
+
 protocol AudioSeparationModel: AnyObject {
     var variant: SeparationModelVariant { get }
     var name: String { get }
@@ -17,6 +39,14 @@ protocol AudioSeparationModel: AnyObject {
         frameCount: Int,
         sampleRate: Double
     ) throws -> SeparationResult
+
+    /// Full per-stem separation (no summing) for offline/full-quality use — Practice Mode.
+    func separateAllStems(
+        left: UnsafePointer<Float>,
+        right: UnsafePointer<Float>,
+        frameCount: Int,
+        sampleRate: Double
+    ) throws -> [SeparationStem: StemChannels]
 }
 
 enum SeparationModelError: Error, LocalizedError {

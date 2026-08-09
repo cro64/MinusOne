@@ -20,6 +20,7 @@ final class SettingsPopoverViewController: NSViewController {
 
     var onSettingsChanged: (() -> Void)?
     var onQuit: (() -> Void)?
+    var onOpenPracticeMode: (() -> Void)?
     var onPreferredSizeChange: ((NSSize) -> Void)?
 
     init(preferences: Preferences, audioEngine: AudioEngine) {
@@ -201,6 +202,14 @@ final class SettingsPopoverViewController: NSViewController {
 
     private func footer() -> NSView {
         let separator = PopoverUI.separator()
+
+        let practiceButton = NSButton(title: "Open Practice Mode…", target: self, action: #selector(openPracticeMode))
+        practiceButton.isBordered = false
+        practiceButton.bezelStyle = .inline
+        practiceButton.alignment = .center
+        practiceButton.font = .systemFont(ofSize: NSFont.systemFontSize)
+        practiceButton.translatesAutoresizingMaskIntoConstraints = false
+
         let quitButton = NSButton(title: "Quit", target: self, action: #selector(quit))
         quitButton.isBordered = false
         quitButton.bezelStyle = .inline
@@ -208,15 +217,21 @@ final class SettingsPopoverViewController: NSViewController {
         quitButton.font = .systemFont(ofSize: NSFont.systemFontSize)
         quitButton.translatesAutoresizingMaskIntoConstraints = false
 
-        let footer = PopoverUI.verticalStack([separator, quitButton], spacing: 8)
+        let footer = PopoverUI.verticalStack([separator, practiceButton, quitButton], spacing: 8)
         footer.alignment = .leading
 
         NSLayoutConstraint.activate([
             separator.widthAnchor.constraint(equalTo: footer.widthAnchor),
+            practiceButton.widthAnchor.constraint(equalTo: footer.widthAnchor),
+            practiceButton.heightAnchor.constraint(equalToConstant: PopoverUI.Metrics.rowHeight),
             quitButton.widthAnchor.constraint(equalTo: footer.widthAnchor),
             quitButton.heightAnchor.constraint(equalToConstant: PopoverUI.Metrics.rowHeight)
         ])
         return footer
+    }
+
+    @objc private func openPracticeMode() {
+        onOpenPracticeMode?()
     }
 
     private func refreshStatusHeader(isFilterActive: Bool? = nil) {

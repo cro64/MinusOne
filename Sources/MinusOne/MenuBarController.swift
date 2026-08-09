@@ -14,6 +14,8 @@ final class MenuBarController: NSObject {
     private var localDismissMonitor: Any?
     private var appearanceObserver: NSObjectProtocol?
 
+    var onOpenPracticeMode: (() -> Void)?
+
     init(preferences: Preferences, audioEngine: AudioEngine) {
         self.preferences = preferences
         self.audioEngine = audioEngine
@@ -105,6 +107,10 @@ final class MenuBarController: NSObject {
         settingsViewController.onQuit = { [weak self] in
             self?.closeSettings()
             NSApp.terminate(nil)
+        }
+        settingsViewController.onOpenPracticeMode = { [weak self] in
+            self?.closeSettings()
+            self?.onOpenPracticeMode?()
         }
         settingsViewController.onPreferredSizeChange = { [weak self] size in
             guard let self else { return }

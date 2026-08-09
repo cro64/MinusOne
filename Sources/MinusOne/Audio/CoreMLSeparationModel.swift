@@ -95,30 +95,7 @@ final class CoreMLSeparationModel: AudioSeparationModel {
         sampleRate: Double
     ) throws -> SeparationResult {
         let captureCount = frameCount
-        guard captureCount > 0 else {
-            throw SeparationModelError.inferenceFailed("Empty capture window")
-        }
-
-        if abs(sampleRate - modelSampleRate) < 1 {
-            fillModelInput(left: left, right: right, count: captureCount)
-        } else {
-            resampleIntoScratch(
-                left: left,
-                right: right,
-                sourceCount: captureCount,
-                targetCount: windowSampleCount
-            )
-            fillModelInput(
-                left: modelLeftScratch,
-                right: modelRightScratch,
-                count: windowSampleCount
-            )
-        }
-
-        let output = try model.prediction(from: MLDictionaryFeatureProvider(dictionary: ["audio": inputArray]))
-        guard let sources = output.featureValue(for: "sources")?.multiArrayValue else {
-            throw SeparationModelError.inferenceFailed("Missing sources output")
-        }
+        let sources = try runModel(left: left, right: right, frameCount: captureCount, sampleRate: sampleRate)
 
         sumInstrumentalStems(from: sources)
 
@@ -141,6 +118,118 @@ final class CoreMLSeparationModel: AudioSeparationModel {
                 targetCount: captureCount
             )
         )
+    }
+
+    /// Full per-stem separation (no summing) — used by Practice Mode's offline path.
+    func separateAllStems(
+        left: UnsafePointer<Float>,
+        right: UnsafePointer<Float>,
+        frameCount: Int,
+        sampleRate: Double
+    ) throws -> [SeparationStem: StemChannels] {
+        let captureCount = frameCount
+        let sources = try runModel(left: left, right: right, frameCount: captureCount, sampleRate: sampleRate)
+
+        let needsResample = abs(sampleRate - modelSampleRate) >= 1 || captureCount != windowSampleCount
+        var result: [SeparationStem: StemChannels] = [:]
+
+        // dexxdean CoreML tensor order: vocals(0), drums(1), bass(2), other(3).
+        for (stemIndex, stem) in [(0, SeparationStem.vocals), (1, .drums), (2, .bass), (3, .other)] {
+            let (rawLeft, rawRight) = extractStem(stemIndex: stemIndex, from: sources)
+            if needsResample {
+                result[stem] = StemChannels(
+                    left: resampleFromScratch(rawLeft, sourceCount: windowSampleCount, targetCount: captureCount, freeInput: true),
+                    right: resampleFromScratch(rawRight, sourceCount: windowSampleCount, targetCount: captureCount, freeInput: true)
+                )
+            } else {
+                result[stem] = StemChannels(
+                    left: Array(UnsafeBufferPointer(start: rawLeft, count: windowSampleCount)),
+                    right: Array(UnsafeBufferPointer(start: rawRight, count: windowSampleCount))
+                )
+                rawLeft.deallocate()
+                rawRight.deallocate()
+            }
+        }
+
+        return result
+    }
+
+    private func runModel(
+        left: UnsafePointer<Float>,
+        right: UnsafePointer<Float>,
+        frameCount: Int,
+        sampleRate: Double
+    ) throws -> MLMultiArray {
+        guard frameCount > 0 else {
+            throw SeparationModelError.inferenceFailed("Empty capture window")
+        }
+
+        if abs(sampleRate - modelSampleRate) < 1 {
+            fillModelInput(left: left, right: right, count: frameCount)
+        } else {
+            resampleIntoScratch(
+                left: left,
+                right: right,
+                sourceCount: frameCount,
+                targetCount: windowSampleCount
+            )
+            fillModelInput(
+                left: modelLeftScratch,
+                right: modelRightScratch,
+                count: windowSampleCount
+            )
+        }
+
+        let output = try model.prediction(from: MLDictionaryFeatureProvider(dictionary: ["audio": inputArray]))
+        guard let sources = output.featureValue(for: "sources")?.multiArrayValue else {
+            throw SeparationModelError.inferenceFailed("Missing sources output")
+        }
+        return sources
+    }
+
+    /// Extracts one stem's left/right channels into freshly allocated buffers of `windowSampleCount`.
+    /// Caller owns and must deallocate the returned pointers.
+    private func extractStem(
+        stemIndex: Int,
+        from sources: MLMultiArray
+    ) -> (left: UnsafeMutablePointer<Float>, right: UnsafeMutablePointer<Float>) {
+        let leftOut = UnsafeMutablePointer<Float>.allocate(capacity: windowSampleCount)
+        let rightOut = UnsafeMutablePointer<Float>.allocate(capacity: windowSampleCount)
+        leftOut.initialize(repeating: 0, count: windowSampleCount)
+        rightOut.initialize(repeating: 0, count: windowSampleCount)
+
+        if sources.dataType == .float32, let layout = StemTensorLayout(sources: sources), stemIndex < layout.stemCount {
+            let sampleCount = min(windowSampleCount, layout.sampleCount)
+            let base = sources.dataPointer.assumingMemoryBound(to: Float.self)
+            let stemOffset = stemIndex * layout.stemStride
+            let leftStem = base.advanced(by: stemOffset)
+            let rightStem = leftStem.advanced(by: layout.channelStride)
+            leftOut.update(from: leftStem, count: sampleCount)
+            rightOut.update(from: rightStem, count: sampleCount)
+            return (leftOut, rightOut)
+        }
+
+        let shape = sources.shape.map(\.intValue)
+        let strides = sources.strides.map(\.intValue)
+        let sampleCount = resolvedSampleCount(shape: shape)
+        guard shape.count == 4, stemIndex < shape[1] else { return (leftOut, rightOut) }
+
+        if sources.dataType == .float16, strides.count == 4 {
+            let base = sources.dataPointer.assumingMemoryBound(to: Float16.self)
+            for sample in 0..<sampleCount {
+                let leftIndex = tensorOffset(strides: strides, stem: stemIndex, channel: 0, sample: sample)
+                let rightIndex = tensorOffset(strides: strides, stem: stemIndex, channel: 1, sample: sample)
+                leftOut[sample] = Float(base[leftIndex])
+                rightOut[sample] = Float(base[rightIndex])
+            }
+        } else {
+            for sample in 0..<sampleCount {
+                leftOut[sample] = sources[[0, NSNumber(value: stemIndex), 0, NSNumber(value: sample)]].floatValue
+                rightOut[sample] = sources[[0, NSNumber(value: stemIndex), 1, NSNumber(value: sample)]].floatValue
+            }
+        }
+
+        return (leftOut, rightOut)
     }
 
     private func fillModelInput(left: UnsafePointer<Float>, right: UnsafePointer<Float>, count: Int) {
@@ -182,10 +271,12 @@ final class CoreMLSeparationModel: AudioSeparationModel {
     }
 
     private func resampleFromScratch(
-        _ input: UnsafePointer<Float>,
+        _ input: UnsafeMutablePointer<Float>,
         sourceCount: Int,
-        targetCount: Int
+        targetCount: Int,
+        freeInput: Bool = false
     ) -> [Float] {
+        defer { if freeInput { input.deallocate() } }
         var output = [Float](repeating: 0, count: targetCount)
         guard sourceCount > 0, targetCount > 0 else { return output }
         let ratio = Double(sourceCount) / Double(targetCount)
