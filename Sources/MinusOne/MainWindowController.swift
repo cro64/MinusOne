@@ -1,8 +1,8 @@
 import AppKit
 
 /// Owns the desktop window: a Live / Practice segmented switch in the title bar, and the two
-/// tabs' content. Live embeds the existing `SettingsPopoverViewController`; Practice embeds the
-/// existing sidebar + deck split view — both reused as-is per REDESIGN.md §1, not rebuilt.
+/// tabs' content. Live embeds `LiveTabViewController`, a full-width window-filling view (REDESIGN.md
+/// §3); Practice embeds the existing sidebar + deck split view, reused as-is per REDESIGN.md §1.
 ///
 /// Activation policy (REDESIGN.md §1): opening the window promotes the app to `.regular` with a
 /// Dock icon; closing (red traffic light / ⌘W) demotes back to `.accessory` without quitting —
@@ -16,7 +16,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
     private let preferences: Preferences
     private let audioEngine: AudioEngine
 
-    private let liveViewController: SettingsPopoverViewController
+    private let liveViewController: LiveTabViewController
     private let practiceSplitViewController: PracticeSplitViewController
     private let sidebar: ClipSidebarViewController
     private let deck: PracticeDeckViewController
@@ -47,7 +47,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
         self.preferences = preferences
         self.audioEngine = audioEngine
         self.importService = importService
-        liveViewController = SettingsPopoverViewController(preferences: preferences, audioEngine: audioEngine)
+        liveViewController = LiveTabViewController(preferences: preferences, audioEngine: audioEngine)
         sidebar = ClipSidebarViewController(libraryStore: libraryStore)
         deck = PracticeDeckViewController(libraryStore: libraryStore, playbackEngine: playbackEngine)
         practiceSplitViewController = PracticeSplitViewController(sidebar: sidebar, detail: deck)
@@ -203,7 +203,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
         switch tab {
         case .live:
             liveViewController.reloadFromPreferences()
-            content = liveEmbeddingContainer
+            content = liveViewController.view
         case .practice:
             content = practiceSplitViewController.view
         }
@@ -218,22 +218,6 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
     }
 
     // MARK: - Live tab
-
-    // `SettingsPopoverViewController` builds a fixed-size, shadowed popover panel — not a
-    // window-filling view. Wrapping it unmodified in a flexible container is the minimum
-    // structural change for this pass; a proper full-width Live tab layout is REDESIGN.md §3,
-    // deferred.
-    private lazy var liveEmbeddingContainer: NSView = {
-        let container = NSView()
-        let inner = liveViewController.view
-        inner.translatesAutoresizingMaskIntoConstraints = false
-        container.addSubview(inner)
-        NSLayoutConstraint.activate([
-            inner.centerXAnchor.constraint(equalTo: container.centerXAnchor),
-            inner.topAnchor.constraint(equalTo: container.topAnchor, constant: 24)
-        ])
-        return container
-    }()
 
     private func configureLiveTab() {
         _ = liveViewController.view

@@ -1,18 +1,27 @@
 import AppKit
 
-final class SettingsPopoverViewController: NSViewController {
+/// Full-width Live tab content (REDESIGN.md §3) hosted directly in the desktop window's content
+/// container. This used to be `SettingsPopoverViewController`, a fixed-size floating-popover-style
+/// view (`NSVisualEffectView` with `.behindWindow` blending) that `MainWindowController` wrapped
+/// unmodified — correct for the menu bar's own popover, wrong here, and the reason the Live tab
+/// rendered as a tiny, incorrectly-blended box instead of filling the window. The menu bar now has
+/// its own minimal `MenuBarPopoverViewController`, so this class is free to be a real
+/// window-filling, opaque-background view at `PopoverUI.Metrics.Regular` scale, pinned to all four
+/// edges of its container. The model-gating and capture-scope logic below is unchanged from the
+/// popover version — it's the one place that logic lives now, not a fork of it.
+final class LiveTabViewController: NSViewController {
     private let preferences: Preferences
     private let audioEngine: AudioEngine
 
     private let statusHeaderContainer = NSView()
     private let statusHeader = StatusHeaderView()
+    private let liveToggle = NSSwitch()
     private let intensitySlider = DragValueSlider(value: 100, minValue: 0, maxValue: 100, target: nil, action: nil)
     private let makeupSlider = DragValueSlider(value: 4.5, minValue: 0, maxValue: 12, target: nil, action: nil)
     private let sliderValueOverlay = PopoverUI.valueLabel()
     private let captureScopePopUp = NSPopUpButton(frame: .zero, pullsDown: false)
     private var appChecklist: NSView?
     private let permissionButton = PopoverUI.linkButton(title: "Open Microphone Settings…")
-    private var contentStack: NSStackView?
 
     // REDESIGN.md §5: the Neural model is required for Live to do anything. When it isn't
     // installed, `processingBody` swaps the Intensity/Gain rows for a persistent gate + download
@@ -31,9 +40,6 @@ final class SettingsPopoverViewController: NSViewController {
     private var activeOverlaySlider: NSSlider?
 
     var onSettingsChanged: (() -> Void)?
-    var onQuit: (() -> Void)?
-    var onOpenPracticeMode: (() -> Void)?
-    var onPreferredSizeChange: ((NSSize) -> Void)?
 
     init(preferences: Preferences, audioEngine: AudioEngine) {
         self.preferences = preferences
@@ -47,77 +53,53 @@ final class SettingsPopoverViewController: NSViewController {
     }
 
     override func loadView() {
-        let provisional = PopoverUI.Metrics.menuSize(contentHeight: 200)
-        let (root, effectView) = PopoverUI.makeMenuRoot(size: provisional)
+        let root = NSView()
+        root.wantsLayer = true
+        root.layer?.backgroundColor = NSColor.windowBackgroundColor.cgColor
         view = root
 
         configureControls()
-        configureContent(in: effectView)
+        configureContent(in: root)
 
         permissionButton.isHidden = true
         updateCaptureScopeUI()
         refreshStatusHeader()
         updateModelGate()
-        sizeToFitContent()
     }
 
-    private func configureContent(in effectView: NSVisualEffectView) {
+    private func configureContent(in root: NSView) {
         var sections: [NSView] = [statusHeaderContainer]
         statusHeaderContainer.translatesAutoresizingMaskIntoConstraints = false
 
         let header = PopoverUI.sectionHeader("Processing")
         processingBody.translatesAutoresizingMaskIntoConstraints = false
-        let processingSection = PopoverUI.verticalStack([header, processingBody], spacing: 8)
-        sections.append(processingSection)
+        sections.append(regularSection(header: header, body: processingBody))
+
+        sections.append(permissionButton)
 
         if #available(macOS 14.2, *) {
             let checklist = AppCaptureChecklistView(preferences: preferences, audioEngine: audioEngine)
             appChecklist = checklist
             let captureRows: [NSView] = [
-                formRow(label: "Scope", control: captureScopePopUp),
+                regularFormRow(label: "Scope", control: captureScopePopUp),
                 checklist
             ]
-            sections.append(section(title: "Capture", rows: captureRows))
+            sections.append(regularSection(title: "Capture", rows: captureRows))
         }
 
-        sections.append(permissionButton)
-        sections.append(footer())
-
-        let content = PopoverUI.verticalStack(sections, spacing: PopoverUI.Metrics.sectionSpacing)
-        content.setCustomSpacing(6, after: statusHeaderContainer)
+        let content = PopoverUI.verticalStack(sections, spacing: PopoverUI.Metrics.Regular.sectionSpacing)
+        content.setCustomSpacing(12, after: statusHeaderContainer)
         content.translatesAutoresizingMaskIntoConstraints = false
-        contentStack = content
-        effectView.addSubview(content)
+        root.addSubview(content)
 
-        let pad = PopoverUI.Metrics.padding
-        let contentWidth = PopoverUI.Metrics.contentWidth
+        let pad = PopoverUI.Metrics.Regular.padding
         NSLayoutConstraint.activate([
-            content.leadingAnchor.constraint(equalTo: effectView.leadingAnchor, constant: pad),
-            content.trailingAnchor.constraint(equalTo: effectView.trailingAnchor, constant: -pad),
-            content.topAnchor.constraint(equalTo: effectView.topAnchor, constant: pad),
-            // Bottom is not pinned — height comes from content, then the panel is sized to fit.
-            content.widthAnchor.constraint(equalToConstant: contentWidth),
-            statusHeaderContainer.heightAnchor.constraint(equalToConstant: PopoverUI.Metrics.rowHeight),
+            content.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: pad),
+            content.trailingAnchor.constraint(lessThanOrEqualTo: root.trailingAnchor, constant: -pad),
+            content.topAnchor.constraint(equalTo: root.topAnchor, constant: pad),
+            content.widthAnchor.constraint(equalToConstant: 420),
             statusHeaderContainer.widthAnchor.constraint(equalTo: content.widthAnchor)
         ])
-    }
-
-    /// Sizes the panel to content width + padding, height from laid-out content.
-    func sizeToFitContent() {
-        guard let contentStack else { return }
-
-        // Give Auto Layout room to measure intrinsic height.
-        let probe = PopoverUI.Metrics.menuSize(contentHeight: 800)
-        view.setFrameSize(probe)
-        view.layoutSubtreeIfNeeded()
-        contentStack.layoutSubtreeIfNeeded()
-
-        let contentHeight = max(contentStack.fittingSize.height, 1)
-        let size = PopoverUI.Metrics.menuSize(contentHeight: contentHeight)
-        preferredContentSize = size
-        view.setFrameSize(size)
-        PopoverUI.updateShadowPath(for: view, size: size)
-        onPreferredSizeChange?(size)
     }
 
     func reloadFromPreferences() {
@@ -141,10 +123,10 @@ final class SettingsPopoverViewController: NSViewController {
         currentStatus = status
         refreshStatusHeader(isFilterActive: isFilterActive)
         updatePermissionButton(for: status)
+        setSwitchState(liveToggle, on: isFilterActive)
     }
 
     func updatePermissionButton(for status: AudioEngineStatus) {
-        let wasHidden = permissionButton.isHidden
         switch status {
         case .permissionRequired(.microphone):
             permissionButton.title = "Open Microphone Settings…"
@@ -155,12 +137,14 @@ final class SettingsPopoverViewController: NSViewController {
         default:
             permissionButton.isHidden = true
         }
-        if wasHidden != permissionButton.isHidden {
-            sizeToFitContent()
-        }
     }
 
     private func configureControls() {
+        liveToggle.controlSize = .large
+        liveToggle.target = self
+        liveToggle.action = #selector(liveToggleChanged)
+        liveToggle.translatesAutoresizingMaskIntoConstraints = false
+
         PopoverUI.configureSlider(intensitySlider)
         intensitySlider.target = self
         intensitySlider.action = #selector(intensityChanged)
@@ -192,63 +176,64 @@ final class SettingsPopoverViewController: NSViewController {
         permissionButton.action = #selector(openPermissionSettings)
     }
 
-    private func section(title: String, rows: [NSView]) -> NSView {
-        let header = PopoverUI.sectionHeader(title)
-        let rowsStack = PopoverUI.verticalStack(rows, spacing: PopoverUI.Metrics.rowSpacing)
-        return PopoverUI.verticalStack([header, rowsStack], spacing: 8)
+    // MARK: - Regular-scale layout helpers
+
+    private func regularSection(title: String, rows: [NSView]) -> NSView {
+        regularSection(header: PopoverUI.sectionHeader(title), rows: rows)
     }
 
-    private func formRow(label: String, control: NSView) -> NSView {
-        PopoverUI.formRow(label: label, control: control)
+    private func regularSection(header: NSView, body: NSView) -> NSView {
+        PopoverUI.verticalStack([header, body], spacing: 10)
     }
 
-    private func footer() -> NSView {
-        let separator = PopoverUI.separator()
+    private func regularSection(header: NSView, rows: [NSView]) -> NSView {
+        let rowsStack = PopoverUI.verticalStack(rows, spacing: PopoverUI.Metrics.Regular.rowSpacing)
+        return PopoverUI.verticalStack([header, rowsStack], spacing: 10)
+    }
 
-        let practiceButton = NSButton(title: "Open Practice Mode…", target: self, action: #selector(openPracticeMode))
-        practiceButton.isBordered = false
-        practiceButton.bezelStyle = .inline
-        practiceButton.alignment = .center
-        practiceButton.font = .systemFont(ofSize: NSFont.systemFontSize)
-        practiceButton.translatesAutoresizingMaskIntoConstraints = false
+    private func regularFormRow(label: String, control: NSView) -> NSView {
+        let title = PopoverUI.fieldLabel(label)
+        control.translatesAutoresizingMaskIntoConstraints = false
 
-        let quitButton = NSButton(title: "Quit", target: self, action: #selector(quit))
-        quitButton.isBordered = false
-        quitButton.bezelStyle = .inline
-        quitButton.alignment = .center
-        quitButton.font = .systemFont(ofSize: NSFont.systemFontSize)
-        quitButton.translatesAutoresizingMaskIntoConstraints = false
-
-        let footer = PopoverUI.verticalStack([separator, practiceButton, quitButton], spacing: 8)
-        footer.alignment = .leading
+        let row = NSStackView(views: [title, control])
+        row.orientation = .horizontal
+        row.alignment = .centerY
+        row.distribution = .fill
+        row.spacing = 10
+        row.translatesAutoresizingMaskIntoConstraints = false
 
         NSLayoutConstraint.activate([
-            separator.widthAnchor.constraint(equalTo: footer.widthAnchor),
-            practiceButton.widthAnchor.constraint(equalTo: footer.widthAnchor),
-            practiceButton.heightAnchor.constraint(equalToConstant: PopoverUI.Metrics.rowHeight),
-            quitButton.widthAnchor.constraint(equalTo: footer.widthAnchor),
-            quitButton.heightAnchor.constraint(equalToConstant: PopoverUI.Metrics.rowHeight)
+            title.widthAnchor.constraint(equalToConstant: PopoverUI.Metrics.Regular.labelWidth),
+            row.heightAnchor.constraint(equalToConstant: 24)
         ])
-        return footer
+        return row
     }
 
-    @objc private func openPracticeMode() {
-        onOpenPracticeMode?()
+    private func statusRow() -> NSView {
+        statusHeader.translatesAutoresizingMaskIntoConstraints = false
+        liveToggle.translatesAutoresizingMaskIntoConstraints = false
+
+        let row = NSStackView(views: [statusHeader, NSView(), liveToggle])
+        row.orientation = .horizontal
+        row.alignment = .centerY
+        row.distribution = .fill
+        row.spacing = 10
+        row.translatesAutoresizingMaskIntoConstraints = false
+        return row
     }
 
     private func refreshStatusHeader(isFilterActive: Bool? = nil) {
         let active = isFilterActive ?? audioEngine.isVocalReductionActive
         let (title, indicatorColor, errorDetail) = statusCopy(for: currentStatus, isFilterActive: active)
 
-        if statusHeader.superview !== statusHeaderContainer {
-            statusHeaderContainer.subviews.forEach { $0.removeFromSuperview() }
-            statusHeader.translatesAutoresizingMaskIntoConstraints = false
-            statusHeaderContainer.addSubview(statusHeader)
+        if statusHeaderContainer.subviews.isEmpty {
+            let row = statusRow()
+            statusHeaderContainer.addSubview(row)
             NSLayoutConstraint.activate([
-                statusHeader.leadingAnchor.constraint(equalTo: statusHeaderContainer.leadingAnchor),
-                statusHeader.trailingAnchor.constraint(equalTo: statusHeaderContainer.trailingAnchor),
-                statusHeader.topAnchor.constraint(equalTo: statusHeaderContainer.topAnchor),
-                statusHeader.bottomAnchor.constraint(equalTo: statusHeaderContainer.bottomAnchor)
+                row.leadingAnchor.constraint(equalTo: statusHeaderContainer.leadingAnchor),
+                row.trailingAnchor.constraint(equalTo: statusHeaderContainer.trailingAnchor),
+                row.topAnchor.constraint(equalTo: statusHeaderContainer.topAnchor),
+                row.bottomAnchor.constraint(equalTo: statusHeaderContainer.bottomAnchor)
             ])
         }
         statusHeader.update(title: title, indicatorColor: indicatorColor, errorDetail: errorDetail)
@@ -274,8 +259,8 @@ final class SettingsPopoverViewController: NSViewController {
     }
 
     private func refreshControlStates() {
-        // Neural is the only path now; controls are always active (model-required gating is a
-        // later pass — see REDESIGN.md §5).
+        // Neural is the only path now; controls are always active (model-required gating is
+        // handled separately by `updateModelGate`).
         intensitySlider.isEnabled = true
         makeupSlider.isEnabled = true
         intensitySlider.alphaValue = 1
@@ -307,7 +292,6 @@ final class SettingsPopoverViewController: NSViewController {
                 target.topAnchor.constraint(equalTo: processingBody.topAnchor),
                 target.bottomAnchor.constraint(equalTo: processingBody.bottomAnchor)
             ])
-            sizeToFitContent()
         }
     }
 
@@ -315,10 +299,10 @@ final class SettingsPopoverViewController: NSViewController {
         if let existing = cachedProcessingRowsView { return existing }
         let view = PopoverUI.verticalStack(
             [
-                PopoverUI.sliderRow(label: "Intensity", slider: intensitySlider),
-                PopoverUI.sliderRow(label: "Gain", slider: makeupSlider)
+                regularFormRow(label: "Intensity", control: intensitySlider),
+                regularFormRow(label: "Gain", control: makeupSlider)
             ],
-            spacing: PopoverUI.Metrics.rowSpacing
+            spacing: PopoverUI.Metrics.Regular.rowSpacing
         )
         cachedProcessingRowsView = view
         return view
@@ -366,7 +350,6 @@ final class SettingsPopoverViewController: NSViewController {
         modelGateStatusLabel.stringValue = "Starting download…"
         modelGateProgress.isHidden = false
         modelGateProgress.doubleValue = 0
-        sizeToFitContent()
 
         let variant = SeparationModelVariant.balanced
         modelGateDownloadTask = Task { [weak self] in
@@ -391,7 +374,6 @@ final class SettingsPopoverViewController: NSViewController {
                     self.modelGateDownloadButton.isEnabled = true
                     self.modelGateStatusLabel.textColor = .systemRed
                     self.modelGateStatusLabel.stringValue = error.localizedDescription
-                    self.sizeToFitContent()
                     AppLogger.shared.error("Live tab model download failed: \(error.localizedDescription)")
                 }
             }
@@ -473,6 +455,16 @@ final class SettingsPopoverViewController: NSViewController {
         popUp.target = previousTarget
     }
 
+    private func setSwitchState(_ toggle: NSSwitch, on: Bool) {
+        guard toggle.state != (on ? .on : .off) else { return }
+        toggle.state = on ? .on : .off
+    }
+
+    @objc private func liveToggleChanged() {
+        audioEngine.toggleReduction()
+        onSettingsChanged?()
+    }
+
     @objc private func captureScopeChanged() {
         let index = captureScopePopUp.indexOfSelectedItem
         guard index >= 0, index < CaptureScope.allCases.count else { return }
@@ -504,9 +496,5 @@ final class SettingsPopoverViewController: NSViewController {
         default:
             AudioPermission.openMicrophoneSettings()
         }
-    }
-
-    @objc private func quit() {
-        onQuit?()
     }
 }

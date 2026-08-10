@@ -2,7 +2,7 @@ import AppKit
 
 /// Minimal menu bar popover per REDESIGN.md §2: status line, Live/Record toggles, and the two
 /// exits (open the window, quit). Everything else — Intensity/Gain/Capture — lives in the
-/// desktop window's Live tab (`SettingsPopoverViewController`), not here.
+/// desktop window's Live tab (`LiveTabViewController`), not here.
 final class MenuBarPopoverViewController: NSViewController {
     private let statusHeaderContainer = NSView()
     private let statusHeader = StatusHeaderView()
