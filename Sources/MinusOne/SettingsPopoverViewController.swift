@@ -10,7 +10,7 @@ final class SettingsPopoverViewController: NSViewController {
     private let makeupSlider = DragValueSlider(value: 4.5, minValue: 0, maxValue: 12, target: nil, action: nil)
     private let sliderValueOverlay = PopoverUI.valueLabel()
     private let captureScopePopUp = NSPopUpButton(frame: .zero, pullsDown: false)
-    private var appPickerPopUp: NSPopUpButton?
+    private var appChecklist: NSView?
     private let permissionButton = PopoverUI.linkButton(title: "Open Microphone Settings…")
     private var contentStack: NSStackView?
 
@@ -71,11 +71,11 @@ final class SettingsPopoverViewController: NSViewController {
         sections.append(processingSection)
 
         if #available(macOS 14.2, *) {
-            let picker = AppPickerPopUpButton(preferences: preferences, audioEngine: audioEngine)
-            appPickerPopUp = picker
+            let checklist = AppCaptureChecklistView(preferences: preferences, audioEngine: audioEngine)
+            appChecklist = checklist
             let captureRows: [NSView] = [
                 formRow(label: "Scope", control: captureScopePopUp),
-                formRow(label: "Apps", control: picker)
+                checklist
             ]
             sections.append(section(title: "Capture", rows: captureRows))
         }
@@ -133,7 +133,7 @@ final class SettingsPopoverViewController: NSViewController {
         refreshControlStates()
         updateModelGate()
         if #available(macOS 14.2, *) {
-            (appPickerPopUp as? AppPickerPopUpButton)?.reloadFromPreferences()
+            (appChecklist as? AppCaptureChecklistView)?.reload()
         }
     }
 
@@ -400,14 +400,16 @@ final class SettingsPopoverViewController: NSViewController {
 
     private func updateCaptureScopeUI() {
         let selectedApps = preferences.captureScope == .selectedApps
-        appPickerPopUp?.isEnabled = selectedApps
-        appPickerPopUp?.alphaValue = selectedApps ? 1 : 0.45
-        appPickerPopUp?.toolTip = selectedApps
+        if #available(macOS 14.2, *) {
+            (appChecklist as? AppCaptureChecklistView)?.isEnabled = selectedApps
+        }
+        appChecklist?.alphaValue = selectedApps ? 1 : 0.45
+        appChecklist?.toolTip = selectedApps
             ? "Choose which apps get vocal reduction"
             : "Set Scope to Custom first"
         captureScopePopUp.toolTip = preferences.captureScope.detailText
         if #available(macOS 14.2, *) {
-            (appPickerPopUp as? AppPickerPopUpButton)?.reloadFromPreferences()
+            (appChecklist as? AppCaptureChecklistView)?.reload()
         }
     }
 
