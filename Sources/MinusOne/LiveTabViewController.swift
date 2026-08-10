@@ -77,6 +77,7 @@ final class LiveTabViewController: NSViewController {
 
         sections.append(permissionButton)
 
+        var captureSection: NSView?
         if #available(macOS 14.2, *) {
             let checklist = AppCaptureChecklistView(preferences: preferences, audioEngine: audioEngine)
             appChecklist = checklist
@@ -84,7 +85,9 @@ final class LiveTabViewController: NSViewController {
                 regularFormRow(label: "Scope", control: captureScopePopUp),
                 checklist
             ]
-            sections.append(regularSection(title: "Capture", rows: captureRows))
+            let section = regularSection(title: "Capture", rows: captureRows)
+            captureSection = section
+            sections.append(section)
         }
 
         let content = PopoverUI.verticalStack(sections, spacing: PopoverUI.Metrics.Regular.sectionSpacing)
@@ -100,6 +103,15 @@ final class LiveTabViewController: NSViewController {
             content.widthAnchor.constraint(equalToConstant: 420),
             statusHeaderContainer.widthAnchor.constraint(equalTo: content.widthAnchor)
         ])
+
+        // `content`'s stack alignment is `.leading`, so arranged subviews are only leading-pinned,
+        // not stretched to its width — without an explicit width here `AppCaptureChecklistView`
+        // (which has a fixed height but no intrinsic width of its own) is left horizontally
+        // ambiguous, and Auto Layout resolves that ambiguity to a near-zero/garbage width that
+        // renders squashed up and overlapping the row above it.
+        if let captureSection {
+            captureSection.widthAnchor.constraint(equalTo: content.widthAnchor).isActive = true
+        }
     }
 
     func reloadFromPreferences() {
@@ -146,6 +158,7 @@ final class LiveTabViewController: NSViewController {
         liveToggle.translatesAutoresizingMaskIntoConstraints = false
 
         PopoverUI.configureSlider(intensitySlider)
+        intensitySlider.trackFillColor = .brandAccent
         intensitySlider.target = self
         intensitySlider.action = #selector(intensityChanged)
         intensitySlider.onDragBegan = { [weak self] in
@@ -156,6 +169,7 @@ final class LiveTabViewController: NSViewController {
         }
 
         PopoverUI.configureSlider(makeupSlider)
+        makeupSlider.trackFillColor = .brandAccent
         makeupSlider.target = self
         makeupSlider.action = #selector(makeupGainChanged)
         makeupSlider.onDragBegan = { [weak self] in
@@ -188,7 +202,15 @@ final class LiveTabViewController: NSViewController {
 
     private func regularSection(header: NSView, rows: [NSView]) -> NSView {
         let rowsStack = PopoverUI.verticalStack(rows, spacing: PopoverUI.Metrics.Regular.rowSpacing)
-        return PopoverUI.verticalStack([header, rowsStack], spacing: 10)
+        let section = PopoverUI.verticalStack([header, rowsStack], spacing: 10)
+        // `.leading`-aligned stacks only pin the leading edge of arranged subviews, they don't
+        // stretch them — chain explicit width-equal constraints down so any row without its own
+        // intrinsic width (e.g. AppCaptureChecklistView) doesn't end up horizontally ambiguous.
+        rowsStack.widthAnchor.constraint(equalTo: section.widthAnchor).isActive = true
+        for row in rows {
+            row.widthAnchor.constraint(equalTo: rowsStack.widthAnchor).isActive = true
+        }
+        return section
     }
 
     private func regularFormRow(label: String, control: NSView) -> NSView {

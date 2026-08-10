@@ -60,10 +60,17 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
         )
         window.title = "MinusOne"
         window.minSize = NSSize(width: 760, height: 480)
+        // Explicit, not just relying on NSWindow's defaults: an ambiguous/false isOpaque or clear
+        // backgroundColor is exactly what makes the Dock show through the window at the edges.
+        window.isOpaque = true
+        window.backgroundColor = .windowBackgroundColor
         window.center()
 
         super.init(window: window)
         window.delegate = self
+
+        contentContainer.wantsLayer = true
+        contentContainer.layer?.backgroundColor = NSColor.windowBackgroundColor.cgColor
 
         let root = NSViewController()
         root.view = contentContainer
@@ -162,6 +169,11 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
         segmentedControl.selectedSegment = Tab.live.rawValue
         segmentedControl.target = self
         segmentedControl.action = #selector(tabChanged)
+        // NSSegmentedControl's intrinsicContentSize is only correct after the cell has measured
+        // its segment labels; without this it can report a zero/undersized width, which collapses
+        // the whole titlebar accessory stack to nothing since nothing else in it has a fixed size.
+        segmentedControl.sizeToFit()
+        segmentedControl.translatesAutoresizingMaskIntoConstraints = false
 
         liveStatusDot.wantsLayer = true
         liveStatusDot.layer?.cornerRadius = 4
@@ -176,9 +188,18 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
         stack.edgeInsets = NSEdgeInsets(top: 4, left: 0, bottom: 4, right: 8)
         stack.translatesAutoresizingMaskIntoConstraints = false
 
+        let segmentedSize = segmentedControl.fittingSize
         NSLayoutConstraint.activate([
             liveStatusDot.widthAnchor.constraint(equalToConstant: 8),
-            liveStatusDot.heightAnchor.constraint(equalToConstant: 8)
+            liveStatusDot.heightAnchor.constraint(equalToConstant: 8),
+            // Pin explicit sizes rather than trusting intrinsic-content-size propagation alone:
+            // NSTitlebarAccessoryViewController lays its view out in the titlebar strip before
+            // AppKit necessarily has a resolved fitting size for a freshly built NSStackView, and
+            // an unresolved size here renders as "no accessory at all" rather than a visible but
+            // mis-sized one.
+            segmentedControl.widthAnchor.constraint(equalToConstant: max(segmentedSize.width, 120)),
+            segmentedControl.heightAnchor.constraint(equalToConstant: max(segmentedSize.height, 20)),
+            stack.heightAnchor.constraint(equalToConstant: max(segmentedSize.height, 20) + stack.edgeInsets.top + stack.edgeInsets.bottom)
         ])
 
         let accessoryViewController = NSTitlebarAccessoryViewController()
