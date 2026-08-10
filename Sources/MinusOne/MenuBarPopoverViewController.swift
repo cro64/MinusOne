@@ -140,7 +140,7 @@ final class MenuBarPopoverViewController: NSViewController {
     private func statusCopy(for status: AudioEngineStatus, isFilterActive: Bool) -> (String, NSColor, String?) {
         switch status {
         case .active where isFilterActive:
-            return ("On", .brandAccent, nil)
+            return ("On", .brandAccentDeep, nil)
         case .warmingUp:
             return ("Warming up", .systemCyan, nil)
         case .permissionRequired:
@@ -149,7 +149,7 @@ final class MenuBarPopoverViewController: NSViewController {
             return ("Error", .systemRed, message)
         default:
             return isFilterActive
-                ? ("On", .brandAccent, nil)
+                ? ("On", .brandAccentDeep, nil)
                 : ("Off", .tertiaryLabelColor, nil)
         }
     }

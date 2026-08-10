@@ -1,6 +1,8 @@
 import AppKit
 
-/// Small pill toggle matching the recording panel's own look, rather than the system NSSwitch.
+/// Small pill toggle used inline with a label/subtitle row (the row layout doesn't suit
+/// `NSSwitch`); on-state fill uses `brandAccent`, the same accent used for every other
+/// "engaged" control in the app (REDESIGN.md §6).
 final class ToggleSwitchView: NSView {
     var isOn = false {
         didSet { needsDisplay = true }
@@ -22,13 +24,13 @@ final class ToggleSwitchView: NSView {
     override func draw(_ dirtyRect: NSRect) {
         super.draw(dirtyRect)
         let track = NSBezierPath(roundedRect: bounds, xRadius: bounds.height / 2, yRadius: bounds.height / 2)
-        (isOn ? RecordingTheme.amberDim : RecordingTheme.hairline).setFill()
+        (isOn ? NSColor.brandAccent : RecordingTheme.hairline).setFill()
         track.fill()
 
         let knobDiameter = bounds.height - 4
         let knobX = isOn ? bounds.width - knobDiameter - 2 : 2
         let knob = NSBezierPath(ovalIn: NSRect(x: knobX, y: 2, width: knobDiameter, height: knobDiameter))
-        (isOn ? RecordingTheme.amber : RecordingTheme.putty).setFill()
+        NSColor.white.setFill()
         knob.fill()
     }
 

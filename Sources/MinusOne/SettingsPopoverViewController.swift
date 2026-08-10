@@ -257,7 +257,7 @@ final class SettingsPopoverViewController: NSViewController {
     private func statusCopy(for status: AudioEngineStatus, isFilterActive: Bool) -> (String, NSColor, String?) {
         switch status {
         case .active where isFilterActive:
-            return ("On", .brandAccent, nil)
+            return ("On", .brandAccentDeep, nil)
         case .warmingUp:
             return ("Warming up", .systemCyan, nil)
         case .permissionRequired:
@@ -268,7 +268,7 @@ final class SettingsPopoverViewController: NSViewController {
             return ("Off", .tertiaryLabelColor, nil)
         default:
             return isFilterActive
-                ? ("On", .brandAccent, nil)
+                ? ("On", .brandAccentDeep, nil)
                 : ("Off", .tertiaryLabelColor, nil)
         }
     }

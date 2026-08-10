@@ -21,7 +21,7 @@ final class RecordingPanelController: NSViewController {
     private let armButton: ThemedButton
 
     // Recording state
-    private let recDot = DotView(color: RecordingTheme.red)
+    private let recDot = DotView(color: .brandAccentDeep)
     private let elapsedLabel = NSTextField(labelWithString: "0:00")
     private let liveWaveform = LiveWaveformView()
     private let elapsedMetaLabel = NSTextField(labelWithString: "elapsed 0:00")
@@ -39,7 +39,7 @@ final class RecordingPanelController: NSViewController {
         self.recorder = recorder
         self.onFinished = onFinished
         settingsButton = ThemedButton(title: "Open System Settings…", style: .outlined(border: RecordingTheme.redDim, foreground: RecordingTheme.cream))
-        armButton = ThemedButton(title: "●  Start recording", style: .filled(background: RecordingTheme.red, foreground: RecordingTheme.background))
+        armButton = ThemedButton(title: "●  Start recording", style: .filled(background: .brandAccent, foreground: .white))
         stopButton = ThemedButton(title: "■  Stop now", style: .outlined(border: RecordingTheme.hairline, foreground: RecordingTheme.cream))
         super.init(nibName: nil, bundle: nil)
     }
@@ -175,7 +175,7 @@ final class RecordingPanelController: NSViewController {
         recDot.startPulsing()
         let recLabel = NSTextField(labelWithString: "RECORDING")
         recLabel.font = RecordingTheme.mono(11, weight: .medium)
-        recLabel.textColor = RecordingTheme.red
+        recLabel.textColor = .brandAccentDeep
         let recIndicator = rowStack([recDot, recLabel], spacing: 8)
 
         elapsedLabel.font = RecordingTheme.mono(20, weight: .medium)
@@ -196,7 +196,7 @@ final class RecordingPanelController: NSViewController {
         elapsedMetaLabel.font = RecordingTheme.mono(10)
         elapsedMetaLabel.textColor = RecordingTheme.putty
         targetMetaLabel.font = RecordingTheme.mono(10)
-        targetMetaLabel.textColor = RecordingTheme.amber
+        targetMetaLabel.textColor = .brandAccentDeep
         let metaRow = rowStack([elapsedMetaLabel, spacer(), targetMetaLabel])
 
         stopButton.target = self

@@ -97,7 +97,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
 
     func updateLiveStatus(_ status: AudioEngineStatus, isFilterActive: Bool) {
         liveViewController.updateStatusDisplay(status, isFilterActive: isFilterActive)
-        liveStatusDot.layer?.backgroundColor = (isFilterActive ? NSColor.brandAccent : NSColor.tertiaryLabelColor).cgColor
+        liveStatusDot.layer?.backgroundColor = (isFilterActive ? NSColor.brandAccentDeep : NSColor.tertiaryLabelColor).cgColor
         liveStatusDot.isHidden = currentTab != .practice
     }
 

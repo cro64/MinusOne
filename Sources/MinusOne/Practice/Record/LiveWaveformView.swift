@@ -78,7 +78,7 @@ final class LiveWaveformView: NSView {
     }
 
     private func drawMarker(atX x: CGFloat) {
-        RecordingTheme.amber.setStroke()
+        NSColor.brandAccentDeep.setStroke()
         let line = NSBezierPath()
         line.lineWidth = 1
         line.move(to: NSPoint(x: x, y: 0))
@@ -87,7 +87,7 @@ final class LiveWaveformView: NSView {
 
         let knobDiameter: CGFloat = 9
         let knob = NSBezierPath(ovalIn: NSRect(x: x - knobDiameter / 2, y: bounds.height - knobDiameter - 2, width: knobDiameter, height: knobDiameter))
-        RecordingTheme.amber.setFill()
+        NSColor.brandAccentDeep.setFill()
         knob.fill()
         RecordingTheme.panel.setStroke()
         knob.lineWidth = 2
