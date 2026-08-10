@@ -14,7 +14,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private lazy var practiceSeparationEngine = OfflineSeparationEngine(libraryStore: practiceLibraryStore)
     private lazy var practiceImportService = ClipImportService(libraryStore: practiceLibraryStore, separationEngine: practiceSeparationEngine)
     private lazy var practicePlaybackEngine = PracticePlaybackEngine()
-    private var practiceWindowController: PracticeWindowController?
+    private var mainWindowController: MainWindowController?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         if #available(macOS 14.2, *) {
@@ -24,13 +24,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         menuBarController = MenuBarController(
             preferences: preferences,
-            audioEngine: audioEngine
+            audioEngine: audioEngine,
+            importService: practiceImportService
         )
         audioEngine.onStatusChanged = { [weak self] status in
-            self?.menuBarController?.updateStatus(status)
+            guard let self else { return }
+            self.menuBarController?.updateStatus(status)
+            self.mainWindowController?.updateLiveStatus(status, isFilterActive: self.audioEngine.isVocalReductionActive)
         }
         menuBarController?.onOpenPracticeMode = { [weak self] in
-            self?.openPracticeWindow()
+            self?.openMainWindow(tab: .live)
+        }
+        menuBarController?.onClipRecorded = { [weak self] clip in
+            self?.mainWindowController?.clipImported(clip)
         }
 
         deviceMonitor = DeviceMonitor(
@@ -72,32 +78,35 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         menuBarController?.updateStatus(.idle)
         AppLogger.shared.info("MinusOne launched")
 
-        DispatchQueue.main.async { [weak self] in
-            guard let self else { return }
-            OnboardingController.showIfNeeded(
-                preferences: self.preferences,
-                captureBackend: CaptureBackend.preferred
-            )
+        // REDESIGN.md §5: onboarding — including the now-mandatory Neural model download — opens
+        // directly in the window on first launch, not the menu bar.
+        if !preferences.hasCompletedOnboarding {
+            DispatchQueue.main.async { [weak self] in
+                self?.openMainWindow(tab: .live)
+            }
         }
 
         restoreSessionIfNeeded()
     }
 
-    private func openPracticeWindow() {
-        if practiceWindowController == nil {
-            let controller = PracticeWindowController(
+    private func openMainWindow(tab: MainWindowController.Tab) {
+        if mainWindowController == nil {
+            let controller = MainWindowController(
+                preferences: preferences,
+                audioEngine: audioEngine,
                 libraryStore: practiceLibraryStore,
                 importService: practiceImportService,
                 playbackEngine: practicePlaybackEngine
             )
             controller.onWindowClosed = { [weak self] in
                 NSApp.setActivationPolicy(.accessory)
-                self?.practiceWindowController = nil
+                self?.mainWindowController = nil
             }
-            practiceWindowController = controller
+            mainWindowController = controller
         }
         NSApp.setActivationPolicy(.regular)
-        practiceWindowController?.show()
+        mainWindowController?.show(tab: tab)
+        mainWindowController?.updateLiveStatus(audioEngine.status, isFilterActive: audioEngine.isVocalReductionActive)
     }
 
     private func restoreSessionIfNeeded() {

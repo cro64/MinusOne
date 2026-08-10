@@ -9,7 +9,6 @@ final class AudioEngine {
     var onStatusChanged: ((AudioEngineStatus) -> Void)?
 
     private let preferences: Preferences
-    private let dsp: CenterCancelDSP
     private var neuralPipeline: NeuralSeparationPipeline?
     private var separationModel: AudioSeparationModel?
     private let ringBuffer = StereoRingBuffer(capacityPowerOfTwo: 65_536)
@@ -54,26 +53,16 @@ final class AudioEngine {
     }
 
     var isVocalReductionActive: Bool {
-        isReductionEnabled && preferences.processingMode.supportsVocalReduction
+        isReductionEnabled
     }
 
     init(preferences: Preferences) {
         self.preferences = preferences
-        dsp = CenterCancelDSP(
-            targetIntensity: 0,
-            makeupGainDecibels: preferences.makeupGainDecibels,
-            rampDurationMilliseconds: preferences.rampDurationMilliseconds
-        )
         captureBuffers = AudioBufferList.allocate(maximumBuffers: 2)
         processedLeft = UnsafeMutablePointer<Float>.allocate(capacity: maxFramesPerCallback)
         processedRight = UnsafeMutablePointer<Float>.allocate(capacity: maxFramesPerCallback)
         processedLeft.initialize(repeating: 0, count: maxFramesPerCallback)
         processedRight.initialize(repeating: 0, count: maxFramesPerCallback)
-
-        if preferences.processingMode == .aiVocalSeparation, !SeparationModelFactory.isAvailable(preferences.separationModelVariant) {
-            preferences.processingMode = .centerVocalCut
-            AppLogger.shared.warning("Neural mode unavailable — model not installed; using Center Cut")
-        }
     }
 
     deinit {
@@ -208,10 +197,6 @@ final class AudioEngine {
                 )
 
                 ringBuffer.reset()
-                dsp.reset()
-                dsp.targetIntensity.store(0)
-                dsp.makeupGainDecibels.store(preferences.makeupGainDecibels)
-                dsp.rampDurationMilliseconds.store(preferences.rampDurationMilliseconds)
                 processTapCallbackCount = 0
                 processTapLoggedFirstBuffer = false
                 processTapLoggedNilOutput = false
@@ -256,10 +241,6 @@ final class AudioEngine {
         try configureAudioUnits(inputDevice: blackHole, outputDevice: output)
 
         ringBuffer.reset()
-        dsp.reset()
-        dsp.targetIntensity.store(0)
-        dsp.makeupGainDecibels.store(preferences.makeupGainDecibels)
-        dsp.rampDurationMilliseconds.store(preferences.rampDurationMilliseconds)
 
         try startUnit(inputUnit, label: "input")
         try startUnit(outputUnit, label: "output")
@@ -279,32 +260,17 @@ final class AudioEngine {
     ) {
         guard frameCount > 0, frameCount <= maxFramesPerCallback else { return }
 
-        switch preferences.processingMode {
-        case .directListen:
-            processedLeft.update(from: left, count: frameCount)
-            processedRight.update(from: right, count: frameCount)
-        case .centerVocalCut:
-            dsp.process(
+        if let neuralPipeline {
+            neuralPipeline.process(
                 inputLeft: left,
                 inputRight: right,
                 outputLeft: processedLeft,
                 outputRight: processedRight,
-                frameCount: frameCount,
-                sampleRate: sampleRate
+                frameCount: frameCount
             )
-        case .aiVocalSeparation:
-            if let neuralPipeline {
-                neuralPipeline.process(
-                    inputLeft: left,
-                    inputRight: right,
-                    outputLeft: processedLeft,
-                    outputRight: processedRight,
-                    frameCount: frameCount
-                )
-            } else {
-                processedLeft.update(from: left, count: frameCount)
-                processedRight.update(from: right, count: frameCount)
-            }
+        } else {
+            processedLeft.update(from: left, count: frameCount)
+            processedRight.update(from: right, count: frameCount)
         }
 
         ringBuffer.write(left: processedLeft, right: processedRight, frameCount: frameCount)
@@ -317,28 +283,14 @@ final class AudioEngine {
     ) {
         guard frameCount > 0, frameCount <= maxFramesPerCallback else { return }
 
-        switch preferences.processingMode {
-        case .directListen:
-            break
-        case .centerVocalCut:
-            dsp.process(
+        if let neuralPipeline {
+            neuralPipeline.process(
                 inputLeft: left,
                 inputRight: right,
                 outputLeft: left,
                 outputRight: right,
-                frameCount: frameCount,
-                sampleRate: sampleRate
+                frameCount: frameCount
             )
-        case .aiVocalSeparation:
-            if let neuralPipeline {
-                neuralPipeline.process(
-                    inputLeft: left,
-                    inputRight: right,
-                    outputLeft: left,
-                    outputRight: right,
-                    frameCount: frameCount
-                )
-            }
         }
     }
 
@@ -537,18 +489,10 @@ final class AudioEngine {
 
     func enableReduction() {
         guard isRunning else { return }
-        if preferences.processingMode == .directListen {
-            isReductionEnabled = true
-            preferences.lastReductionEnabled = true
-            updateActiveStatus()
-            AppLogger.shared.info("Direct mode — system audio unchanged")
-            return
-        }
-        if preferences.processingMode == .centerVocalCut, status == .monoInput { return }
 
         isReductionEnabled = true
         preferences.lastReductionEnabled = true
-        if preferences.processingMode == .aiVocalSeparation, neuralPipeline == nil {
+        if neuralPipeline == nil {
             startNeuralPipelineIfNeeded()
         }
         applyReductionIntensity(preferences.targetIntensity)
@@ -567,68 +511,33 @@ final class AudioEngine {
     }
 
     private func applyReductionIntensity(_ value: Float) {
-        switch preferences.processingMode {
-        case .directListen:
-            break
-        case .centerVocalCut:
-            dsp.targetIntensity.store(value)
-            dsp.makeupGainDecibels.store(preferences.makeupGainDecibels)
-        case .aiVocalSeparation:
-            neuralPipeline?.mixDSP.targetIntensity.store(value)
-            neuralPipeline?.mixDSP.makeupGainDecibels.store(preferences.makeupGainDecibels)
-        }
+        neuralPipeline?.mixDSP.targetIntensity.store(value)
+        neuralPipeline?.mixDSP.makeupGainDecibels.store(preferences.makeupGainDecibels)
     }
 
     private func updateActiveStatus() {
-        if preferences.processingMode == .directListen {
+        guard isReductionEnabled else {
             status = isRunning ? .passthrough : .idle
             return
         }
 
-        if preferences.processingMode == .centerVocalCut,
-           activeCaptureBackend == .blackHole,
-           let blackHole = CoreAudioDevices.blackHoleDevice(),
-           blackHole.inputChannelCount < 2 {
-            status = .monoInput
-            return
-        }
-
-        if preferences.processingMode == .centerVocalCut,
-           activeCaptureBackend == .processTap,
-           let setup = processTapSetup,
-           Int(setup.streamFormat.mChannelsPerFrame) < 2 {
-            status = .monoInput
-            return
-        }
-
-        if preferences.processingMode == .aiVocalSeparation {
-            guard isReductionEnabled else {
-                status = .passthrough
-                return
+        if let pipeline = neuralPipeline {
+            switch pipeline.state {
+            case .warmingUp, .idle:
+                status = .warmingUp
+            case .ready:
+                status = .active
+            case .error(let message):
+                status = .error(message)
             }
-
-            if let pipeline = neuralPipeline {
-                switch pipeline.state {
-                case .warmingUp, .idle:
-                    status = .warmingUp
-                case .ready:
-                    status = .active
-                case .error(let message):
-                    status = .error(message)
-                }
-                return
-            }
-
-            // Model or pipeline still starting — don't flash active before warm-up.
-            status = .warmingUp
             return
         }
 
-        status = isReductionEnabled ? .active : .passthrough
+        // Model or pipeline still starting — don't flash active before warm-up.
+        status = .warmingUp
     }
 
     func preloadSeparationModelIfNeeded() {
-        guard preferences.processingMode == .aiVocalSeparation else { return }
         guard SeparationModelFactory.isAvailable(preferences.separationModelVariant) else { return }
 
         separationModelLock.lock()
@@ -659,7 +568,7 @@ final class AudioEngine {
 
                 DispatchQueue.main.async { [weak self] in
                     guard let self, self.isRunning, self.isReductionEnabled else { return }
-                    if self.preferences.processingMode == .aiVocalSeparation, self.neuralPipeline == nil {
+                    if self.neuralPipeline == nil {
                         self.startNeuralPipelineIfNeeded()
                         self.updateActiveStatus()
                     }
@@ -677,42 +586,9 @@ final class AudioEngine {
         DispatchQueue.global(qos: .userInitiated).async(execute: task)
     }
 
-    func setProcessingMode(_ mode: ProcessingMode) {
-        if mode == .aiVocalSeparation {
-            guard SeparationModelFactory.isAvailable(preferences.separationModelVariant) else {
-                AppLogger.shared.error("Cannot switch to Neural — model not installed")
-                return
-            }
-        }
-        guard preferences.processingMode != mode else { return }
-        preferences.processingMode = mode
-
-        // Load CoreML off the main thread — sync load freezes the UI for tens of seconds.
-        if mode == .aiVocalSeparation {
-            preloadSeparationModelIfNeeded()
-        }
-
-        if isRunning {
-            let wasEnabled = isReductionEnabled
-            disableReduction()
-            rebuildProcessingPipeline()
-            if wasEnabled {
-                enableReduction()
-            }
-        }
-    }
-
-    private func rebuildProcessingPipeline() {
-        stopNeuralPipeline()
-        dsp.reset()
-        dsp.targetIntensity.store(0)
-        startNeuralPipelineIfNeeded()
-        updateActiveStatus()
-    }
-
     private func startNeuralPipelineIfNeeded() {
         stopNeuralPipeline()
-        guard preferences.processingMode == .aiVocalSeparation, isReductionEnabled else { return }
+        guard isReductionEnabled else { return }
 
         separationModelLock.lock()
         let model = separationModel
@@ -763,12 +639,6 @@ final class AudioEngine {
     }
 
     private func resolvedStartupStatus(channelCount: Int) -> AudioEngineStatus {
-        if preferences.processingMode == .directListen {
-            return .passthrough
-        }
-        if preferences.processingMode == .centerVocalCut, channelCount < 2 {
-            return .monoInput
-        }
         // Reduction is always off at engine start — neural warm-up begins on enableReduction.
         return .passthrough
     }
@@ -782,7 +652,6 @@ final class AudioEngine {
 
     func setMakeupGainDecibels(_ value: Float) {
         preferences.makeupGainDecibels = value
-        dsp.makeupGainDecibels.store(value)
         neuralPipeline?.mixDSP.makeupGainDecibels.store(value)
     }
 
@@ -1101,7 +970,6 @@ final class AudioEngine {
         outputUnit = nil
         isRunning = false
         isReductionEnabled = false
-        dsp.targetIntensity.store(0)
         stopNeuralPipeline()
         ringBuffer.reset()
     }

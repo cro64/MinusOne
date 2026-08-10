@@ -51,7 +51,7 @@ final class WaveformView: NSView {
                 width: bounds.width * (loopRange.upperBound - loopRange.lowerBound),
                 height: bounds.height
             )
-            NSColor.controlAccentColor.withAlphaComponent(0.14).setFill()
+            NSColor.brandAccent.withAlphaComponent(0.14).setFill()
             loopRect.fill()
         }
 
@@ -68,7 +68,7 @@ final class WaveformView: NSView {
             let rect = NSRect(x: x, y: min(topY, bottomY), width: barWidth, height: max(1, abs(bottomY - topY)))
 
             let color: NSColor = column < readyColumns
-                ? (style == .thumbnail ? NSColor.secondaryLabelColor : NSColor.controlAccentColor)
+                ? (style == .thumbnail ? NSColor.secondaryLabelColor : NSColor.brandAccent)
                 : NSColor.tertiaryLabelColor.withAlphaComponent(0.5)
             color.setFill()
             rect.fill()

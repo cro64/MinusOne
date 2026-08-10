@@ -4,26 +4,28 @@ final class MenuBarController: NSObject {
 
     private let preferences: Preferences
     private let audioEngine: AudioEngine
+    private let importService: ClipImportService
     private let statusItem: NSStatusItem
-    private let settingsViewController: SettingsPopoverViewController
+    private let settingsViewController: MenuBarPopoverViewController
     private let settingsPanel: NSPanel
 
     private var currentStatus: AudioEngineStatus = .idle
     private var isFilterActive = false
+    private var isRecording = false
+    private var recorderBox: Any?
     private var dismissMonitor: Any?
     private var localDismissMonitor: Any?
     private var appearanceObserver: NSObjectProtocol?
 
     var onOpenPracticeMode: (() -> Void)?
+    var onClipRecorded: ((PracticeClip) -> Void)?
 
-    init(preferences: Preferences, audioEngine: AudioEngine) {
+    init(preferences: Preferences, audioEngine: AudioEngine, importService: ClipImportService) {
         self.preferences = preferences
         self.audioEngine = audioEngine
+        self.importService = importService
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
-        settingsViewController = SettingsPopoverViewController(
-            preferences: preferences,
-            audioEngine: audioEngine
-        )
+        settingsViewController = MenuBarPopoverViewController()
         settingsPanel = Self.makeSettingsPanel()
         super.init()
         _ = settingsViewController.view
@@ -54,20 +56,74 @@ final class MenuBarController: NSObject {
             if let backend = audioEngine.activeCaptureBackend {
                 text += " — \(backend.displayName)"
             }
-            if let monoTooltip = status.monoInputTooltip {
-                text = monoTooltip
-            }
             button.toolTip = text
         }
         updateIcon()
         settingsViewController.updateStatusDisplay(status, isFilterActive: isFilterActive)
     }
 
-    func performToggleWithOnboarding() {
-        OnboardingController.showIfNeeded(
-            preferences: preferences,
-            captureBackend: CaptureBackend.preferred
+    // MARK: - Record toggle
+
+    @available(macOS 14.2, *)
+    private var recorder: SystemAudioRecorder {
+        if let existing = recorderBox as? SystemAudioRecorder { return existing }
+        let recorder = SystemAudioRecorder()
+        recorderBox = recorder
+        return recorder
+    }
+
+    private func performRecordToggle() {
+        guard #available(macOS 14.2, *) else { return }
+        if isRecording {
+            stopRecording()
+        } else {
+            startRecording()
+        }
+    }
+
+    @available(macOS 14.2, *)
+    private func startRecording() {
+        recorder.startRecording { [weak self] result in
+            guard let self else { return }
+            switch result {
+            case .success:
+                self.isRecording = true
+                self.updateIcon()
+                self.settingsViewController.updateRecordingState(true)
+            case .failure(let error):
+                AppLogger.shared.error("Menu bar record failed to start: \(error.localizedDescription)")
+                self.settingsViewController.updateRecordingState(false)
+            }
+        }
+    }
+
+    @available(macOS 14.2, *)
+    private func stopRecording() {
+        isRecording = false
+        updateIcon()
+        settingsViewController.updateRecordingState(false)
+
+        guard let url = recorder.stopRecording() else { return }
+        importService.importFile(
+            at: url,
+            onImported: { [weak self] clip in self?.onClipRecorded?(clip) },
+            onProgress: { [weak self] clip in self?.onClipRecorded?(clip) },
+            onFailure: { error in
+                AppLogger.shared.error("Menu bar recorded clip failed to import: \(error.localizedDescription)")
+            }
         )
+    }
+
+    /// Live is either off or Neural now — there's no fallback processing path (REDESIGN.md §5).
+    /// If onboarding hasn't run, or the model isn't installed, this routes into the window's Live
+    /// tab (where the model-required gate + download CTA live) instead of silently toggling a
+    /// pipeline that has nothing to do.
+    func performToggleWithOnboarding() {
+        guard preferences.hasCompletedOnboarding, audioEngine.isNeuralSeparationAvailable else {
+            closeSettings()
+            onOpenPracticeMode?()
+            return
+        }
         audioEngine.toggleReduction()
         updateStatus(audioEngine.status)
     }
@@ -101,14 +157,17 @@ final class MenuBarController: NSObject {
     }
 
     private func configureSettingsCallbacks() {
-        settingsViewController.onSettingsChanged = { [weak self] in
-            self?.updateIcon()
+        settingsViewController.onToggleLive = { [weak self] in
+            self?.performToggleWithOnboarding()
+        }
+        settingsViewController.onToggleRecord = { [weak self] in
+            self?.performRecordToggle()
         }
         settingsViewController.onQuit = { [weak self] in
             self?.closeSettings()
             NSApp.terminate(nil)
         }
-        settingsViewController.onOpenPracticeMode = { [weak self] in
+        settingsViewController.onOpenWindow = { [weak self] in
             self?.closeSettings()
             self?.onOpenPracticeMode?()
         }
@@ -137,11 +196,8 @@ final class MenuBarController: NSObject {
         } else if case .warmingUp = currentStatus {
             color = .systemCyan
             usesTemplate = false
-        } else if case .monoInput = currentStatus {
-            color = .systemYellow
-            usesTemplate = false
         } else if isFilterActive {
-            color = .controlAccentColor
+            color = .brandAccent
             usesTemplate = false
         } else {
             // Black mask + template → AppKit tints for light/dark menu bar.
@@ -149,8 +205,9 @@ final class MenuBarController: NSObject {
             usesTemplate = true
         }
 
-        let image = MinusOneIcon.waveform(size: size, color: color, isActive: isFilterActive)
-        image.isTemplate = usesTemplate
+        let image = MinusOneIcon.waveform(size: size, color: color, isActive: isFilterActive, isRecording: isRecording)
+        // A colored recording badge can't ride along with a template (auto-tinted) image.
+        image.isTemplate = usesTemplate && !isRecording
         button.image = image
         button.contentTintColor = nil
     }
@@ -173,8 +230,8 @@ final class MenuBarController: NSObject {
         }
 
         _ = settingsViewController.view
-        settingsViewController.reloadFromPreferences()
         settingsViewController.updateStatusDisplay(currentStatus, isFilterActive: isFilterActive)
+        settingsViewController.updateRecordingState(isRecording)
         settingsViewController.sizeToFitContent()
 
         positionSettingsPanel(relativeTo: button)
@@ -214,7 +271,6 @@ final class MenuBarController: NSObject {
         }
         settingsPanel.orderOut(nil)
         stopDismissMonitors()
-        settingsViewController.reloadFromPreferences()
     }
 
     private func startDismissMonitors() {

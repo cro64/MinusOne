@@ -12,6 +12,11 @@ final class PracticeWindowController: NSWindowController, NSWindowDelegate, NSTo
     var onWindowClosed: (() -> Void)?
 
     private static let importItemIdentifier = NSToolbarItem.Identifier("importClip")
+    private static let recordItemIdentifier = NSToolbarItem.Identifier("recordClip")
+
+    private var systemAudioRecorderBox: Any?
+    private var recordingPopover: NSPopover?
+    private weak var recordToolbarButton: NSButton?
 
     init(
         libraryStore: ClipLibraryStore,
@@ -72,23 +77,54 @@ final class PracticeWindowController: NSWindowController, NSWindowDelegate, NSTo
     }
 
     func toolbar(_ toolbar: NSToolbar, itemForItemIdentifier itemIdentifier: NSToolbarItem.Identifier, willBeInsertedIntoToolbar flag: Bool) -> NSToolbarItem? {
-        guard itemIdentifier == Self.importItemIdentifier else { return nil }
-        let item = NSToolbarItem(itemIdentifier: itemIdentifier)
-        item.label = "Import"
-        item.paletteLabel = "Import Clip"
-        item.toolTip = "Import an audio file"
-        item.image = NSImage(systemSymbolName: "square.and.arrow.down", accessibilityDescription: "Import")
-        item.target = self
-        item.action = #selector(importButtonClicked)
-        return item
+        switch itemIdentifier {
+        case Self.importItemIdentifier:
+            let item = NSToolbarItem(itemIdentifier: itemIdentifier)
+            item.label = "Import"
+            item.paletteLabel = "Import Clip"
+            item.toolTip = "Import an audio file"
+            item.image = NSImage(systemSymbolName: "square.and.arrow.down", accessibilityDescription: "Import")
+            item.target = self
+            item.action = #selector(importButtonClicked)
+            return item
+
+        case Self.recordItemIdentifier:
+            let item = NSToolbarItem(itemIdentifier: itemIdentifier)
+            item.label = "Record"
+            item.paletteLabel = "Record System Audio"
+
+            // Custom-view button (not item.target/action) so the popover has a stable, guaranteed
+            // NSView to anchor to — standard toolbar items don't reliably pass a usable view as `sender`.
+            let button = NSButton(
+                image: NSImage(systemSymbolName: "record.circle", accessibilityDescription: "Record") ?? NSImage(),
+                target: self,
+                action: #selector(recordButtonClicked(_:))
+            )
+            button.bezelStyle = .texturedRounded
+            button.imageScaling = .scaleProportionallyDown
+            recordToolbarButton = button
+            item.view = button
+
+            if #available(macOS 14.2, *) {
+                item.toolTip = "Record system audio"
+                button.isEnabled = true
+            } else {
+                item.toolTip = "Recording system audio requires macOS 14.2 or later"
+                button.isEnabled = false
+            }
+            return item
+
+        default:
+            return nil
+        }
     }
 
     func toolbarDefaultItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
-        [Self.importItemIdentifier, .flexibleSpace]
+        [Self.importItemIdentifier, Self.recordItemIdentifier, .flexibleSpace]
     }
 
     func toolbarAllowedItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
-        [Self.importItemIdentifier, .flexibleSpace]
+        [Self.importItemIdentifier, Self.recordItemIdentifier, .flexibleSpace]
     }
 
     @objc private func importButtonClicked() {
@@ -96,6 +132,33 @@ final class PracticeWindowController: NSWindowController, NSWindowDelegate, NSTo
             guard let self, let url else { return }
             self.handleImport(url: url)
         }
+    }
+
+    @available(macOS 14.2, *)
+    private var systemAudioRecorder: SystemAudioRecorder {
+        if let existing = systemAudioRecorderBox as? SystemAudioRecorder { return existing }
+        let recorder = SystemAudioRecorder()
+        systemAudioRecorderBox = recorder
+        return recorder
+    }
+
+    @objc private func recordButtonClicked(_ sender: Any) {
+        guard #available(macOS 14.2, *) else { return }
+        guard let anchorView = (sender as? NSView) ?? recordToolbarButton else {
+            AppLogger.shared.warning("Practice record button clicked but no anchor view was available")
+            return
+        }
+
+        let panel = RecordingPanelController(recorder: systemAudioRecorder) { [weak self] url in
+            self?.handleImport(url: url)
+            self?.recordingPopover?.performClose(nil)
+        }
+        let popover = NSPopover()
+        popover.contentViewController = panel
+        popover.behavior = .transient
+        popover.appearance = NSAppearance(named: .darkAqua)
+        popover.show(relativeTo: anchorView.bounds, of: anchorView, preferredEdge: .maxY)
+        recordingPopover = popover
     }
 
     private func handleImport(url: URL) {

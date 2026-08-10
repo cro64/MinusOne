@@ -15,7 +15,8 @@ enum ProcessTapSession {
     static func create(
         outputDeviceUID: String,
         captureScope: CaptureScope,
-        selectedBundleIDs: Set<String>
+        selectedBundleIDs: Set<String>,
+        muteBehavior: CATapMuteBehavior = .muted
     ) throws -> TapAggregateSetup {
         cleanupBeforeCreate()
 
@@ -47,7 +48,7 @@ enum ProcessTapSession {
         description.name = "MinusOne System Tap"
         let tapUUID = UUID()
         description.uuid = tapUUID
-        description.muteBehavior = .muted
+        description.muteBehavior = muteBehavior
         description.isPrivate = true
 
         var tapID = AudioObjectID(kAudioObjectUnknown)

@@ -11,7 +11,6 @@ final class Preferences {
         static let rampDurationMilliseconds = "rampDurationMilliseconds"
         static let lastReductionEnabled = "lastReductionEnabled"
         static let hasCompletedOnboarding = "hasCompletedOnboarding"
-        static let processingMode = "processingMode"
         static let separationModelVariant = "separationModelVariant"
         static let captureScope = "captureScope"
         static let selectedAppBundleIDs = "selectedAppBundleIDs"
@@ -28,7 +27,6 @@ final class Preferences {
             Key.rampDurationMilliseconds: Double(Self.defaultRampDurationMilliseconds),
             Key.lastReductionEnabled: false,
             Key.hasCompletedOnboarding: false,
-            Key.processingMode: ProcessingMode.centerVocalCut.rawValue,
             Key.separationModelVariant: SeparationModelVariant.balanced.rawValue,
             Key.captureScope: CaptureScope.allApps.rawValue,
             Key.selectedAppBundleIDs: [String]()
@@ -58,17 +56,6 @@ final class Preferences {
     var hasCompletedOnboarding: Bool {
         get { defaults.bool(forKey: Key.hasCompletedOnboarding) }
         set { defaults.set(newValue, forKey: Key.hasCompletedOnboarding) }
-    }
-
-    var processingMode: ProcessingMode {
-        get {
-            guard let raw = defaults.string(forKey: Key.processingMode),
-                  let mode = ProcessingMode.fromPersisted(raw) else {
-                return .centerVocalCut
-            }
-            return mode
-        }
-        set { defaults.set(newValue.rawValue, forKey: Key.processingMode) }
     }
 
     var separationModelVariant: SeparationModelVariant {

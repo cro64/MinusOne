@@ -1,90 +1,66 @@
 import AppKit
 
-/// First-launch welcome + Neural model download.
+/// Factory for the first-launch welcome + Neural model download screen. Per REDESIGN.md §5 this
+/// renders inside `MainWindowController`'s window, not a standalone window — `OnboardingViewController`
+/// is a plain content view controller MainWindowController swaps in until onboarding finishes.
 enum OnboardingController {
-    private static var activeSession: OnboardingSession?
-
-    static func showIfNeeded(preferences: Preferences, captureBackend _: CaptureBackend) {
-        guard !preferences.hasCompletedOnboarding else {
-            AppLogger.shared.info("Onboarding skipped — already completed")
-            return
-        }
-        guard activeSession == nil else { return }
-
-        let session = OnboardingSession(preferences: preferences) {
-            activeSession = nil
-        }
-        activeSession = session
-        session.run()
+    static func makeViewController(
+        preferences: Preferences,
+        onFinished: @escaping (Bool) -> Void
+    ) -> OnboardingViewController {
+        OnboardingViewController(preferences: preferences, onFinished: onFinished)
     }
 }
 
-private final class OnboardingSession: NSObject, NSWindowDelegate {
+/// First-launch welcome screen. The Neural model is mandatory for Live to do anything (REDESIGN.md
+/// §5), so this no longer offers a "skip and use Center Cut" fallback — backing out just defers the
+/// download, and the Live tab picks up the gap with its own model-required state.
+final class OnboardingViewController: NSViewController {
     private let preferences: Preferences
-    private let onClose: () -> Void
-    private let window: NSWindow
+    private let onFinished: (Bool) -> Void
+
     private let modelInfoButton = NSButton(title: "", target: nil, action: nil)
     private let statusLabel = NSTextField(labelWithString: "")
     private let progress = NSProgressIndicator()
     private let primaryButton = NSButton(title: "Download & Continue", target: nil, action: nil)
-    private let skipButton = NSButton(title: "Skip for Now", target: nil, action: nil)
+    private let skipButton = NSButton(title: "Continue Without Downloading", target: nil, action: nil)
     private var modelInfoPopover: NSPopover?
     private var isBusy = false
-    private var previousActivationPolicy: NSApplication.ActivationPolicy = .accessory
     private var downloadTask: Task<Void, Never>?
+    private var didFinish = false
 
     private let variant = SeparationModelVariant.balanced
 
-    init(
-        preferences: Preferences,
-        onClose: @escaping () -> Void
-    ) {
+    init(preferences: Preferences, onFinished: @escaping (Bool) -> Void) {
         self.preferences = preferences
-        self.onClose = onClose
-
-        let size = NSSize(width: 360, height: 260)
-        window = NSWindow(
-            contentRect: NSRect(origin: .zero, size: size),
-            styleMask: [.titled, .closable],
-            backing: .buffered,
-            defer: false
-        )
-        window.title = "MinusOne"
-        window.isReleasedWhenClosed = false
-        window.level = .floating
-        window.collectionBehavior = [.moveToActiveSpace, .fullScreenAuxiliary]
-        window.center()
-
-        super.init()
-        window.delegate = self
-        window.contentView = makeContentView(size: size)
+        self.onFinished = onFinished
+        super.init(nibName: nil, bundle: nil)
     }
 
-    func run() {
-        // LSUIElement (.accessory) apps cannot reliably show key windows — flip to regular while open.
-        previousActivationPolicy = NSApp.activationPolicy()
-        NSApp.setActivationPolicy(.regular)
-        NSApp.activate(ignoringOtherApps: true)
-        window.center()
-        window.makeKeyAndOrderFront(nil)
-        window.orderFrontRegardless()
-        AppLogger.shared.info("Onboarding window shown")
+    @available(*, unavailable)
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
     }
 
-    func windowShouldClose(_ sender: NSWindow) -> Bool {
-        if isBusy {
-            confirmCancelDownload(closingWindow: true)
-            return false
+    override func loadView() {
+        let size = NSSize(width: 420, height: 300)
+        view = makeContentView(size: size)
+    }
+
+    /// Called by `MainWindowController` when the host window is about to close. Returns `true` to
+    /// allow the close, `false` to keep it open (e.g. an in-flight download the user chose to keep).
+    func handleWindowShouldClose() -> Bool {
+        guard isBusy else {
+            finish(downloaded: false)
+            return true
         }
-        finish(downloaded: false)
-        return false
+        return !confirmCancelDownload()
     }
 
     private func makeContentView(size: NSSize) -> NSView {
         let root = NSView(frame: NSRect(origin: .zero, size: size))
 
-        let brandColor = NSColor(srgbRed: 0.90980, green: 0.27843, blue: 0.35294, alpha: 1)
-        let logoImage = MinusOneIcon.waveform(size: 56, color: brandColor, isActive: true)
+        let logoImage = MinusOneIcon.waveform(size: 56, color: .brandAccent, isActive: true)
         let logoView = NSImageView(image: logoImage)
         logoView.imageScaling = .scaleProportionallyUpOrDown
         logoView.translatesAutoresizingMaskIntoConstraints = false
@@ -97,7 +73,7 @@ private final class OnboardingSession: NSObject, NSWindowDelegate {
         name.alignment = .center
 
         let body = NSTextField(wrappingLabelWithString: """
-        Live vocal reduction for system audio. Download the Neural model for best quality (\(variant.approximateDownloadSizeText)), or skip and use Center Cut.
+        Live vocal reduction runs on the Neural model — there's no other processing path. Download it once (\(variant.approximateDownloadSizeText), about 20 seconds to prepare after downloading) and Live is ready whenever you are.
         """)
         body.font = .systemFont(ofSize: NSFont.systemFontSize)
         body.textColor = .secondaryLabelColor
@@ -169,10 +145,9 @@ private final class OnboardingSession: NSObject, NSWindowDelegate {
 
         root.addSubview(stack)
         NSLayoutConstraint.activate([
-            stack.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: 24),
-            stack.trailingAnchor.constraint(equalTo: root.trailingAnchor, constant: -24),
-            stack.topAnchor.constraint(equalTo: root.topAnchor, constant: 20),
-            stack.bottomAnchor.constraint(lessThanOrEqualTo: root.bottomAnchor, constant: -20),
+            stack.centerXAnchor.constraint(equalTo: root.centerXAnchor),
+            stack.centerYAnchor.constraint(equalTo: root.centerYAnchor),
+            stack.widthAnchor.constraint(equalToConstant: 340),
             header.widthAnchor.constraint(equalTo: stack.widthAnchor),
             body.widthAnchor.constraint(equalTo: stack.widthAnchor),
             modelHeader.widthAnchor.constraint(equalTo: stack.widthAnchor),
@@ -206,7 +181,7 @@ private final class OnboardingSession: NSObject, NSWindowDelegate {
         if SeparationModelFactory.isAvailable(variant) {
             return "Already installed."
         }
-        return "One-time download, \(variant.approximateDownloadSizeText)."
+        return "One-time download, \(variant.approximateDownloadSizeText), then ~20 s to prepare."
     }
 
     private func updatePrimaryButtonTitle() {
@@ -239,7 +214,7 @@ private final class OnboardingSession: NSObject, NSWindowDelegate {
 
     @objc private func skipClicked() {
         if isBusy {
-            confirmCancelDownload(closingWindow: false)
+            _ = confirmCancelDownload()
             return
         }
         finish(downloaded: false)
@@ -257,35 +232,36 @@ private final class OnboardingSession: NSObject, NSWindowDelegate {
         beginDownload()
     }
 
-    private func confirmCancelDownload(closingWindow: Bool) {
+    /// Returns whether the download was actually canceled (so callers can decide whether to also
+    /// close their host window).
+    @discardableResult
+    private func confirmCancelDownload() -> Bool {
         let alert = NSAlert()
         alert.messageText = "Cancel download?"
-        alert.informativeText = "The model isn’t installed yet. You can download later with Scripts/download-model.sh, or skip and use Center Cut."
+        alert.informativeText = "The Neural model isn't installed yet. Live vocal reduction won't work until you download it — you can pick this up again from the Live tab."
         alert.alertStyle = .warning
         alert.addButton(withTitle: "Keep Downloading")
-        alert.addButton(withTitle: closingWindow ? "Cancel & Close" : "Cancel Download")
+        alert.addButton(withTitle: "Cancel Download")
         let response = alert.runModal()
-        guard response == .alertSecondButtonReturn else { return }
-        cancelDownload(closeAfter: closingWindow)
+        guard response == .alertSecondButtonReturn else { return false }
+        cancelDownload()
+        return true
     }
 
-    private func cancelDownload(closeAfter: Bool) {
+    private func cancelDownload() {
         downloadTask?.cancel()
         downloadTask = nil
         ModelDownloadService.cleanupStaging(for: variant)
         isBusy = false
         primaryButton.isEnabled = true
         skipButton.isEnabled = true
-        skipButton.title = "Skip for Now"
+        skipButton.title = "Continue Without Downloading"
         progress.isHidden = true
         progress.doubleValue = 0
         statusLabel.stringValue = "Download canceled."
         statusLabel.textColor = .secondaryLabelColor
         updatePrimaryButtonTitle()
         AppLogger.shared.info("Onboarding model download canceled")
-        if closeAfter {
-            finish(downloaded: false)
-        }
     }
 
     private func beginDownload() {
@@ -308,17 +284,16 @@ private final class OnboardingSession: NSObject, NSWindowDelegate {
                     guard !Task.isCancelled else { return }
                     self.downloadTask = nil
                     self.preferences.separationModelVariant = self.variant
-                    self.preferences.processingMode = .aiVocalSeparation
-                    self.statusLabel.stringValue = "Model installed. Neural mode is ready."
+                    self.statusLabel.stringValue = "Model installed. Live is ready."
                     self.statusLabel.textColor = .secondaryLabelColor
                     self.progress.doubleValue = 1
-                    self.skipButton.title = "Skip for Now"
+                    self.skipButton.title = "Continue Without Downloading"
                     self.finish(downloaded: true)
                 }
             } catch is CancellationError {
                 await MainActor.run {
                     if self.isBusy {
-                        self.cancelDownload(closeAfter: false)
+                        self.cancelDownload()
                     }
                 }
             } catch {
@@ -327,7 +302,7 @@ private final class OnboardingSession: NSObject, NSWindowDelegate {
                     self.isBusy = false
                     self.primaryButton.isEnabled = true
                     self.skipButton.isEnabled = true
-                    self.skipButton.title = "Skip for Now"
+                    self.skipButton.title = "Continue Without Downloading"
                     self.progress.isHidden = true
                     self.statusLabel.stringValue = error.localizedDescription
                     self.statusLabel.textColor = .systemRed
@@ -339,6 +314,8 @@ private final class OnboardingSession: NSObject, NSWindowDelegate {
     }
 
     private func finish(downloaded: Bool) {
+        guard !didFinish else { return }
+        didFinish = true
         preferences.hasCompletedOnboarding = true
         if downloaded {
             AppLogger.shared.info("Onboarding completed with Neural model installed")
@@ -347,11 +324,9 @@ private final class OnboardingSession: NSObject, NSWindowDelegate {
         }
         modelInfoPopover?.performClose(nil)
         modelInfoPopover = nil
-        window.orderOut(nil)
-        NSApp.setActivationPolicy(previousActivationPolicy)
         isBusy = false
         downloadTask = nil
-        onClose()
+        onFinished(downloaded)
     }
 }
 
@@ -389,7 +364,7 @@ private final class ModelSourceInfoViewController: NSViewController {
             link.isBordered = false
             link.bezelStyle = .inline
             link.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
-            link.contentTintColor = .controlAccentColor
+            link.contentTintColor = .brandAccent
             link.alignment = .left
             arranged.append(link)
         }

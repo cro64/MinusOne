@@ -9,11 +9,23 @@ final class SettingsPopoverViewController: NSViewController {
     private let intensitySlider = DragValueSlider(value: 100, minValue: 0, maxValue: 100, target: nil, action: nil)
     private let makeupSlider = DragValueSlider(value: 4.5, minValue: 0, maxValue: 12, target: nil, action: nil)
     private let sliderValueOverlay = PopoverUI.valueLabel()
-    private let modePopUp = NSPopUpButton(frame: .zero, pullsDown: false)
     private let captureScopePopUp = NSPopUpButton(frame: .zero, pullsDown: false)
     private var appPickerPopUp: NSPopUpButton?
     private let permissionButton = PopoverUI.linkButton(title: "Open Microphone Settings…")
     private var contentStack: NSStackView?
+
+    // REDESIGN.md §5: the Neural model is required for Live to do anything. When it isn't
+    // installed, `processingBody` swaps the Intensity/Gain rows for a persistent gate + download
+    // CTA — never a toggle that silently does nothing. `AudioEngine.isNeuralSeparationAvailable`
+    // is the single shared source of truth also used by Practice's separation engine.
+    private let processingBody = NSView()
+    private var cachedProcessingRowsView: NSView?
+    private var cachedModelGateView: NSView?
+    private let modelGateStatusLabel = NSTextField(labelWithString: "")
+    private let modelGateProgress = NSProgressIndicator()
+    private let modelGateDownloadButton = NSButton(title: "", target: nil, action: nil)
+    private var isDownloadingModel = false
+    private var modelGateDownloadTask: Task<Void, Never>?
 
     private var currentStatus: AudioEngineStatus = .idle
     private var activeOverlaySlider: NSSlider?
@@ -45,6 +57,7 @@ final class SettingsPopoverViewController: NSViewController {
         permissionButton.isHidden = true
         updateCaptureScopeUI()
         refreshStatusHeader()
+        updateModelGate()
         sizeToFitContent()
     }
 
@@ -52,12 +65,10 @@ final class SettingsPopoverViewController: NSViewController {
         var sections: [NSView] = [statusHeaderContainer]
         statusHeaderContainer.translatesAutoresizingMaskIntoConstraints = false
 
-        let processingRows: [NSView] = [
-            formRow(label: "Mode", control: modePopUp),
-            PopoverUI.sliderRow(label: "Intensity", slider: intensitySlider),
-            PopoverUI.sliderRow(label: "Gain", slider: makeupSlider)
-        ]
-        sections.append(section(title: "Processing", rows: processingRows))
+        let header = PopoverUI.sectionHeader("Processing")
+        processingBody.translatesAutoresizingMaskIntoConstraints = false
+        let processingSection = PopoverUI.verticalStack([header, processingBody], spacing: 8)
+        sections.append(processingSection)
 
         if #available(macOS 14.2, *) {
             let picker = AppPickerPopUpButton(preferences: preferences, audioEngine: audioEngine)
@@ -110,11 +121,8 @@ final class SettingsPopoverViewController: NSViewController {
     }
 
     func reloadFromPreferences() {
-        guard isViewLoaded, modePopUp.numberOfItems > 0 else { return }
+        guard isViewLoaded, captureScopePopUp.numberOfItems > 0 else { return }
 
-        if let modeIndex = ProcessingMode.allCases.firstIndex(of: preferences.processingMode) {
-            setPopUpSelection(modePopUp, index: modeIndex, action: #selector(modeChanged))
-        }
         if let scopeIndex = CaptureScope.allCases.firstIndex(of: preferences.captureScope) {
             setPopUpSelection(captureScopePopUp, index: scopeIndex, action: #selector(captureScopeChanged))
         }
@@ -123,6 +131,7 @@ final class SettingsPopoverViewController: NSViewController {
         makeupSlider.floatValue = preferences.makeupGainDecibels
         updateCaptureScopeUI()
         refreshControlStates()
+        updateModelGate()
         if #available(macOS 14.2, *) {
             (appPickerPopUp as? AppPickerPopUpButton)?.reloadFromPreferences()
         }
@@ -170,13 +179,6 @@ final class SettingsPopoverViewController: NSViewController {
         }
         makeupSlider.onDragEnded = { [weak self] in
             self?.endSliderOverlay()
-        }
-
-        PopoverUI.configurePopUp(modePopUp)
-        modePopUp.target = self
-        modePopUp.action = #selector(modeChanged)
-        for mode in ProcessingMode.allCases {
-            modePopUp.addItem(withTitle: mode.displayName)
         }
 
         PopoverUI.configurePopUp(captureScopePopUp)
@@ -255,11 +257,9 @@ final class SettingsPopoverViewController: NSViewController {
     private func statusCopy(for status: AudioEngineStatus, isFilterActive: Bool) -> (String, NSColor, String?) {
         switch status {
         case .active where isFilterActive:
-            return ("On", .controlAccentColor, nil)
+            return ("On", .brandAccent, nil)
         case .warmingUp:
             return ("Warming up", .systemCyan, nil)
-        case .monoInput:
-            return ("Mono input", .systemYellow, nil)
         case .permissionRequired:
             return ("Permission needed", .systemOrange, nil)
         case .error(let message):
@@ -268,35 +268,18 @@ final class SettingsPopoverViewController: NSViewController {
             return ("Off", .tertiaryLabelColor, nil)
         default:
             return isFilterActive
-                ? ("On", .controlAccentColor, nil)
+                ? ("On", .brandAccent, nil)
                 : ("Off", .tertiaryLabelColor, nil)
         }
     }
 
     private func refreshControlStates() {
-        let neuralAvailable = audioEngine.isNeuralSeparationAvailable
-        let mode = preferences.processingMode
-
-        if let neuralIndex = ProcessingMode.allCases.firstIndex(of: .aiVocalSeparation),
-           let item = modePopUp.item(at: neuralIndex) {
-            item.isEnabled = true
-            item.attributedTitle = NSAttributedString(
-                string: ProcessingMode.aiVocalSeparation.displayName,
-                attributes: neuralAvailable
-                    ? [:]
-                    : [.foregroundColor: NSColor.secondaryLabelColor]
-            )
-            item.toolTip = neuralAvailable
-                ? ProcessingMode.aiVocalSeparation.detailText
-                : SeparationModelFactory.modelInstallHint
-        }
-
-        let reductionEnabled = mode.supportsVocalReduction
-        intensitySlider.isEnabled = reductionEnabled
-        makeupSlider.isEnabled = reductionEnabled
-        intensitySlider.alphaValue = reductionEnabled ? 1 : 0.45
-        makeupSlider.alphaValue = reductionEnabled ? 1 : 0.45
-        modePopUp.toolTip = mode.detailText
+        // Neural is the only path now; controls are always active (model-required gating is a
+        // later pass — see REDESIGN.md §5).
+        intensitySlider.isEnabled = true
+        makeupSlider.isEnabled = true
+        intensitySlider.alphaValue = 1
+        makeupSlider.alphaValue = 1
 
         let processTapAvailable = audioEngine.activeCaptureBackend != .blackHole
         captureScopePopUp.isEnabled = processTapAvailable || audioEngine.activeCaptureBackend == nil
@@ -304,6 +287,115 @@ final class SettingsPopoverViewController: NSViewController {
         captureScopePopUp.toolTip = captureScopePopUp.isEnabled
             ? preferences.captureScope.detailText
             : "App selection requires Process Tap (macOS 14.2+). BlackHole captures all audio."
+    }
+
+    // MARK: - Model-required gate (REDESIGN.md §5)
+
+    private func updateModelGate() {
+        guard isViewLoaded else { return }
+
+        let available = audioEngine.isNeuralSeparationAvailable
+        let target = available ? processingRowsView() : modelRequiredView()
+
+        if target.superview !== processingBody {
+            processingBody.subviews.forEach { $0.removeFromSuperview() }
+            target.translatesAutoresizingMaskIntoConstraints = false
+            processingBody.addSubview(target)
+            NSLayoutConstraint.activate([
+                target.leadingAnchor.constraint(equalTo: processingBody.leadingAnchor),
+                target.trailingAnchor.constraint(equalTo: processingBody.trailingAnchor),
+                target.topAnchor.constraint(equalTo: processingBody.topAnchor),
+                target.bottomAnchor.constraint(equalTo: processingBody.bottomAnchor)
+            ])
+            sizeToFitContent()
+        }
+    }
+
+    private func processingRowsView() -> NSView {
+        if let existing = cachedProcessingRowsView { return existing }
+        let view = PopoverUI.verticalStack(
+            [
+                PopoverUI.sliderRow(label: "Intensity", slider: intensitySlider),
+                PopoverUI.sliderRow(label: "Gain", slider: makeupSlider)
+            ],
+            spacing: PopoverUI.Metrics.rowSpacing
+        )
+        cachedProcessingRowsView = view
+        return view
+    }
+
+    private func modelRequiredView() -> NSView {
+        if let existing = cachedModelGateView { return existing }
+
+        let message = NSTextField(wrappingLabelWithString: "Vocal reduction needs the Neural model.")
+        message.font = .systemFont(ofSize: NSFont.systemFontSize)
+        message.textColor = .secondaryLabelColor
+
+        modelGateDownloadButton.title = "Download Neural Model (\(SeparationModelVariant.balanced.approximateDownloadSizeText))"
+        modelGateDownloadButton.bezelStyle = .rounded
+        modelGateDownloadButton.target = self
+        modelGateDownloadButton.action = #selector(downloadModelClicked)
+
+        modelGateStatusLabel.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
+        modelGateStatusLabel.textColor = .secondaryLabelColor
+        modelGateStatusLabel.isHidden = true
+
+        modelGateProgress.style = .bar
+        modelGateProgress.isIndeterminate = false
+        modelGateProgress.minValue = 0
+        modelGateProgress.maxValue = 1
+        modelGateProgress.doubleValue = 0
+        modelGateProgress.isHidden = true
+        modelGateProgress.translatesAutoresizingMaskIntoConstraints = false
+        modelGateProgress.heightAnchor.constraint(equalToConstant: 12).isActive = true
+
+        let view = PopoverUI.verticalStack(
+            [message, modelGateDownloadButton, modelGateStatusLabel, modelGateProgress],
+            spacing: 8
+        )
+        cachedModelGateView = view
+        return view
+    }
+
+    @objc private func downloadModelClicked() {
+        guard !isDownloadingModel else { return }
+        isDownloadingModel = true
+        modelGateDownloadButton.isEnabled = false
+        modelGateStatusLabel.isHidden = false
+        modelGateStatusLabel.textColor = .secondaryLabelColor
+        modelGateStatusLabel.stringValue = "Starting download…"
+        modelGateProgress.isHidden = false
+        modelGateProgress.doubleValue = 0
+        sizeToFitContent()
+
+        let variant = SeparationModelVariant.balanced
+        modelGateDownloadTask = Task { [weak self] in
+            guard let self else { return }
+            do {
+                try await ModelDownloadService.install(variant) { [weak self] fraction, message in
+                    self?.modelGateProgress.doubleValue = fraction
+                    self?.modelGateStatusLabel.stringValue = message
+                }
+                await MainActor.run {
+                    self.preferences.separationModelVariant = variant
+                    self.isDownloadingModel = false
+                    self.modelGateDownloadTask = nil
+                    self.updateModelGate()
+                    self.refreshControlStates()
+                    self.onSettingsChanged?()
+                }
+            } catch {
+                await MainActor.run {
+                    self.isDownloadingModel = false
+                    self.modelGateDownloadTask = nil
+                    self.modelGateDownloadButton.isEnabled = true
+                    self.modelGateStatusLabel.textColor = .systemRed
+                    self.modelGateStatusLabel.stringValue = error.localizedDescription
+                    self.sizeToFitContent()
+                    AppLogger.shared.error("Live tab model download failed: \(error.localizedDescription)")
+                }
+            }
+        }
     }
 
     private func updateCaptureScopeUI() {
@@ -377,27 +469,6 @@ final class SettingsPopoverViewController: NSViewController {
         popUp.selectItem(at: index)
         popUp.action = previousAction
         popUp.target = previousTarget
-    }
-
-    @objc private func modeChanged() {
-        let index = modePopUp.indexOfSelectedItem
-        guard index >= 0, index < ProcessingMode.allCases.count else { return }
-
-        let mode = ProcessingMode.allCases[index]
-        if mode == .aiVocalSeparation, !audioEngine.isNeuralSeparationAvailable {
-            if let revert = ProcessingMode.allCases.firstIndex(of: preferences.processingMode) {
-                setPopUpSelection(modePopUp, index: revert, action: #selector(modeChanged))
-            }
-            return
-        }
-
-        audioEngine.setProcessingMode(mode)
-        if let actual = ProcessingMode.allCases.firstIndex(of: preferences.processingMode) {
-            setPopUpSelection(modePopUp, index: actual, action: #selector(modeChanged))
-        }
-        refreshControlStates()
-        refreshStatusHeader()
-        onSettingsChanged?()
     }
 
     @objc private func captureScopeChanged() {

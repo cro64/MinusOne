@@ -9,7 +9,7 @@ final class PracticeDeckViewController: NSViewController {
     private var isEngineLoaded = false
     private var lastReloadedReadySeconds: Double = 0
 
-    private let emptyStateLabel = NSTextField(labelWithString: "Select or import a clip to start practicing.")
+    private let emptyStateView = PracticeEmptyStateView()
     private let titleLabel = NSTextField(labelWithString: "")
     private let statusLabel = NSTextField(labelWithString: "")
     private let waveformView = WaveformView(style: .interactive)
@@ -20,6 +20,17 @@ final class PracticeDeckViewController: NSViewController {
     private let tempoValueLabel = NSTextField(labelWithString: "100%")
     private var mixerRows: [SeparationStem: MixerRowView] = [:]
     private var contentStack: NSStackView?
+
+    /// Wired by the owning window controller to the same actions as the toolbar's Import/Record,
+    /// so the empty state's CTAs (REDESIGN.md §4) aren't a second, divergent code path.
+    var onImportRequested: (() -> Void)? {
+        get { emptyStateView.onImportRequested }
+        set { emptyStateView.onImportRequested = newValue }
+    }
+    var onRecordRequested: (() -> Void)? {
+        get { emptyStateView.onRecordRequested }
+        set { emptyStateView.onRecordRequested = newValue }
+    }
 
     init(libraryStore: ClipLibraryStore, playbackEngine: PracticePlaybackEngine) {
         self.libraryStore = libraryStore
@@ -35,12 +46,13 @@ final class PracticeDeckViewController: NSViewController {
     override func loadView() {
         view = NSView(frame: NSRect(x: 0, y: 0, width: 700, height: 560))
 
-        emptyStateLabel.textColor = .secondaryLabelColor
-        emptyStateLabel.translatesAutoresizingMaskIntoConstraints = false
-        view.addSubview(emptyStateLabel)
+        emptyStateView.translatesAutoresizingMaskIntoConstraints = false
+        view.addSubview(emptyStateView)
         NSLayoutConstraint.activate([
-            emptyStateLabel.centerXAnchor.constraint(equalTo: view.centerXAnchor),
-            emptyStateLabel.centerYAnchor.constraint(equalTo: view.centerYAnchor)
+            emptyStateView.centerXAnchor.constraint(equalTo: view.centerXAnchor),
+            emptyStateView.centerYAnchor.constraint(equalTo: view.centerYAnchor),
+            emptyStateView.leadingAnchor.constraint(greaterThanOrEqualTo: view.leadingAnchor, constant: PopoverUI.Metrics.Regular.padding),
+            emptyStateView.trailingAnchor.constraint(lessThanOrEqualTo: view.trailingAnchor, constant: -PopoverUI.Metrics.Regular.padding)
         ])
 
         buildContent()
@@ -59,31 +71,31 @@ final class PracticeDeckViewController: NSViewController {
         waveformView.translatesAutoresizingMaskIntoConstraints = false
         waveformView.heightAnchor.constraint(equalToConstant: 140).isActive = true
 
-        playPauseButton.bezelStyle = .rounded
         playPauseButton.target = self
         playPauseButton.action = #selector(togglePlayPause)
+        stylePlaybackControl(playPauseButton)
 
-        loopButton.bezelStyle = .rounded
         loopButton.setButtonType(.pushOnPushOff)
         loopButton.target = self
         loopButton.action = #selector(toggleLoop)
+        stylePlaybackControl(loopButton)
 
         timeLabel.isHidden = false
         timeLabel.stringValue = "0:00 / 0:00"
 
-        let transportRow = PopoverUI.verticalStack([], spacing: 0)
         let transportStack = NSStackView(views: [playPauseButton, loopButton, timeLabel])
         transportStack.orientation = .horizontal
-        transportStack.spacing = 10
+        transportStack.spacing = PopoverUI.Metrics.Regular.rowSpacing
         transportStack.alignment = .centerY
-        _ = transportRow
 
         tempoSlider.isContinuous = true
         tempoSlider.target = self
         tempoSlider.action = #selector(tempoChanged)
-        let tempoRow = NSStackView(views: [PopoverUI.fieldLabel("Tempo"), tempoSlider, tempoValueLabel])
+        let tempoLabel = PopoverUI.fieldLabel("Tempo")
+        tempoLabel.widthAnchor.constraint(equalToConstant: PopoverUI.Metrics.Regular.labelWidth).isActive = true
+        let tempoRow = NSStackView(views: [tempoLabel, tempoSlider, tempoValueLabel])
         tempoRow.orientation = .horizontal
-        tempoRow.spacing = 8
+        tempoRow.spacing = PopoverUI.Metrics.Regular.rowSpacing
         tempoRow.alignment = .centerY
         tempoSlider.widthAnchor.constraint(greaterThanOrEqualToConstant: 160).isActive = true
 
@@ -100,23 +112,30 @@ final class PracticeDeckViewController: NSViewController {
             mixerRows[stem] = row
             mixerViews.append(row)
         }
-        let mixerStack = PopoverUI.verticalStack(mixerViews, spacing: 6)
+        let mixerStack = PopoverUI.verticalStack(mixerViews, spacing: PopoverUI.Metrics.Regular.rowSpacing)
 
         let content = PopoverUI.verticalStack(
             [titleLabel, statusLabel, waveformView, transportStack, tempoRow, mixerStack],
-            spacing: 14
+            spacing: PopoverUI.Metrics.Regular.sectionSpacing
         )
         content.setCustomSpacing(2, after: titleLabel)
         content.setCustomSpacing(4, after: statusLabel)
         waveformView.widthAnchor.constraint(equalTo: content.widthAnchor).isActive = true
 
         view.addSubview(content)
+        let pad = PopoverUI.Metrics.Regular.padding
         NSLayoutConstraint.activate([
-            content.topAnchor.constraint(equalTo: view.topAnchor, constant: 24),
-            content.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 24),
-            content.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -24)
+            content.topAnchor.constraint(equalTo: view.topAnchor, constant: pad),
+            content.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: pad),
+            content.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -pad)
         ])
         contentStack = content
+    }
+
+    private func stylePlaybackControl(_ button: NSButton) {
+        button.bezelStyle = .accessoryBarAction
+        button.controlSize = .regular
+        button.font = .systemFont(ofSize: NSFont.systemFontSize, weight: .medium)
     }
 
     private func setupBindings() {
@@ -130,12 +149,14 @@ final class PracticeDeckViewController: NSViewController {
             self.playbackEngine.setLoopRange(seconds)
             self.playbackEngine.isLoopEnabled = true
             self.loopButton.state = .on
+            self.loopButton.contentTintColor = .brandAccent
         }
         playbackEngine.onPlayheadUpdate = { [weak self] time in
             self?.updatePlayhead(time)
         }
         playbackEngine.onPlaybackFinished = { [weak self] in
             self?.playPauseButton.title = "Play"
+            self?.playPauseButton.contentTintColor = nil
         }
     }
 
@@ -202,7 +223,7 @@ final class PracticeDeckViewController: NSViewController {
     }
 
     private func showEmptyState(_ empty: Bool) {
-        emptyStateLabel.isHidden = !empty
+        emptyStateView.isHidden = !empty
         contentStack?.isHidden = empty
     }
 
@@ -212,14 +233,18 @@ final class PracticeDeckViewController: NSViewController {
         if playbackEngine.isPlaying {
             playbackEngine.pause()
             playPauseButton.title = "Play"
+            playPauseButton.contentTintColor = nil
         } else {
             playbackEngine.play()
             playPauseButton.title = "Pause"
+            playPauseButton.contentTintColor = .brandAccent
         }
     }
 
     @objc private func toggleLoop() {
-        playbackEngine.isLoopEnabled = (loopButton.state == .on)
+        let enabled = loopButton.state == .on
+        playbackEngine.isLoopEnabled = enabled
+        loopButton.contentTintColor = enabled ? .brandAccent : nil
     }
 
     @objc private func tempoChanged() {
@@ -257,28 +282,26 @@ private final class MixerRowView: NSView {
     private let muteButton: NSButton
 
     init(stem: SeparationStem) {
+        let color = stem.identityColor
+
         let label = PopoverUI.fieldLabel(stem.displayName)
-        label.widthAnchor.constraint(equalToConstant: 56).isActive = true
+        label.textColor = color
+        label.font = .systemFont(ofSize: NSFont.systemFontSize, weight: .semibold)
+        label.widthAnchor.constraint(equalToConstant: PopoverUI.Metrics.Regular.labelWidth).isActive = true
 
         let slider = NSSlider(value: 1, minValue: 0, maxValue: 1, target: nil, action: nil)
         slider.isContinuous = true
+        slider.trackFillColor = color
         slider.widthAnchor.constraint(greaterThanOrEqualToConstant: 140).isActive = true
 
-        soloButton = NSButton(title: "Solo", target: nil, action: nil)
-        soloButton.setButtonType(.pushOnPushOff)
-        soloButton.bezelStyle = .rounded
-        soloButton.controlSize = .small
-
-        muteButton = NSButton(title: "Mute", target: nil, action: nil)
-        muteButton.setButtonType(.pushOnPushOff)
-        muteButton.bezelStyle = .rounded
-        muteButton.controlSize = .small
+        soloButton = PopoverUI.toggleControlButton(title: "Solo", target: nil, action: nil)
+        muteButton = PopoverUI.toggleControlButton(title: "Mute", target: nil, action: nil)
 
         super.init(frame: .zero)
 
         let row = NSStackView(views: [label, slider, soloButton, muteButton])
         row.orientation = .horizontal
-        row.spacing = 8
+        row.spacing = PopoverUI.Metrics.Regular.rowSpacing
         row.alignment = .centerY
         row.translatesAutoresizingMaskIntoConstraints = false
         addSubview(row)
@@ -304,6 +327,7 @@ private final class MixerRowView: NSView {
 
     func setSoloed(_ soloed: Bool) {
         soloButton.state = soloed ? .on : .off
+        soloButton.contentTintColor = soloed ? .brandAccent : nil
     }
 
     @objc private func sliderChanged(_ sender: NSSlider) {
@@ -315,6 +339,8 @@ private final class MixerRowView: NSView {
     }
 
     @objc private func muteClicked() {
-        onMuteToggled?(muteButton.state == .on)
+        let muted = muteButton.state == .on
+        muteButton.contentTintColor = muted ? .systemRed : nil
+        onMuteToggled?(muted)
     }
 }

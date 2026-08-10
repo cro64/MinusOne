@@ -1,6 +1,33 @@
 import AppKit
 
-/// Shared layout and control styling for menu bar popovers.
+extension NSColor {
+    /// Brand coral, `#E8475A` (`srgb 0.910, 0.278, 0.353`). Replaces `.controlAccentColor`
+    /// app-wide per the design system in REDESIGN.md §6.
+    static let brandAccent = NSColor(srgbRed: 0.910, green: 0.278, blue: 0.353, alpha: 1.0)
+
+    /// Amber `#D98C3F` — Drums identity color, REDESIGN.md §4/§6 stem palette.
+    static let stemDrums = NSColor(srgbRed: 0.851, green: 0.549, blue: 0.247, alpha: 1.0)
+    /// Teal `#3F8FA8` — Bass identity color.
+    static let stemBass = NSColor(srgbRed: 0.247, green: 0.561, blue: 0.659, alpha: 1.0)
+    /// Plum `#8A6FB0` — Other identity color.
+    static let stemOther = NSColor(srgbRed: 0.541, green: 0.435, blue: 0.690, alpha: 1.0)
+}
+
+extension SeparationStem {
+    /// Fixed per-stem identity color (REDESIGN.md §4), reused for the mixer row, slider fill,
+    /// and label everywhere a stem is represented. Vocals deliberately reuses the brand accent.
+    var identityColor: NSColor {
+        switch self {
+        case .vocals: return .brandAccent
+        case .drums: return .stemDrums
+        case .bass: return .stemBass
+        case .other: return .stemOther
+        }
+    }
+}
+
+/// Shared layout and control styling for both the menu bar popover (compact scale) and the
+/// desktop window (regular scale). Formerly popover-only; now the design-system source of truth.
 enum PopoverUI {
     enum Metrics {
         /// Inset around menu content.
@@ -21,6 +48,16 @@ enum PopoverUI {
                 width: menuWidth,
                 height: ceil(contentHeight) + padding * 2
             )
+        }
+
+        /// Window-scale metrics (desktop window content, e.g. the Practice tab), as opposed to
+        /// the compact metrics above which size the menu bar popover. Both read from this one
+        /// source per REDESIGN.md §6 rather than each surface inventing its own numbers.
+        enum Regular {
+            static let padding: CGFloat = 24
+            static let sectionSpacing: CGFloat = 16
+            static let rowSpacing: CGFloat = 10
+            static let labelWidth: CGFloat = 64
         }
     }
 
@@ -148,7 +185,7 @@ enum PopoverUI {
         button.bezelStyle = .inline
         button.controlSize = .small
         button.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
-        button.contentTintColor = .controlAccentColor
+        button.contentTintColor = .brandAccent
         button.translatesAutoresizingMaskIntoConstraints = false
         button.setContentHuggingPriority(.required, for: .horizontal)
         button.setContentCompressionResistancePriority(.required, for: .horizontal)
@@ -161,6 +198,29 @@ enum PopoverUI {
         button.controlSize = .small
         button.font = .systemFont(ofSize: NSFont.systemFontSize)
         button.translatesAutoresizingMaskIntoConstraints = false
+        return button
+    }
+
+    /// Shared style for window-scale toolbar actions (Practice tab's Import/Record) so both use
+    /// one button language instead of mixing a plain toolbar item with a custom-styled button.
+    static func toolbarActionButton(title: String, symbolName: String, target: AnyObject?, action: Selector?) -> NSButton {
+        let button = NSButton(title: title, target: target, action: action)
+        button.image = NSImage(systemSymbolName: symbolName, accessibilityDescription: title)
+        button.imagePosition = .imageLeading
+        button.imageScaling = .scaleProportionallyDown
+        button.bezelStyle = .texturedRounded
+        button.font = .systemFont(ofSize: NSFont.systemFontSize)
+        return button
+    }
+
+    /// Shared style for compact toggle/transport controls (Practice deck's Play/Loop/Solo/Mute)
+    /// in place of stock `NSButton` bezels — pill-shaped, accent-tinted when engaged.
+    static func toggleControlButton(title: String, target: AnyObject?, action: Selector?) -> NSButton {
+        let button = NSButton(title: title, target: target, action: action)
+        button.setButtonType(.pushOnPushOff)
+        button.bezelStyle = .accessoryBarAction
+        button.controlSize = .small
+        button.font = .systemFont(ofSize: NSFont.smallSystemFontSize, weight: .medium)
         return button
     }
 
@@ -249,7 +309,7 @@ final class StatusHeaderView: NSView {
         infoPopover = nil
 
         titleField.stringValue = title
-        titleField.textColor = indicatorColor == .controlAccentColor ? .controlAccentColor : .labelColor
+        titleField.textColor = indicatorColor == .brandAccent ? .brandAccent : .labelColor
         dot.layer?.backgroundColor = indicatorColor.cgColor
 
         let detail = errorDetail?.trimmingCharacters(in: .whitespacesAndNewlines)

@@ -29,7 +29,7 @@
     <key>NSMicrophoneUsageDescription</key>
     <string>MinusOne needs audio input permission when using the BlackHole fallback capture path.</string>
     <key>NSAudioCaptureUsageDescription</key>
-    <string>MinusOne captures system audio to reduce vocals in real time. No audio is recorded or stored.</string>
+    <string>MinusOne captures system audio to reduce vocals in real time, and — only when you start a Practice Mode recording — to save a take for offline practice.</string>
     <key>NSHighResolutionCapable</key>
     <true/>
 </dict>
