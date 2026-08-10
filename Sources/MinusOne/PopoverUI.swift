@@ -17,6 +17,13 @@ extension NSColor {
     static let stemBass = NSColor(srgbRed: 0.247, green: 0.561, blue: 0.659, alpha: 1.0)
     /// Plum `#8A6FB0` — Other identity color.
     static let stemOther = NSColor(srgbRed: 0.541, green: 0.435, blue: 0.690, alpha: 1.0)
+
+    /// Approximates the Modernist design system's `--color-divider` token
+    /// (`color-mix(in srgb, #201e1d 40%, transparent)`) with a dynamic system color instead of a
+    /// literal fixed hex — `#201e1d` is near-black and would be effectively invisible against a
+    /// dark-mode surface. `labelColor` already adapts per-appearance, so tinting its alpha keeps
+    /// the "40%-strength foreground" relationship the token describes in both light and dark.
+    static let flatDivider = NSColor.labelColor.withAlphaComponent(0.4)
 }
 
 extension SeparationStem {
@@ -36,13 +43,17 @@ extension SeparationStem {
 /// desktop window (regular scale). Formerly popover-only; now the design-system source of truth.
 enum PopoverUI {
     enum Metrics {
-        /// Inset around menu content.
-        static let padding: CGFloat = 15
-        static let sectionSpacing: CGFloat = 10
-        static let rowSpacing: CGFloat = 6
+        /// Inset around menu content. Values below are drawn from the Modernist token scale
+        /// (`--space-1` … `--space-8`: 4/8/12/16/24/32), not hand-picked pixel counts.
+        static let padding: CGFloat = 16 // space-4
+        static let sectionSpacing: CGFloat = 12 // space-3
+        static let rowSpacing: CGFloat = 8 // space-2
         static let rowHeight: CGFloat = 20
-        static let labelWidth: CGFloat = 58
-        static let cornerRadius: CGFloat = 8
+        /// Only "Live"/"Record" use this column at compact scale (Intensity/Gain moved to the
+        /// window's Live tab) — composed from two scale tokens (space-6 + space-8) rather than
+        /// the token set itself, since a label column width isn't one of the raw spacing values.
+        static let labelWidth: CGFloat = 56
+        static let cornerRadius: CGFloat = 0
         /// Usable track length for Intensity / Gain (also drives menu width).
         static let sliderMinWidth: CGFloat = 88
         /// Row content: label + gap + control.
@@ -60,9 +71,11 @@ enum PopoverUI {
         /// the compact metrics above which size the menu bar popover. Both read from this one
         /// source per REDESIGN.md §6 rather than each surface inventing its own numbers.
         enum Regular {
-            static let padding: CGFloat = 24
-            static let sectionSpacing: CGFloat = 16
-            static let rowSpacing: CGFloat = 10
+            static let padding: CGFloat = 24 // space-6
+            static let sectionSpacing: CGFloat = 16 // space-4
+            static let rowSpacing: CGFloat = 8 // space-2
+            /// Composed (space-8 + space-8), not a raw token — sized to fit "Intensity", the
+            /// widest field label at this scale.
             static let labelWidth: CGFloat = 64
         }
     }
@@ -108,10 +121,18 @@ enum PopoverUI {
     }
 
     static func sectionHeader(_ title: String) -> NSTextField {
-        let label = NSTextField(labelWithString: title.uppercased())
-        label.font = .systemFont(ofSize: 11, weight: .semibold)
+        let font = NSFont.systemFont(ofSize: 11, weight: .black) // closest system weight to Archivo 800
+        let label = NSTextField(labelWithString: "")
+        label.font = font
         label.textColor = .secondaryLabelColor
         label.translatesAutoresizingMaskIntoConstraints = false
+        // `h6`'s `letter-spacing: 0.08em` needs an attributed string — NSTextField doesn't apply
+        // tracking to a plain `stringValue`.
+        label.attributedStringValue = NSAttributedString(string: title.uppercased(), attributes: [
+            .font: font,
+            .foregroundColor: NSColor.secondaryLabelColor,
+            .kern: font.pointSize * 0.08
+        ])
         return label
     }
 
@@ -133,7 +154,7 @@ enum PopoverUI {
         label.drawsBackground = true
         label.backgroundColor = NSColor.controlBackgroundColor.withAlphaComponent(0.92)
         label.wantsLayer = true
-        label.layer?.cornerRadius = 4
+        label.layer?.cornerRadius = 0
         label.layer?.masksToBounds = true
         label.isHidden = true
         label.translatesAutoresizingMaskIntoConstraints = true
@@ -178,55 +199,45 @@ enum PopoverUI {
         formRow(label: label, control: slider)
     }
 
-    static func separator() -> NSBox {
-        let box = NSBox()
-        box.boxType = .separator
-        box.translatesAutoresizingMaskIntoConstraints = false
-        return box
+    /// `.hr` token: a flat 2px divider fill, not a native 1px `NSBox` hairline.
+    static func separator() -> NSView {
+        let view = NSView()
+        view.wantsLayer = true
+        view.layer?.backgroundColor = NSColor.flatDivider.cgColor
+        view.translatesAutoresizingMaskIntoConstraints = false
+        view.heightAnchor.constraint(equalToConstant: 2).isActive = true
+        return view
     }
 
-    static func linkButton(title: String, target: AnyObject? = nil, action: Selector? = nil) -> NSButton {
-        let button = NSButton(title: title, target: target, action: action)
-        button.isBordered = false
-        button.bezelStyle = .inline
-        button.controlSize = .small
-        button.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
-        button.contentTintColor = .brandAccent
-        button.translatesAutoresizingMaskIntoConstraints = false
+    static func linkButton(title: String, target: AnyObject? = nil, action: Selector? = nil) -> FlatButton {
+        let button = FlatButton(title: title, kind: .ghost, target: target, action: action)
+        button.pointSize = NSFont.smallSystemFontSize
         button.setContentHuggingPriority(.required, for: .horizontal)
         button.setContentCompressionResistancePriority(.required, for: .horizontal)
         return button
     }
 
-    static func accessoryButton(title: String, target: AnyObject? = nil, action: Selector? = nil) -> NSButton {
-        let button = NSButton(title: title, target: target, action: action)
-        button.bezelStyle = .accessoryBar
-        button.controlSize = .small
-        button.font = .systemFont(ofSize: NSFont.systemFontSize)
-        button.translatesAutoresizingMaskIntoConstraints = false
-        return button
+    static func accessoryButton(title: String, target: AnyObject? = nil, action: Selector? = nil) -> FlatButton {
+        FlatButton(title: title, kind: .secondary, target: target, action: action)
     }
 
     /// Shared style for window-scale toolbar actions (Practice tab's Import/Record) so both use
     /// one button language instead of mixing a plain toolbar item with a custom-styled button.
-    static func toolbarActionButton(title: String, symbolName: String, target: AnyObject?, action: Selector?) -> NSButton {
-        let button = NSButton(title: title, target: target, action: action)
+    static func toolbarActionButton(title: String, symbolName: String, target: AnyObject?, action: Selector?) -> FlatButton {
+        let button = FlatButton(title: title, kind: .primary, target: target, action: action)
         button.image = NSImage(systemSymbolName: symbolName, accessibilityDescription: title)
         button.imagePosition = .imageLeading
         button.imageScaling = .scaleProportionallyDown
-        button.bezelStyle = .texturedRounded
-        button.font = .systemFont(ofSize: NSFont.systemFontSize)
         return button
     }
 
     /// Shared style for compact toggle/transport controls (Practice deck's Play/Loop/Solo/Mute)
-    /// in place of stock `NSButton` bezels — pill-shaped, accent-tinted when engaged.
-    static func toggleControlButton(title: String, target: AnyObject?, action: Selector?) -> NSButton {
-        let button = NSButton(title: title, target: target, action: action)
+    /// in place of stock `NSButton` bezels — flat, divider-bordered, filled solid accent when
+    /// engaged (`.seg-opt:checked`-style, though these are independent toggles, not a group).
+    static func toggleControlButton(title: String, target: AnyObject?, action: Selector?) -> FlatButton {
+        let button = FlatButton(title: title, kind: .secondary, target: target, action: action)
+        button.pointSize = NSFont.smallSystemFontSize
         button.setButtonType(.pushOnPushOff)
-        button.bezelStyle = .accessoryBarAction
-        button.controlSize = .small
-        button.font = .systemFont(ofSize: NSFont.smallSystemFontSize, weight: .medium)
         return button
     }
 
@@ -250,11 +261,219 @@ enum PopoverUI {
     }
 }
 
+/// Layer-backed `NSButton` replacement for the native bezel styles (`.accessoryBar`,
+/// `.texturedRounded`, `.accessoryBarAction`, `.inline`) this file used to reach for — flat
+/// fill/border/text per REDESIGN's `.btn-primary`/`.btn-secondary`/`.btn-ghost`, zero corner
+/// radius, `.btn`'s `8px 14.4px` padding and Archivo-800-equivalent (`.black`) title weight.
+///
+/// `title` is overridden so plain `button.title = "…"` assignments (several call sites already
+/// did this against a stock `NSButton`) keep restyling automatically; `isApplyingStyle` guards
+/// against the re-entrant `didSet` AppKit triggers internally when `attributedTitle` is written
+/// (setting `attributedTitle` syncs `title` back, which would otherwise call `refreshStyle()`
+/// a second time from inside itself).
+final class FlatButton: NSButton {
+    enum Kind {
+        case primary
+        case secondary
+        case ghost
+    }
+
+    var kind: Kind {
+        didSet { refreshStyle() }
+    }
+
+    /// Filled "engaged" look for toggle-style controls (Play/Loop/Solo/Mute) that isn't already
+    /// covered by NSButton's own push-on/push-off `state`.
+    var isOn = false {
+        didSet { refreshStyle() }
+    }
+
+    /// Overrides `.secondary`'s engaged fill color — Mute wants red, not the default accent.
+    var engagedFillColorOverride: NSColor? {
+        didSet { refreshStyle() }
+    }
+
+    /// Overrides `.ghost`'s default accent text color — the popover footer's Open/Quit links
+    /// intentionally read as plain text, not an accent-colored CTA.
+    var textColorOverride: NSColor? {
+        didSet { refreshStyle() }
+    }
+
+    var pointSize: CGFloat = 14 {
+        didSet { refreshStyle() }
+    }
+
+    private var isApplyingStyle = false
+
+    override var title: String {
+        didSet {
+            guard !isApplyingStyle else { return }
+            refreshStyle()
+        }
+    }
+
+    override var isEnabled: Bool {
+        didSet { alphaValue = isEnabled ? 1 : 0.45 }
+    }
+
+    init(title: String, kind: Kind, target: AnyObject? = nil, action: Selector? = nil) {
+        self.kind = kind
+        super.init(frame: .zero)
+        isBordered = false
+        wantsLayer = true
+        layer?.cornerRadius = 0
+        layer?.borderWidth = 1
+        self.target = target
+        self.action = action
+        translatesAutoresizingMaskIntoConstraints = false
+        self.title = title
+        refreshStyle()
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    func refreshStyle() {
+        isApplyingStyle = true
+        defer { isApplyingStyle = false }
+
+        let engaged = isOn || state == .on
+        let font = NSFont.systemFont(ofSize: pointSize, weight: .black)
+        let textColor: NSColor
+        switch kind {
+        case .primary:
+            layer?.backgroundColor = NSColor.brandAccent.cgColor
+            layer?.borderColor = NSColor.clear.cgColor
+            textColor = .white
+        case .secondary:
+            let fillColor = engagedFillColorOverride ?? .brandAccent
+            layer?.backgroundColor = (engaged ? fillColor : .clear).cgColor
+            layer?.borderColor = NSColor.flatDivider.cgColor
+            textColor = engaged ? .white : .labelColor
+        case .ghost:
+            layer?.backgroundColor = NSColor.clear.cgColor
+            layer?.borderColor = NSColor.clear.cgColor
+            textColor = textColorOverride ?? .brandAccent
+        }
+
+        attributedTitle = NSAttributedString(string: title, attributes: [
+            .font: font,
+            .foregroundColor: textColor
+        ])
+        contentTintColor = textColor
+    }
+
+    override var intrinsicContentSize: NSSize {
+        var size = super.intrinsicContentSize
+        guard size.width > 0 else { return size }
+        size.width += 14.4 * 2
+        size.height += 8 * 2
+        return size
+    }
+}
+
+/// Flat stand-in for `NSSegmentedControl`'s native pill chrome — fighting `NSSegmentStyle` to
+/// fully flatten it is less reliable than owning the drawing outright. Mirrors REDESIGN's
+/// `.seg`/`.seg-opt` tokens (1px divider border/separators, selected segment filled solid
+/// `brandAccent` with bg-colored text) while exposing just enough of `NSSegmentedControl`'s
+/// surface (`selectedSegment`/`target`/`action`) for `MainWindowController` to drop in as a
+/// replacement. Explicitly reports the `AXRadioGroup`/`AXRadioButton` accessibility roles
+/// `NSSegmentedControl` gets for free, since the UI test suite queries for exactly that shape.
+final class FlatSegmentedControl: NSView {
+    private var buttons: [NSButton] = []
+    private let optionFont = NSFont.systemFont(ofSize: 13)
+
+    var target: AnyObject?
+    var action: Selector?
+
+    var selectedSegment: Int = 0 {
+        didSet { updateSelectionAppearance() }
+    }
+
+    init(titles: [String]) {
+        super.init(frame: .zero)
+        translatesAutoresizingMaskIntoConstraints = false
+        wantsLayer = true
+        layer?.borderWidth = 1
+        layer?.borderColor = NSColor.flatDivider.cgColor
+
+        var previousTrailing = leadingAnchor
+        for (index, title) in titles.enumerated() {
+            if index > 0 {
+                let divider = NSView()
+                divider.wantsLayer = true
+                divider.layer?.backgroundColor = NSColor.flatDivider.cgColor
+                divider.translatesAutoresizingMaskIntoConstraints = false
+                addSubview(divider)
+                NSLayoutConstraint.activate([
+                    divider.leadingAnchor.constraint(equalTo: previousTrailing),
+                    divider.widthAnchor.constraint(equalToConstant: 1),
+                    divider.topAnchor.constraint(equalTo: topAnchor),
+                    divider.bottomAnchor.constraint(equalTo: bottomAnchor)
+                ])
+                previousTrailing = divider.trailingAnchor
+            }
+
+            let button = NSButton(title: title, target: self, action: #selector(segmentClicked(_:)))
+            button.tag = index
+            button.isBordered = false
+            button.setAccessibilityRole(.radioButton)
+            button.translatesAutoresizingMaskIntoConstraints = false
+            addSubview(button)
+            buttons.append(button)
+
+            let textWidth = (title as NSString).size(withAttributes: [.font: optionFont]).width
+            NSLayoutConstraint.activate([
+                button.leadingAnchor.constraint(equalTo: previousTrailing),
+                button.topAnchor.constraint(equalTo: topAnchor, constant: 7),
+                button.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -7),
+                button.widthAnchor.constraint(equalToConstant: ceil(textWidth) + 24)
+            ])
+            previousTrailing = button.trailingAnchor
+        }
+        previousTrailing.constraint(equalTo: trailingAnchor).isActive = true
+
+        updateSelectionAppearance()
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    override func accessibilityRole() -> NSAccessibility.Role? {
+        .radioGroup
+    }
+
+    @objc private func segmentClicked(_ sender: NSButton) {
+        selectedSegment = sender.tag
+        if let action {
+            NSApp.sendAction(action, to: target, from: self)
+        }
+    }
+
+    private func updateSelectionAppearance() {
+        for (index, button) in buttons.enumerated() {
+            let selected = index == selectedSegment
+            button.wantsLayer = true
+            button.layer?.backgroundColor = (selected ? NSColor.brandAccent : NSColor.clear).cgColor
+            button.attributedTitle = NSAttributedString(string: button.title, attributes: [
+                .font: optionFont,
+                .foregroundColor: selected ? NSColor.white : NSColor.labelColor
+            ])
+        }
+    }
+}
+
 /// Status row: title only. For errors, an info button shows the message on click.
 final class StatusHeaderView: NSView {
+    // Left as a circle, not squared off — a status dot is an indicator glyph, not one of the
+    // box-shaped elements (buttons/panels/rows) the design system's zero-radius tokens target.
     private let dot = NSView()
     private let titleField = NSTextField(labelWithString: "")
-    private let infoButton = NSButton(title: "", target: nil, action: nil)
+    private let infoButton = FlatButton(title: "", kind: .ghost)
     private var errorDetail: String?
     private var infoPopover: NSPopover?
 
@@ -265,7 +484,7 @@ final class StatusHeaderView: NSView {
         dot.layer?.cornerRadius = 4
         dot.translatesAutoresizingMaskIntoConstraints = false
 
-        titleField.font = .systemFont(ofSize: 13, weight: .semibold)
+        titleField.font = .systemFont(ofSize: 13, weight: .black) // Archivo-800-equivalent
         titleField.isEditable = false
         titleField.isBordered = false
         titleField.drawsBackground = false
@@ -277,14 +496,11 @@ final class StatusHeaderView: NSView {
         infoButton.image = NSImage(systemSymbolName: "info.circle", accessibilityDescription: "Error details")?
             .withSymbolConfiguration(config)
         infoButton.imagePosition = .imageOnly
-        infoButton.isBordered = false
-        infoButton.bezelStyle = .inline
-        infoButton.contentTintColor = .secondaryLabelColor
+        infoButton.textColorOverride = .secondaryLabelColor
         infoButton.target = self
         infoButton.action = #selector(showErrorInfo)
         infoButton.isHidden = true
         infoButton.setContentHuggingPriority(.required, for: .horizontal)
-        infoButton.translatesAutoresizingMaskIntoConstraints = false
 
         addSubview(dot)
         addSubview(titleField)
@@ -296,7 +512,7 @@ final class StatusHeaderView: NSView {
             dot.centerYAnchor.constraint(equalTo: centerYAnchor),
             dot.widthAnchor.constraint(equalToConstant: 8),
             dot.heightAnchor.constraint(equalToConstant: 8),
-            titleField.leadingAnchor.constraint(equalTo: dot.trailingAnchor, constant: 10),
+            titleField.leadingAnchor.constraint(equalTo: dot.trailingAnchor, constant: 8),
             titleField.centerYAnchor.constraint(equalTo: centerYAnchor),
             infoButton.leadingAnchor.constraint(equalTo: titleField.trailingAnchor, constant: 4),
             infoButton.centerYAnchor.constraint(equalTo: centerYAnchor),
@@ -340,8 +556,8 @@ final class StatusHeaderView: NSView {
         label.translatesAutoresizingMaskIntoConstraints = false
         container.addSubview(label)
         NSLayoutConstraint.activate([
-            label.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 10),
-            label.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -10),
+            label.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 12),
+            label.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -12),
             label.topAnchor.constraint(equalTo: container.topAnchor, constant: 8),
             label.bottomAnchor.constraint(equalTo: container.bottomAnchor, constant: -8)
         ])

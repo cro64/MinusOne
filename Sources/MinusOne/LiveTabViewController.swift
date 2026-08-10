@@ -32,7 +32,7 @@ final class LiveTabViewController: NSViewController {
     private var cachedModelGateView: NSView?
     private let modelGateStatusLabel = NSTextField(labelWithString: "")
     private let modelGateProgress = NSProgressIndicator()
-    private let modelGateDownloadButton = NSButton(title: "", target: nil, action: nil)
+    private let modelGateDownloadButton = FlatButton(title: "", kind: .primary)
     private var isDownloadingModel = false
     private var modelGateDownloadTask: Task<Void, Never>?
 
@@ -197,12 +197,12 @@ final class LiveTabViewController: NSViewController {
     }
 
     private func regularSection(header: NSView, body: NSView) -> NSView {
-        PopoverUI.verticalStack([header, body], spacing: 10)
+        PopoverUI.verticalStack([header, body], spacing: PopoverUI.Metrics.Regular.rowSpacing)
     }
 
     private func regularSection(header: NSView, rows: [NSView]) -> NSView {
         let rowsStack = PopoverUI.verticalStack(rows, spacing: PopoverUI.Metrics.Regular.rowSpacing)
-        let section = PopoverUI.verticalStack([header, rowsStack], spacing: 10)
+        let section = PopoverUI.verticalStack([header, rowsStack], spacing: PopoverUI.Metrics.Regular.rowSpacing)
         // `.leading`-aligned stacks only pin the leading edge of arranged subviews, they don't
         // stretch them — chain explicit width-equal constraints down so any row without its own
         // intrinsic width (e.g. AppCaptureChecklistView) doesn't end up horizontally ambiguous.
@@ -221,7 +221,7 @@ final class LiveTabViewController: NSViewController {
         row.orientation = .horizontal
         row.alignment = .centerY
         row.distribution = .fill
-        row.spacing = 10
+        row.spacing = PopoverUI.Metrics.Regular.rowSpacing
         row.translatesAutoresizingMaskIntoConstraints = false
 
         NSLayoutConstraint.activate([
@@ -239,7 +239,7 @@ final class LiveTabViewController: NSViewController {
         row.orientation = .horizontal
         row.alignment = .centerY
         row.distribution = .fill
-        row.spacing = 10
+        row.spacing = PopoverUI.Metrics.Regular.rowSpacing
         row.translatesAutoresizingMaskIntoConstraints = false
         return row
     }
@@ -338,7 +338,6 @@ final class LiveTabViewController: NSViewController {
         message.textColor = .secondaryLabelColor
 
         modelGateDownloadButton.title = "Download Neural Model (\(SeparationModelVariant.balanced.approximateDownloadSizeText))"
-        modelGateDownloadButton.bezelStyle = .rounded
         modelGateDownloadButton.target = self
         modelGateDownloadButton.action = #selector(downloadModelClicked)
 

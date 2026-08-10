@@ -35,7 +35,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
     private let importService: ClipImportService
 
     private let contentContainer = NSView()
-    private let segmentedControl = NSSegmentedControl()
+    private let segmentedControl = FlatSegmentedControl(titles: ["Live", "Practice"])
     private let liveStatusDot = NSView()
     private var currentTab: Tab = .live
     private var onboardingViewController: OnboardingViewController?
@@ -174,18 +174,9 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
     // MARK: - Title bar accessory
 
     private func configureTitleBarAccessory() {
-        segmentedControl.segmentStyle = .texturedRounded
-        segmentedControl.segmentCount = 2
-        segmentedControl.setLabel("Live", forSegment: Tab.live.rawValue)
-        segmentedControl.setLabel("Practice", forSegment: Tab.practice.rawValue)
         segmentedControl.selectedSegment = Tab.live.rawValue
         segmentedControl.target = self
         segmentedControl.action = #selector(tabChanged)
-        // NSSegmentedControl's intrinsicContentSize is only correct after the cell has measured
-        // its segment labels; without this it can report a zero/undersized width, which collapses
-        // the whole titlebar accessory stack to nothing since nothing else in it has a fixed size.
-        segmentedControl.sizeToFit()
-        segmentedControl.translatesAutoresizingMaskIntoConstraints = false
 
         liveStatusDot.wantsLayer = true
         liveStatusDot.layer?.cornerRadius = 4
@@ -196,7 +187,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
         let stack = NSStackView(views: [liveStatusDot, segmentedControl])
         stack.orientation = .horizontal
         stack.alignment = .centerY
-        stack.spacing = 6
+        stack.spacing = 8
         stack.edgeInsets = NSEdgeInsets(top: 4, left: 0, bottom: 4, right: 8)
         stack.translatesAutoresizingMaskIntoConstraints = false
 

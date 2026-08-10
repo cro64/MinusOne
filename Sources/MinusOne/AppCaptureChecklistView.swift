@@ -38,7 +38,7 @@ final class AppCaptureChecklistView: NSView {
         translatesAutoresizingMaskIntoConstraints = false
         wantsLayer = true
         layer?.backgroundColor = NSColor.controlBackgroundColor.withAlphaComponent(0.5).cgColor
-        layer?.cornerRadius = 6
+        layer?.cornerRadius = 0
         layer?.masksToBounds = true
         layer?.borderWidth = 1
         layer?.borderColor = NSColor.separatorColor.withAlphaComponent(0.6).cgColor

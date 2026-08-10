@@ -13,8 +13,8 @@ final class PracticeDeckViewController: NSViewController {
     private let titleLabel = NSTextField(labelWithString: "")
     private let statusLabel = NSTextField(labelWithString: "")
     private let waveformView = WaveformView(style: .interactive)
-    private let playPauseButton = NSButton(title: "Play", target: nil, action: nil)
-    private let loopButton = NSButton(title: "Loop", target: nil, action: nil)
+    private let playPauseButton = FlatButton(title: "Play", kind: .secondary)
+    private let loopButton = FlatButton(title: "Loop", kind: .secondary)
     private let timeLabel = PopoverUI.valueLabel(initialValue: "0:00 / 0:00")
     private let tempoSlider = NSSlider(value: 100, minValue: 50, maxValue: 100, target: nil, action: nil)
     private let tempoValueLabel = NSTextField(labelWithString: "100%")
@@ -73,12 +73,10 @@ final class PracticeDeckViewController: NSViewController {
 
         playPauseButton.target = self
         playPauseButton.action = #selector(togglePlayPause)
-        stylePlaybackControl(playPauseButton)
 
         loopButton.setButtonType(.pushOnPushOff)
         loopButton.target = self
         loopButton.action = #selector(toggleLoop)
-        stylePlaybackControl(loopButton)
 
         timeLabel.isHidden = false
         timeLabel.stringValue = "0:00 / 0:00"
@@ -118,7 +116,7 @@ final class PracticeDeckViewController: NSViewController {
             [titleLabel, statusLabel, waveformView, transportStack, tempoRow, mixerStack],
             spacing: PopoverUI.Metrics.Regular.sectionSpacing
         )
-        content.setCustomSpacing(2, after: titleLabel)
+        content.setCustomSpacing(4, after: titleLabel)
         content.setCustomSpacing(4, after: statusLabel)
         waveformView.widthAnchor.constraint(equalTo: content.widthAnchor).isActive = true
 
@@ -132,12 +130,6 @@ final class PracticeDeckViewController: NSViewController {
         contentStack = content
     }
 
-    private func stylePlaybackControl(_ button: NSButton) {
-        button.bezelStyle = .accessoryBarAction
-        button.controlSize = .regular
-        button.font = .systemFont(ofSize: NSFont.systemFontSize, weight: .medium)
-    }
-
     private func setupBindings() {
         waveformView.onSeek = { [weak self] fraction in
             guard let self, let clip = self.clip else { return }
@@ -149,14 +141,14 @@ final class PracticeDeckViewController: NSViewController {
             self.playbackEngine.setLoopRange(seconds)
             self.playbackEngine.isLoopEnabled = true
             self.loopButton.state = .on
-            self.loopButton.contentTintColor = .brandAccent
+            self.loopButton.refreshStyle()
         }
         playbackEngine.onPlayheadUpdate = { [weak self] time in
             self?.updatePlayhead(time)
         }
         playbackEngine.onPlaybackFinished = { [weak self] in
             self?.playPauseButton.title = "Play"
-            self?.playPauseButton.contentTintColor = nil
+            self?.playPauseButton.isOn = false
         }
     }
 
@@ -233,18 +225,18 @@ final class PracticeDeckViewController: NSViewController {
         if playbackEngine.isPlaying {
             playbackEngine.pause()
             playPauseButton.title = "Play"
-            playPauseButton.contentTintColor = nil
+            playPauseButton.isOn = false
         } else {
             playbackEngine.play()
             playPauseButton.title = "Pause"
-            playPauseButton.contentTintColor = .brandAccent
+            playPauseButton.isOn = true
         }
     }
 
     @objc private func toggleLoop() {
         let enabled = loopButton.state == .on
         playbackEngine.isLoopEnabled = enabled
-        loopButton.contentTintColor = enabled ? .brandAccent : nil
+        loopButton.refreshStyle()
     }
 
     @objc private func tempoChanged() {
@@ -278,8 +270,8 @@ private final class MixerRowView: NSView {
     var onMuteToggled: ((Bool) -> Void)?
     var onSoloToggled: (() -> Void)?
 
-    private let soloButton: NSButton
-    private let muteButton: NSButton
+    private let soloButton: FlatButton
+    private let muteButton: FlatButton
 
     init(stem: SeparationStem) {
         let color = stem.identityColor
@@ -296,6 +288,7 @@ private final class MixerRowView: NSView {
 
         soloButton = PopoverUI.toggleControlButton(title: "Solo", target: nil, action: nil)
         muteButton = PopoverUI.toggleControlButton(title: "Mute", target: nil, action: nil)
+        muteButton.engagedFillColorOverride = .systemRed
 
         super.init(frame: .zero)
 
@@ -327,7 +320,7 @@ private final class MixerRowView: NSView {
 
     func setSoloed(_ soloed: Bool) {
         soloButton.state = soloed ? .on : .off
-        soloButton.contentTintColor = soloed ? .brandAccent : nil
+        soloButton.refreshStyle()
     }
 
     @objc private func sliderChanged(_ sender: NSSlider) {
@@ -340,7 +333,7 @@ private final class MixerRowView: NSView {
 
     @objc private func muteClicked() {
         let muted = muteButton.state == .on
-        muteButton.contentTintColor = muted ? .systemRed : nil
+        muteButton.refreshStyle()
         onMuteToggled?(muted)
     }
 }

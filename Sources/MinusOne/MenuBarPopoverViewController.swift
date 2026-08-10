@@ -58,16 +58,16 @@ final class MenuBarPopoverViewController: NSViewController {
 
         let openButton = PopoverUI.linkButton(title: "Open MinusOne…", target: self, action: #selector(openWindow))
         let quitButton = PopoverUI.linkButton(title: "Quit", target: self, action: #selector(quit))
-        [openButton, quitButton].forEach { $0.contentTintColor = nil }
+        [openButton, quitButton].forEach { $0.textColorOverride = .labelColor }
 
         let topSeparator = PopoverUI.separator()
         let footerSeparator = PopoverUI.separator()
-        let footer = PopoverUI.verticalStack([footerSeparator, openButton, quitButton], spacing: 8)
+        let footer = PopoverUI.verticalStack([footerSeparator, openButton, quitButton], spacing: PopoverUI.Metrics.rowSpacing)
         footer.alignment = .leading
 
         let sections: [NSView] = [statusHeaderContainer, topSeparator, toggleRows, footer]
         let content = PopoverUI.verticalStack(sections, spacing: PopoverUI.Metrics.sectionSpacing)
-        content.setCustomSpacing(6, after: statusHeaderContainer)
+        content.setCustomSpacing(PopoverUI.Metrics.rowSpacing, after: statusHeaderContainer)
         content.translatesAutoresizingMaskIntoConstraints = false
         contentStack = content
         effectView.addSubview(content)
