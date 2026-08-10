@@ -51,7 +51,7 @@ final class MenuBarController: NSObject {
     func updateStatus(_ status: AudioEngineStatus) {
         currentStatus = status
         isFilterActive = audioEngine.isVocalReductionActive
-        if let button = statusItem.button {
+        if let button = statusItem.button, !isRecording {
             var text = status.displayText
             if let backend = audioEngine.activeCaptureBackend {
                 text += " — \(backend.displayName)"
@@ -184,6 +184,15 @@ final class MenuBarController: NSObject {
         guard let button = statusItem.button else { return }
 
         let size: CGFloat = 18
+
+        if isRecording {
+            // Solid coral dot always wins over whatever Live is doing underneath (REDESIGN.md §2).
+            button.image = MinusOneIcon.recordingDot(size: size)
+            button.toolTip = "Recording — \(liveStatusPhrase())"
+            button.contentTintColor = nil
+            return
+        }
+
         let color: NSColor
         let usesTemplate: Bool
 
@@ -205,11 +214,23 @@ final class MenuBarController: NSObject {
             usesTemplate = true
         }
 
-        let image = MinusOneIcon.waveform(size: size, color: color, isActive: isFilterActive, isRecording: isRecording)
-        // A colored recording badge can't ride along with a template (auto-tinted) image.
-        image.isTemplate = usesTemplate && !isRecording
+        let image = MinusOneIcon.waveform(size: size, color: color, isActive: isFilterActive)
+        image.isTemplate = usesTemplate
         button.image = image
         button.contentTintColor = nil
+    }
+
+    private func liveStatusPhrase() -> String {
+        switch currentStatus {
+        case .error:
+            return "Error"
+        case .permissionRequired:
+            return "Permission needed"
+        case .warmingUp:
+            return "Warming up"
+        default:
+            return isFilterActive ? "Live on" : "Live off"
+        }
     }
 
     @objc private func statusItemClicked(_ sender: NSStatusBarButton) {

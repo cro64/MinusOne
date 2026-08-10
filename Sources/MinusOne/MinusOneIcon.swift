@@ -5,7 +5,21 @@ enum MinusOneIcon {
     /// Off: bars with a tall center. On: center collapses to a dot.
     /// App icon: Resources/MinusOne.icon · vector: Resources/MinusOneIcon.svg
 
-    static func waveform(size: CGFloat, color: NSColor, isActive: Bool, isRecording: Bool = false) -> NSImage {
+    /// Recording is a fully separate glyph — a solid coral dot replacing the waveform
+    /// entirely, not a badge composited on top (REDESIGN.md §2).
+    static func recordingDot(size: CGFloat) -> NSImage {
+        let image = NSImage(size: NSSize(width: size, height: size))
+        image.lockFocus()
+        let diameter = size * 0.62
+        let rect = CGRect(x: (size - diameter) / 2, y: (size - diameter) / 2, width: diameter, height: diameter)
+        NSColor.brandAccent.setFill()
+        NSBezierPath(ovalIn: rect).fill()
+        image.unlockFocus()
+        image.isTemplate = false
+        return image
+    }
+
+    static func waveform(size: CGFloat, color: NSColor, isActive: Bool) -> NSImage {
         let image = NSImage(size: NSSize(width: size, height: size))
         image.lockFocus()
 
@@ -57,25 +71,8 @@ enum MinusOneIcon {
 
         context.restoreGState()
 
-        if isRecording {
-            // Small solid dot badge, bottom-right of the glyph — overlaid on whatever tint/state
-            // the base icon already has, not a mutually-exclusive tint of its own (REDESIGN.md §2).
-            let badgeDiameter = size * 0.34
-            let badgeRect = CGRect(
-                x: size - badgeDiameter - size * 0.02,
-                y: size * 0.02,
-                width: badgeDiameter,
-                height: badgeDiameter
-            )
-            context.setFillColor(NSColor.white.cgColor)
-            context.fillEllipse(in: badgeRect.insetBy(dx: -1, dy: -1))
-            context.setFillColor(NSColor.systemRed.cgColor)
-            context.fillEllipse(in: badgeRect)
-        }
-
         image.unlockFocus()
         // Caller sets isTemplate for idle (system light/dark menu bar tint).
-        // A recording badge is always in color, so it forces the whole image out of template mode.
         image.isTemplate = false
         return image
     }
