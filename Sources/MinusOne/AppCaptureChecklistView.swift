@@ -48,11 +48,12 @@ final class AppCaptureChecklistView: NSView {
         stack.spacing = 0
         stack.translatesAutoresizingMaskIntoConstraints = false
 
-        let documentView = NSView()
-        documentView.translatesAutoresizingMaskIntoConstraints = false
-        documentView.addSubview(stack)
-
-        scrollView.documentView = documentView
+        // `stack` is the scroll view's documentView directly, not wrapped in a plain NSView.
+        // NSStackView.isFlipped is true, so its (0,0) is the visual top — matching the clip
+        // view's default unscrolled origin, which shows the top of the content. A plain NSView
+        // wrapper is *not* flipped by default, so the clip view's default origin showed the
+        // *bottom* of the list instead, clipping the first row under the row above it.
+        scrollView.documentView = stack
         scrollView.hasVerticalScroller = true
         scrollView.autohidesScrollers = true
         scrollView.drawsBackground = false
@@ -72,13 +73,9 @@ final class AppCaptureChecklistView: NSView {
             scrollView.trailingAnchor.constraint(equalTo: trailingAnchor),
             scrollView.topAnchor.constraint(equalTo: topAnchor),
             scrollView.bottomAnchor.constraint(equalTo: bottomAnchor),
-            documentView.leadingAnchor.constraint(equalTo: scrollView.leadingAnchor),
-            documentView.trailingAnchor.constraint(equalTo: scrollView.trailingAnchor),
-            documentView.widthAnchor.constraint(equalTo: scrollView.widthAnchor),
-            stack.leadingAnchor.constraint(equalTo: documentView.leadingAnchor),
-            stack.trailingAnchor.constraint(equalTo: documentView.trailingAnchor),
-            stack.topAnchor.constraint(equalTo: documentView.topAnchor),
-            stack.bottomAnchor.constraint(equalTo: documentView.bottomAnchor),
+            stack.leadingAnchor.constraint(equalTo: scrollView.leadingAnchor),
+            stack.trailingAnchor.constraint(equalTo: scrollView.trailingAnchor),
+            stack.widthAnchor.constraint(equalTo: scrollView.widthAnchor),
             emptyLabel.centerXAnchor.constraint(equalTo: centerXAnchor),
             emptyLabel.centerYAnchor.constraint(equalTo: centerYAnchor),
             emptyLabel.leadingAnchor.constraint(greaterThanOrEqualTo: leadingAnchor, constant: 8),

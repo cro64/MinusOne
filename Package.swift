@@ -24,6 +24,11 @@ let package = Package(
                 .linkedFramework("CoreML"),
                 .linkedFramework("Accelerate")
             ]
+        ),
+        .testTarget(
+            name: "MinusOneUITests",
+            dependencies: [],
+            path: "Tests/MinusOneUITests"
         )
     ]
 )

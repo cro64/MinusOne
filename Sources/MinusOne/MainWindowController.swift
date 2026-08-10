@@ -1,5 +1,17 @@
 import AppKit
 
+/// `NSTitlebarAccessoryViewController`'s clip view reserves title-bar space from the accessory
+/// view's `intrinsicContentSize`, not from constraints on an arbitrary child (an `NSStackView`
+/// with only constraint-based sizing measured as zero-width at title-bar layout time even with
+/// its children fully constrained). Overriding this directly is the documented, reliable fix.
+private final class TitlebarAccessoryContainerView: NSView {
+    var fixedSize: NSSize = .zero {
+        didSet { invalidateIntrinsicContentSize() }
+    }
+
+    override var intrinsicContentSize: NSSize { fixedSize }
+}
+
 /// Owns the desktop window: a Live / Practice segmented switch in the title bar, and the two
 /// tabs' content. Live embeds `LiveTabViewController`, a full-width window-filling view (REDESIGN.md
 /// §3); Practice embeds the existing sidebar + deck split view, reused as-is per REDESIGN.md §1.
@@ -189,21 +201,37 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
         stack.translatesAutoresizingMaskIntoConstraints = false
 
         let segmentedSize = segmentedControl.fittingSize
+        let segmentedWidth = max(segmentedSize.width, 120)
+        let segmentedHeight = max(segmentedSize.height, 20)
+        let stackWidth = stack.edgeInsets.left + 8 + stack.spacing + segmentedWidth + stack.edgeInsets.right
+        let stackHeight = segmentedHeight + stack.edgeInsets.top + stack.edgeInsets.bottom
         NSLayoutConstraint.activate([
             liveStatusDot.widthAnchor.constraint(equalToConstant: 8),
             liveStatusDot.heightAnchor.constraint(equalToConstant: 8),
-            // Pin explicit sizes rather than trusting intrinsic-content-size propagation alone:
-            // NSTitlebarAccessoryViewController lays its view out in the titlebar strip before
-            // AppKit necessarily has a resolved fitting size for a freshly built NSStackView, and
-            // an unresolved size here renders as "no accessory at all" rather than a visible but
-            // mis-sized one.
-            segmentedControl.widthAnchor.constraint(equalToConstant: max(segmentedSize.width, 120)),
-            segmentedControl.heightAnchor.constraint(equalToConstant: max(segmentedSize.height, 20)),
-            stack.heightAnchor.constraint(equalToConstant: max(segmentedSize.height, 20) + stack.edgeInsets.top + stack.edgeInsets.bottom)
+            segmentedControl.widthAnchor.constraint(equalToConstant: segmentedWidth),
+            segmentedControl.heightAnchor.constraint(equalToConstant: segmentedHeight),
+            stack.widthAnchor.constraint(equalToConstant: stackWidth),
+            stack.heightAnchor.constraint(equalToConstant: stackHeight)
+        ])
+
+        let container = TitlebarAccessoryContainerView()
+        container.fixedSize = NSSize(width: stackWidth, height: stackHeight)
+        container.setFrameSize(container.fixedSize)
+        // `intrinsicContentSize` is only consulted by Auto Layout's content-hugging/compression
+        // machinery when the view itself participates in constraint-based layout — leaving the
+        // default `true` here means AppKit derives the container's size from its (empty, .zero)
+        // autoresizing frame instead of the override above.
+        container.translatesAutoresizingMaskIntoConstraints = false
+        container.addSubview(stack)
+        NSLayoutConstraint.activate([
+            stack.leadingAnchor.constraint(equalTo: container.leadingAnchor),
+            stack.trailingAnchor.constraint(equalTo: container.trailingAnchor),
+            stack.topAnchor.constraint(equalTo: container.topAnchor),
+            stack.bottomAnchor.constraint(equalTo: container.bottomAnchor)
         ])
 
         let accessoryViewController = NSTitlebarAccessoryViewController()
-        accessoryViewController.view = stack
+        accessoryViewController.view = container
         accessoryViewController.layoutAttribute = .right
         window?.addTitlebarAccessoryViewController(accessoryViewController)
     }

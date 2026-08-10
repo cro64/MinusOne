@@ -407,6 +407,8 @@ final class LiveTabViewController: NSViewController {
         if #available(macOS 14.2, *) {
             (appChecklist as? AppCaptureChecklistView)?.isEnabled = selectedApps
         }
+        // REDESIGN.md §3: the checklist is Custom-only — hidden, not just dimmed, for other scopes.
+        appChecklist?.isHidden = !selectedApps
         appChecklist?.alphaValue = selectedApps ? 1 : 0.45
         appChecklist?.toolTip = selectedApps
             ? "Choose which apps get vocal reduction"
