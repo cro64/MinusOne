@@ -48,13 +48,9 @@ final class MenuBarPopoverViewController: NSViewController {
     private func configureContent(in effectView: NSVisualEffectView) {
         statusHeaderContainer.translatesAutoresizingMaskIntoConstraints = false
 
-        let toggleRows = PopoverUI.verticalStack(
-            [
-                PopoverUI.formRow(label: "Live", control: liveToggle),
-                PopoverUI.formRow(label: "Record", control: recordToggle)
-            ],
-            spacing: PopoverUI.Metrics.rowSpacing
-        )
+        let liveRow = PopoverUI.formRow(label: "Live", control: liveToggle)
+        let recordRow = PopoverUI.formRow(label: "Record", control: recordToggle)
+        let toggleRows = PopoverUI.verticalStack([liveRow, recordRow], spacing: PopoverUI.Metrics.rowSpacing)
 
         let openButton = PopoverUI.nativeLinkButton(title: "Open MinusOne…", target: self, action: #selector(openWindow))
         let quitButton = PopoverUI.nativeLinkButton(title: "Quit", target: self, action: #selector(quit))
@@ -81,6 +77,14 @@ final class MenuBarPopoverViewController: NSViewController {
             statusHeaderContainer.heightAnchor.constraint(equalToConstant: PopoverUI.Metrics.rowHeight),
             statusHeaderContainer.widthAnchor.constraint(equalTo: content.widthAnchor),
             topSeparator.widthAnchor.constraint(equalTo: content.widthAnchor),
+            // `verticalStack`'s alignment is `.leading`, which only leading-pins arranged
+            // subviews rather than stretching them — without these, toggleRows/footer (and each
+            // row/button inside them) fall back to their own narrower intrinsic width, leaving a
+            // visible empty gutter between them and the popover's right edge.
+            toggleRows.widthAnchor.constraint(equalTo: content.widthAnchor),
+            liveRow.widthAnchor.constraint(equalTo: toggleRows.widthAnchor),
+            recordRow.widthAnchor.constraint(equalTo: toggleRows.widthAnchor),
+            footer.widthAnchor.constraint(equalTo: content.widthAnchor),
             footerSeparator.widthAnchor.constraint(equalTo: footer.widthAnchor),
             openButton.widthAnchor.constraint(equalTo: footer.widthAnchor),
             quitButton.widthAnchor.constraint(equalTo: footer.widthAnchor)

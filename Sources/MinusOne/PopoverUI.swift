@@ -180,20 +180,27 @@ enum PopoverUI {
         slider.widthAnchor.constraint(greaterThanOrEqualToConstant: Metrics.sliderMinWidth).isActive = true
     }
 
+    /// Label pinned to the row's leading edge, control pinned to its trailing edge — matches the
+    /// mockup's `justify-content: space-between` treatment for these rows (`Live [toggle]`,
+    /// `Record [toggle]`). Requires the caller to give the returned row an explicit width (e.g.
+    /// stretching it to match its container), since leading+trailing pins with only a minimum gap
+    /// between them are otherwise width-ambiguous.
     static func formRow(label: String, control: NSView) -> NSView {
         let title = fieldLabel(label)
         control.translatesAutoresizingMaskIntoConstraints = false
 
-        let row = NSStackView(views: [title, control])
-        row.orientation = .horizontal
-        row.alignment = .centerY
-        row.distribution = .fill
-        row.spacing = 8
+        let row = NSView()
         row.translatesAutoresizingMaskIntoConstraints = false
+        row.addSubview(title)
+        row.addSubview(control)
 
         NSLayoutConstraint.activate([
-            title.widthAnchor.constraint(equalToConstant: Metrics.labelWidth),
-            row.heightAnchor.constraint(equalToConstant: Metrics.rowHeight)
+            row.heightAnchor.constraint(equalToConstant: Metrics.rowHeight),
+            title.leadingAnchor.constraint(equalTo: row.leadingAnchor),
+            title.centerYAnchor.constraint(equalTo: row.centerYAnchor),
+            control.trailingAnchor.constraint(equalTo: row.trailingAnchor),
+            control.centerYAnchor.constraint(equalTo: row.centerYAnchor),
+            control.leadingAnchor.constraint(greaterThanOrEqualTo: title.trailingAnchor, constant: 8)
         ])
         return row
     }
