@@ -36,12 +36,12 @@ final class LiveWaveformView: NSView {
         guard let context = NSGraphicsContext.current?.cgContext else { return }
         context.clear(bounds)
 
-        RecordingTheme.background.setFill()
+        NSColor.windowBackgroundColor.setFill()
         bounds.fill()
 
         let progressFraction = min(1, elapsedSeconds / windowSeconds)
         let progressRect = NSRect(x: 0, y: 0, width: bounds.width * progressFraction, height: bounds.height)
-        RecordingTheme.red.withAlphaComponent(0.06).setFill()
+        NSColor.systemRed.withAlphaComponent(0.06).setFill()
         progressRect.fill()
 
         drawWaveformLine()
@@ -73,7 +73,7 @@ final class LiveWaveformView: NSView {
             }
         }
         path.lineWidth = 1.2
-        RecordingTheme.teal.setStroke()
+        NSColor.secondaryLabelColor.setStroke()
         path.stroke()
     }
 
@@ -89,7 +89,7 @@ final class LiveWaveformView: NSView {
         let knob = NSBezierPath(ovalIn: NSRect(x: x - knobDiameter / 2, y: bounds.height - knobDiameter - 2, width: knobDiameter, height: knobDiameter))
         NSColor.brandAccentDeep.setFill()
         knob.fill()
-        RecordingTheme.panel.setStroke()
+        NSColor.windowBackgroundColor.setStroke()
         knob.lineWidth = 2
         knob.stroke()
     }

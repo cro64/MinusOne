@@ -24,7 +24,7 @@ final class ToggleSwitchView: NSView {
     override func draw(_ dirtyRect: NSRect) {
         super.draw(dirtyRect)
         let track = NSBezierPath(roundedRect: bounds, xRadius: bounds.height / 2, yRadius: bounds.height / 2)
-        (isOn ? NSColor.brandAccent : RecordingTheme.hairline).setFill()
+        (isOn ? NSColor.brandAccent : NSColor.flatDivider).setFill()
         track.fill()
 
         let knobDiameter = bounds.height - 4

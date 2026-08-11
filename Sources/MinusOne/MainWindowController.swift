@@ -30,21 +30,19 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
 
     private let liveViewController: LiveTabViewController
     private let practiceSplitViewController: PracticeSplitViewController
+    private let practiceTabViewController: PracticeTabViewController
     private let sidebar: ClipSidebarViewController
     private let deck: PracticeDeckViewController
     private let importService: ClipImportService
 
     private let contentContainer = NSView()
+    private let contentRootViewController = NSViewController()
+    private var currentContentViewController: NSViewController?
     private let segmentedControl = FlatSegmentedControl(titles: ["Live", "Practice"])
     private let liveStatusDot = NSView()
     private var currentTab: Tab = .live
     private var onboardingViewController: OnboardingViewController?
 
-    // Practice's Import/Record actions live in the tab's own content, not the window's title-bar
-    // toolbar — a native toolbar button reads oversized/out-of-place at this button style's scale;
-    // this is real window content per the flat/branded surface, not title-bar chrome.
-    private let importActionButton = PopoverUI.toolbarActionButton(title: "Import", symbolName: "square.and.arrow.down", target: nil, action: nil)
-    private let recordActionButton = PopoverUI.toolbarActionButton(title: "Record", symbolName: "record.circle", target: nil, action: nil)
     private var systemAudioRecorderBox: Any?
     private var recordingPopover: NSPopover?
 
@@ -64,6 +62,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         sidebar = ClipSidebarViewController(libraryStore: libraryStore)
         deck = PracticeDeckViewController(libraryStore: libraryStore, playbackEngine: playbackEngine)
         practiceSplitViewController = PracticeSplitViewController(sidebar: sidebar, detail: deck)
+        practiceTabViewController = PracticeTabViewController(splitViewController: practiceSplitViewController)
 
         let window = NSWindow(
             contentRect: NSRect(x: 0, y: 0, width: 980, height: 640),
@@ -85,9 +84,8 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         contentContainer.wantsLayer = true
         contentContainer.layer?.backgroundColor = NSColor.windowBackgroundColor.cgColor
 
-        let root = NSViewController()
-        root.view = contentContainer
-        window.contentViewController = root
+        contentRootViewController.view = contentContainer
+        window.contentViewController = contentRootViewController
 
         configureTitleBarAccessory()
         configureLiveTab()
@@ -146,20 +144,11 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         liveStatusDot.isHidden = true
         window?.toolbar = nil
 
-        let content = onboarding.view
-        content.translatesAutoresizingMaskIntoConstraints = false
-        contentContainer.addSubview(content)
-        NSLayoutConstraint.activate([
-            content.leadingAnchor.constraint(equalTo: contentContainer.leadingAnchor),
-            content.trailingAnchor.constraint(equalTo: contentContainer.trailingAnchor),
-            content.topAnchor.constraint(equalTo: contentContainer.topAnchor),
-            content.bottomAnchor.constraint(equalTo: contentContainer.bottomAnchor)
-        ])
+        setContent(onboarding)
         return true
     }
 
     private func finishOnboarding() {
-        onboardingViewController?.view.removeFromSuperview()
         onboardingViewController = nil
         segmentedControl.isHidden = false
         liveViewController.reloadFromPreferences()
@@ -239,23 +228,41 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         segmentedControl.selectedSegment = tab.rawValue
         liveStatusDot.isHidden = tab != .practice
 
-        for child in contentContainer.subviews { child.removeFromSuperview() }
-        let content: NSView
         switch tab {
         case .live:
             liveViewController.reloadFromPreferences()
-            content = liveViewController.view
+            setContent(liveViewController)
         case .practice:
-            content = practiceContainer
+            setContent(practiceTabViewController)
         }
-        content.translatesAutoresizingMaskIntoConstraints = false
-        contentContainer.addSubview(content)
+    }
+
+    /// Swaps the window's visible content through real `NSViewController` containment
+    /// (`addChild`/`removeFromParent`) instead of a bare subview swap, so the incoming controller
+    /// gets a normal `viewWillAppear`/`viewDidAppear` lifecycle. This matters concretely for
+    /// `practiceTabViewController`: it hosts an `NSSplitViewController`, which computes its
+    /// divider/holding-priority layout expecting that lifecycle to fire — skipping it is what
+    /// previously produced a gap above the Practice tab's content with everything else pinned to
+    /// the bottom of the window.
+    private func setContent(_ child: NSViewController) {
+        guard child !== currentContentViewController else { return }
+
+        if let current = currentContentViewController {
+            current.view.removeFromSuperview()
+            current.removeFromParent()
+        }
+
+        contentRootViewController.addChild(child)
+        let childView = child.view
+        childView.translatesAutoresizingMaskIntoConstraints = false
+        contentContainer.addSubview(childView)
         NSLayoutConstraint.activate([
-            content.leadingAnchor.constraint(equalTo: contentContainer.leadingAnchor),
-            content.trailingAnchor.constraint(equalTo: contentContainer.trailingAnchor),
-            content.topAnchor.constraint(equalTo: contentContainer.topAnchor),
-            content.bottomAnchor.constraint(equalTo: contentContainer.bottomAnchor)
+            childView.leadingAnchor.constraint(equalTo: contentContainer.leadingAnchor),
+            childView.trailingAnchor.constraint(equalTo: contentContainer.trailingAnchor),
+            childView.topAnchor.constraint(equalTo: contentContainer.topAnchor),
+            childView.bottomAnchor.constraint(equalTo: contentContainer.bottomAnchor)
         ])
+        currentContentViewController = child
     }
 
     // MARK: - Live tab
@@ -267,46 +274,12 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
 
     // MARK: - Practice tab
 
-    /// Import/Record action row above the sidebar + deck split, at `Regular` scale like the rest
-    /// of the window's content.
-    private lazy var practiceContainer: NSView = {
-        // `toolbarActionButton`'s default sizing (14pt/.black title + FlatButton's own +28.8w/
-        // +16h padding, plus an unconfigured SF Symbol rendering at its full default point size)
-        // is tuned for a single prominent CTA (e.g. onboarding's "Download Neural Model"), not a
-        // compact action row — left as-is it dwarfs the sidebar/deck below it. Cap it down here
-        // rather than changing the shared factory, which `PracticeEmptyStateView` also uses at
-        // the larger, prominent-CTA scale intentionally.
-        for button in [importActionButton, recordActionButton] {
-            button.pointSize = 12
-            button.image = button.image?.withSymbolConfiguration(.init(pointSize: 12, weight: .medium))
-            button.heightAnchor.constraint(equalToConstant: 26).isActive = true
-        }
-
-        let actionRow = NSStackView(views: [importActionButton, recordActionButton])
-        actionRow.orientation = .horizontal
-        actionRow.spacing = PopoverUI.Metrics.Regular.rowSpacing
-        actionRow.translatesAutoresizingMaskIntoConstraints = false
-
-        let splitView = practiceSplitViewController.view
-        splitView.translatesAutoresizingMaskIntoConstraints = false
-
-        let container = NSView()
-        container.addSubview(actionRow)
-        container.addSubview(splitView)
-
-        let pad = PopoverUI.Metrics.Regular.padding
-        NSLayoutConstraint.activate([
-            actionRow.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: pad),
-            actionRow.topAnchor.constraint(equalTo: container.topAnchor, constant: PopoverUI.Metrics.Regular.rowSpacing),
-            splitView.leadingAnchor.constraint(equalTo: container.leadingAnchor),
-            splitView.trailingAnchor.constraint(equalTo: container.trailingAnchor),
-            splitView.bottomAnchor.constraint(equalTo: container.bottomAnchor),
-            splitView.topAnchor.constraint(equalTo: actionRow.bottomAnchor, constant: PopoverUI.Metrics.Regular.rowSpacing)
-        ])
-        return container
-    }()
-
     private func configurePracticeTab() {
+        _ = practiceTabViewController.view
+
+        let importActionButton = practiceTabViewController.importActionButton
+        let recordActionButton = practiceTabViewController.recordActionButton
+
         importActionButton.target = self
         importActionButton.action = #selector(importButtonClicked)
         recordActionButton.target = self
@@ -319,7 +292,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         deck.onImportRequested = { [weak self] in self?.importButtonClicked() }
         deck.onRecordRequested = { [weak self] in
             guard let self else { return }
-            self.recordButtonClicked(self.recordActionButton)
+            self.recordButtonClicked(self.practiceTabViewController.recordActionButton)
         }
     }
 
@@ -340,7 +313,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
 
     @objc private func recordButtonClicked(_ sender: Any) {
         guard #available(macOS 14.2, *) else { return }
-        let anchorView = (sender as? NSView) ?? recordActionButton
+        let anchorView = (sender as? NSView) ?? practiceTabViewController.recordActionButton
 
         let panel = RecordingPanelController(recorder: systemAudioRecorder) { [weak self] url in
             self?.handleImport(url: url)

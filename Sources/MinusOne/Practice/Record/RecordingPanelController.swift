@@ -11,14 +11,14 @@ final class RecordingPanelController: NSViewController {
     private let onFinished: (URL) -> Void
 
     // Idle state
-    private let modeTag = TagView(text: "NOT RECORDING", color: RecordingTheme.red)
-    private let sourceDot = DotView(color: RecordingTheme.teal)
+    private let modeTag = StatusTagView(text: "NOT RECORDING", color: .systemRed)
+    private let sourceDot = DotView(color: .secondaryLabelColor)
     private let sourceStatusLabel = NSTextField(labelWithString: "System audio access granted")
-    private let settingsButton: ThemedButton
+    private let settingsButton = FlatButton(title: "Open System Settings…", kind: .secondary)
     private let autoStopToggle = ToggleSwitchView()
     private let minutesField = RecordingPanelController.makeTimeField()
     private let secondsField = RecordingPanelController.makeTimeField()
-    private let armButton: ThemedButton
+    private let armButton = FlatButton(title: "●  Start recording", kind: .primary)
 
     // Recording state
     private let recDot = DotView(color: .brandAccentDeep)
@@ -26,7 +26,7 @@ final class RecordingPanelController: NSViewController {
     private let liveWaveform = LiveWaveformView()
     private let elapsedMetaLabel = NSTextField(labelWithString: "elapsed 0:00")
     private let targetMetaLabel = NSTextField(labelWithString: "auto-stop off")
-    private let stopButton: ThemedButton
+    private let stopButton = FlatButton(title: "■  Stop now", kind: .secondary)
 
     private var idleContainer: NSStackView!
     private var recordingContainer: NSStackView!
@@ -38,9 +38,6 @@ final class RecordingPanelController: NSViewController {
     init(recorder: SystemAudioRecorder, onFinished: @escaping (URL) -> Void) {
         self.recorder = recorder
         self.onFinished = onFinished
-        settingsButton = ThemedButton(title: "Open System Settings…", style: .outlined(border: RecordingTheme.redDim, foreground: RecordingTheme.cream))
-        armButton = ThemedButton(title: "●  Start recording", style: .filled(background: .brandAccent, foreground: .white))
-        stopButton = ThemedButton(title: "■  Stop now", style: .outlined(border: RecordingTheme.hairline, foreground: RecordingTheme.cream))
         super.init(nibName: nil, bundle: nil)
     }
 
@@ -52,7 +49,7 @@ final class RecordingPanelController: NSViewController {
     override func loadView() {
         let root = NSView(frame: NSRect(x: 0, y: 0, width: Self.panelWidth, height: 200))
         root.wantsLayer = true
-        root.layer?.backgroundColor = RecordingTheme.panel.cgColor
+        root.layer?.backgroundColor = NSColor.windowBackgroundColor.cgColor
         view = root
 
         let idle = buildIdleContainer()
@@ -86,12 +83,12 @@ final class RecordingPanelController: NSViewController {
 
     private func buildIdleContainer() -> NSStackView {
         let title = NSTextField(labelWithString: "Record system audio")
-        title.font = RecordingTheme.sans(15, weight: .semibold)
-        title.textColor = RecordingTheme.cream
+        title.font = .systemFont(ofSize: 15, weight: .semibold)
+        title.textColor = .labelColor
 
         let subtitle = NSTextField(labelWithString: "MinusOne · practice mode")
-        subtitle.font = RecordingTheme.mono(11)
-        subtitle.textColor = RecordingTheme.putty
+        subtitle.font = .systemFont(ofSize: 11)
+        subtitle.textColor = .secondaryLabelColor
 
         let titles = NSStackView(views: [title, subtitle])
         titles.orientation = .vertical
@@ -102,11 +99,11 @@ final class RecordingPanelController: NSViewController {
 
         sourceDot.widthAnchor.constraint(equalToConstant: 5).isActive = true
         sourceDot.heightAnchor.constraint(equalToConstant: 5).isActive = true
-        sourceStatusLabel.font = RecordingTheme.mono(10, weight: .medium)
-        sourceStatusLabel.textColor = RecordingTheme.teal
+        sourceStatusLabel.font = .systemFont(ofSize: 10, weight: .medium)
+        sourceStatusLabel.textColor = .secondaryLabelColor
         let sourceLabel = NSTextField(labelWithString: "Input source")
-        sourceLabel.font = RecordingTheme.sans(13)
-        sourceLabel.textColor = RecordingTheme.putty
+        sourceLabel.font = .systemFont(ofSize: 13)
+        sourceLabel.textColor = .secondaryLabelColor
         let sourceStatus = rowStack([sourceDot, sourceStatusLabel], spacing: 6)
         let source = rowStack([sourceLabel, spacer(), sourceStatus])
         sourceRow = borderedBox(source)
@@ -116,11 +113,11 @@ final class RecordingPanelController: NSViewController {
         settingsButton.isHidden = true
 
         let timerLabel = NSTextField(labelWithString: "Auto-stop timer")
-        timerLabel.font = RecordingTheme.sans(13)
-        timerLabel.textColor = RecordingTheme.cream
+        timerLabel.font = .systemFont(ofSize: 13)
+        timerLabel.textColor = .labelColor
         let timerSub = NSTextField(labelWithString: "Recording stops and processing begins automatically")
-        timerSub.font = RecordingTheme.mono(10)
-        timerSub.textColor = RecordingTheme.putty
+        timerSub.font = .systemFont(ofSize: 10)
+        timerSub.textColor = .secondaryLabelColor
         timerSub.maximumNumberOfLines = 2
         timerSub.lineBreakMode = .byWordWrapping
         timerSub.preferredMaxLayoutWidth = 190
@@ -134,11 +131,11 @@ final class RecordingPanelController: NSViewController {
         let timerRow1 = rowStack([timerTitles, spacer(), autoStopToggle])
 
         let colon = NSTextField(labelWithString: ":")
-        colon.font = RecordingTheme.mono(14)
-        colon.textColor = RecordingTheme.putty
+        colon.font = .monospacedDigitSystemFont(ofSize: 14, weight: .regular)
+        colon.textColor = .secondaryLabelColor
         let unit = NSTextField(labelWithString: "min : sec")
-        unit.font = RecordingTheme.mono(10)
-        unit.textColor = RecordingTheme.putty
+        unit.font = .systemFont(ofSize: 10)
+        unit.textColor = .secondaryLabelColor
         minutesField.target = self
         minutesField.action = #selector(timeFieldChanged)
         secondsField.target = self
@@ -153,7 +150,6 @@ final class RecordingPanelController: NSViewController {
 
         armButton.target = self
         armButton.action = #selector(armClicked)
-        armButton.translatesAutoresizingMaskIntoConstraints = false
         armButton.heightAnchor.constraint(equalToConstant: 40).isActive = true
 
         let stack = NSStackView(views: [header, sourceRow, settingsButton, timerField, armButton])
@@ -174,12 +170,12 @@ final class RecordingPanelController: NSViewController {
         recDot.heightAnchor.constraint(equalToConstant: 8).isActive = true
         recDot.startPulsing()
         let recLabel = NSTextField(labelWithString: "RECORDING")
-        recLabel.font = RecordingTheme.mono(11, weight: .medium)
+        recLabel.font = .systemFont(ofSize: 11, weight: .semibold)
         recLabel.textColor = .brandAccentDeep
         let recIndicator = rowStack([recDot, recLabel], spacing: 8)
 
-        elapsedLabel.font = RecordingTheme.mono(20, weight: .medium)
-        elapsedLabel.textColor = RecordingTheme.cream
+        elapsedLabel.font = .monospacedDigitSystemFont(ofSize: 20, weight: .medium)
+        elapsedLabel.textColor = .labelColor
 
         let recHead = rowStack([recIndicator, spacer(), elapsedLabel])
 
@@ -187,21 +183,19 @@ final class RecordingPanelController: NSViewController {
         liveWaveform.heightAnchor.constraint(equalToConstant: 68).isActive = true
         liveWaveform.wantsLayer = true
         liveWaveform.layer?.borderWidth = 1
-        liveWaveform.layer?.borderColor = RecordingTheme.hairline.cgColor
-        liveWaveform.layer?.cornerRadius = 3
+        liveWaveform.layer?.borderColor = NSColor.flatDivider.cgColor
         liveWaveform.onDragAutoStop = { [weak self] seconds in
             self?.setAutoStop(seconds: seconds)
         }
 
-        elapsedMetaLabel.font = RecordingTheme.mono(10)
-        elapsedMetaLabel.textColor = RecordingTheme.putty
-        targetMetaLabel.font = RecordingTheme.mono(10)
+        elapsedMetaLabel.font = .monospacedDigitSystemFont(ofSize: 10, weight: .regular)
+        elapsedMetaLabel.textColor = .secondaryLabelColor
+        targetMetaLabel.font = .monospacedDigitSystemFont(ofSize: 10, weight: .regular)
         targetMetaLabel.textColor = .brandAccentDeep
         let metaRow = rowStack([elapsedMetaLabel, spacer(), targetMetaLabel])
 
         stopButton.target = self
         stopButton.action = #selector(stopClicked)
-        stopButton.translatesAutoresizingMaskIntoConstraints = false
         stopButton.heightAnchor.constraint(equalToConstant: 40).isActive = true
 
         let stack = NSStackView(views: [recHead, liveWaveform, metaRow, stopButton])
@@ -261,8 +255,8 @@ final class RecordingPanelController: NSViewController {
         autoStopEnabled = isOn
         minutesField.isEnabled = isOn
         secondsField.isEnabled = isOn
-        minutesField.textColor = isOn ? RecordingTheme.cream : RecordingTheme.putty
-        secondsField.textColor = isOn ? RecordingTheme.cream : RecordingTheme.putty
+        minutesField.textColor = isOn ? .labelColor : .secondaryLabelColor
+        secondsField.textColor = isOn ? .labelColor : .secondaryLabelColor
         timeFieldChanged()
     }
 
@@ -297,8 +291,8 @@ final class RecordingPanelController: NSViewController {
 
     private func showError(_ error: Error) {
         let isPermissionIssue = (error as? AudioEngineError)?.isLikelyPermissionDenied ?? false
-        sourceDot.color = RecordingTheme.red
-        sourceStatusLabel.textColor = RecordingTheme.red
+        sourceDot.color = .systemRed
+        sourceStatusLabel.textColor = .systemRed
         sourceStatusLabel.stringValue = isPermissionIssue ? "Permission denied" : "Couldn't start recording"
         sourceStatusLabel.toolTip = error.localizedDescription
         settingsButton.isHidden = !isPermissionIssue
@@ -335,8 +329,7 @@ final class RecordingPanelController: NSViewController {
         let container = NSView()
         container.wantsLayer = true
         container.layer?.borderWidth = 1
-        container.layer?.borderColor = RecordingTheme.hairline.cgColor
-        container.layer?.cornerRadius = 4
+        container.layer?.borderColor = NSColor.flatDivider.cgColor
         content.translatesAutoresizingMaskIntoConstraints = false
         container.addSubview(content)
         NSLayoutConstraint.activate([
@@ -350,16 +343,15 @@ final class RecordingPanelController: NSViewController {
 
     private static func makeTimeField() -> NSTextField {
         let field = NSTextField(string: "00")
-        field.font = RecordingTheme.mono(14)
-        field.textColor = RecordingTheme.putty
+        field.font = .monospacedDigitSystemFont(ofSize: 14, weight: .regular)
+        field.textColor = .secondaryLabelColor
         field.alignment = .center
         field.isBordered = false
         field.drawsBackground = true
-        field.backgroundColor = RecordingTheme.background
+        field.backgroundColor = .windowBackgroundColor
         field.wantsLayer = true
-        field.layer?.cornerRadius = 3
         field.layer?.borderWidth = 1
-        field.layer?.borderColor = RecordingTheme.hairline.cgColor
+        field.layer?.borderColor = NSColor.flatDivider.cgColor
         field.isEnabled = false
         field.translatesAutoresizingMaskIntoConstraints = false
         field.widthAnchor.constraint(equalToConstant: 44).isActive = true
@@ -401,5 +393,29 @@ private final class DotView: NSView {
         animation.repeatCount = .infinity
         animation.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
         layer?.add(animation, forKey: "pulse")
+    }
+}
+
+/// Small bordered status pill — the "Not recording" mode tag. Flat (zero corner radius) to match
+/// the rest of the window's chrome instead of `RecordingTheme`'s retired rounded-pill look.
+private final class StatusTagView: NSTextField {
+    init(text: String, color: NSColor) {
+        super.init(frame: .zero)
+        stringValue = text
+        isEditable = false
+        isBordered = false
+        drawsBackground = false
+        alignment = .center
+        font = .systemFont(ofSize: 10, weight: .semibold)
+        textColor = color
+        wantsLayer = true
+        layer?.borderWidth = 1
+        layer?.borderColor = color.withAlphaComponent(0.4).cgColor
+        translatesAutoresizingMaskIntoConstraints = false
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
     }
 }
