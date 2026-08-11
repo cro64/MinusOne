@@ -53,7 +53,10 @@ enum PopoverUI {
         /// window's Live tab) — composed from two scale tokens (space-6 + space-8) rather than
         /// the token set itself, since a label column width isn't one of the raw spacing values.
         static let labelWidth: CGFloat = 56
-        static let cornerRadius: CGFloat = 0
+        /// The menu bar popover is the one surface that stays fully native macOS chrome (per
+        /// design direction: native shape/materials there, flat/branded look reserved for the
+        /// desktop window) — this rounding is only ever consumed by `makeMenuRoot`/`makeEffectView`.
+        static let cornerRadius: CGFloat = 8
         /// Usable track length for Intensity / Gain (also drives menu width).
         static let sliderMinWidth: CGFloat = 88
         /// Row content: label + gap + control.
@@ -207,6 +210,30 @@ enum PopoverUI {
         view.translatesAutoresizingMaskIntoConstraints = false
         view.heightAnchor.constraint(equalToConstant: 2).isActive = true
         return view
+    }
+
+    /// Native hairline, for the menu bar popover only — the flat 2px `separator()` above is for
+    /// the desktop window's branded surfaces.
+    static func nativeSeparator() -> NSBox {
+        let box = NSBox()
+        box.boxType = .separator
+        box.translatesAutoresizingMaskIntoConstraints = false
+        return box
+    }
+
+    /// Native borderless link-style button, for the menu bar popover only — mirrors what this
+    /// surface used before the flat/branded pass. `linkButton`/`FlatButton` below are for the
+    /// desktop window.
+    static func nativeLinkButton(title: String, target: AnyObject? = nil, action: Selector? = nil) -> NSButton {
+        let button = NSButton(title: title, target: target, action: action)
+        button.isBordered = false
+        button.bezelStyle = .inline
+        button.controlSize = .small
+        button.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
+        button.translatesAutoresizingMaskIntoConstraints = false
+        button.setContentHuggingPriority(.required, for: .horizontal)
+        button.setContentCompressionResistancePriority(.required, for: .horizontal)
+        return button
     }
 
     static func linkButton(title: String, target: AnyObject? = nil, action: Selector? = nil) -> FlatButton {
