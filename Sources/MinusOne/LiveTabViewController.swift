@@ -97,7 +97,8 @@ final class LiveTabViewController: NSViewController {
 
         let pad = PopoverUI.Metrics.Regular.padding
         NSLayoutConstraint.activate([
-            content.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: pad),
+            content.centerXAnchor.constraint(equalTo: root.centerXAnchor),
+            content.leadingAnchor.constraint(greaterThanOrEqualTo: root.leadingAnchor, constant: pad),
             content.trailingAnchor.constraint(lessThanOrEqualTo: root.trailingAnchor, constant: -pad),
             content.topAnchor.constraint(equalTo: root.topAnchor, constant: pad),
             content.widthAnchor.constraint(equalToConstant: 420),
