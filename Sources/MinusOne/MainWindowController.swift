@@ -193,7 +193,8 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
 
         let segmentedSize = segmentedControl.fittingSize
         let segmentedWidth = max(segmentedSize.width, 120)
-        let segmentedHeight = max(segmentedSize.height, 20)
+        // 26, not 20: a pill this short reads as squat rather than capsule-shaped.
+        let segmentedHeight = max(segmentedSize.height, 26)
         let stackWidth = stack.edgeInsets.left + 8 + stack.spacing + segmentedWidth + stack.edgeInsets.right
         let stackHeight = segmentedHeight + stack.edgeInsets.top + stack.edgeInsets.bottom
         NSLayoutConstraint.activate([

@@ -417,39 +417,40 @@ final class FlatButton: NSButton {
 /// `NSSegmentedControl` gets for free, since the UI test suite queries for exactly that shape.
 final class FlatSegmentedControl: NSView {
     private var buttons: [NSButton] = []
-    private let optionFont = NSFont.systemFont(ofSize: 13)
+    private let optionFont = NSFont.systemFont(ofSize: 13, weight: .semibold)
+    /// Faint capsule track the sliding pill sits inside — without it the control has no visible
+    /// footprint in its unselected state, just floating text.
+    private let track = NSView()
+    /// The sliding accent-filled capsule behind whichever segment is selected.
+    private let selectionPill = NSView()
+    private var pillLeading: NSLayoutConstraint?
+    private var pillTrailing: NSLayoutConstraint?
+    private static let pillInset: CGFloat = 3
 
     var target: AnyObject?
     var action: Selector?
 
     var selectedSegment: Int = 0 {
-        didSet { updateSelectionAppearance() }
+        didSet { updateSelectionAppearance(animated: true) }
     }
 
     init(titles: [String]) {
         super.init(frame: .zero)
         translatesAutoresizingMaskIntoConstraints = false
         wantsLayer = true
-        layer?.borderWidth = 1
-        layer?.borderColor = NSColor.flatDivider.cgColor
+
+        track.wantsLayer = true
+        track.layer?.backgroundColor = NSColor.labelColor.withAlphaComponent(0.06).cgColor
+        track.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(track)
+
+        selectionPill.wantsLayer = true
+        selectionPill.layer?.backgroundColor = NSColor.brandAccent.cgColor
+        selectionPill.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(selectionPill)
 
         var previousTrailing = leadingAnchor
         for (index, title) in titles.enumerated() {
-            if index > 0 {
-                let divider = NSView()
-                divider.wantsLayer = true
-                divider.layer?.backgroundColor = NSColor.flatDivider.cgColor
-                divider.translatesAutoresizingMaskIntoConstraints = false
-                addSubview(divider)
-                NSLayoutConstraint.activate([
-                    divider.leadingAnchor.constraint(equalTo: previousTrailing),
-                    divider.widthAnchor.constraint(equalToConstant: 1),
-                    divider.topAnchor.constraint(equalTo: topAnchor),
-                    divider.bottomAnchor.constraint(equalTo: bottomAnchor)
-                ])
-                previousTrailing = divider.trailingAnchor
-            }
-
             let button = NSButton(title: title, target: self, action: #selector(segmentClicked(_:)))
             button.tag = index
             button.isBordered = false
@@ -461,20 +462,35 @@ final class FlatSegmentedControl: NSView {
             let textWidth = (title as NSString).size(withAttributes: [.font: optionFont]).width
             NSLayoutConstraint.activate([
                 button.leadingAnchor.constraint(equalTo: previousTrailing),
-                button.topAnchor.constraint(equalTo: topAnchor, constant: 7),
-                button.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -7),
-                button.widthAnchor.constraint(equalToConstant: ceil(textWidth) + 24)
+                button.topAnchor.constraint(equalTo: topAnchor),
+                button.bottomAnchor.constraint(equalTo: bottomAnchor),
+                button.widthAnchor.constraint(equalToConstant: ceil(textWidth) + 28)
             ])
             previousTrailing = button.trailingAnchor
         }
         previousTrailing.constraint(equalTo: trailingAnchor).isActive = true
 
-        updateSelectionAppearance()
+        NSLayoutConstraint.activate([
+            track.leadingAnchor.constraint(equalTo: leadingAnchor),
+            track.trailingAnchor.constraint(equalTo: trailingAnchor),
+            track.topAnchor.constraint(equalTo: topAnchor),
+            track.bottomAnchor.constraint(equalTo: bottomAnchor),
+            selectionPill.topAnchor.constraint(equalTo: topAnchor, constant: Self.pillInset),
+            selectionPill.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -Self.pillInset)
+        ])
+
+        updateSelectionAppearance(animated: false)
     }
 
     @available(*, unavailable)
     required init?(coder: NSCoder) {
         fatalError("init(coder:) has not been implemented")
+    }
+
+    override func layout() {
+        super.layout()
+        track.layer?.cornerRadius = track.bounds.height / 2
+        selectionPill.layer?.cornerRadius = selectionPill.bounds.height / 2
     }
 
     override func accessibilityRole() -> NSAccessibility.Role? {
@@ -488,15 +504,33 @@ final class FlatSegmentedControl: NSView {
         }
     }
 
-    private func updateSelectionAppearance() {
+    private func updateSelectionAppearance(animated: Bool) {
         for (index, button) in buttons.enumerated() {
             let selected = index == selectedSegment
-            button.wantsLayer = true
-            button.layer?.backgroundColor = (selected ? NSColor.brandAccent : NSColor.clear).cgColor
             button.attributedTitle = NSAttributedString(string: button.title, attributes: [
                 .font: optionFont,
-                .foregroundColor: selected ? NSColor.white : NSColor.labelColor
+                .foregroundColor: selected ? NSColor.white : NSColor.secondaryLabelColor
             ])
+        }
+
+        guard selectedSegment < buttons.count else { return }
+        let selectedButton = buttons[selectedSegment]
+        pillLeading?.isActive = false
+        pillTrailing?.isActive = false
+        pillLeading = selectionPill.leadingAnchor.constraint(equalTo: selectedButton.leadingAnchor, constant: Self.pillInset)
+        pillTrailing = selectionPill.trailingAnchor.constraint(equalTo: selectedButton.trailingAnchor, constant: -Self.pillInset)
+        pillLeading?.isActive = true
+        pillTrailing?.isActive = true
+
+        guard animated else {
+            layoutSubtreeIfNeeded()
+            return
+        }
+        NSAnimationContext.runAnimationGroup { context in
+            context.duration = 0.18
+            context.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+            context.allowsImplicitAnimation = true
+            layoutSubtreeIfNeeded()
         }
     }
 }
