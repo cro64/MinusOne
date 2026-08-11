@@ -19,7 +19,7 @@ private final class TitlebarAccessoryContainerView: NSView {
 /// Activation policy (REDESIGN.md §1): opening the window promotes the app to `.regular` with a
 /// Dock icon; closing (red traffic light / ⌘W) demotes back to `.accessory` without quitting —
 /// Live/Recording keep running. Only Quit in the menu bar popover fully quits.
-final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolbarDelegate {
+final class MainWindowController: NSWindowController, NSWindowDelegate {
     enum Tab: Int {
         case live = 0
         case practice = 1
@@ -40,12 +40,13 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
     private var currentTab: Tab = .live
     private var onboardingViewController: OnboardingViewController?
 
-    private static let importItemIdentifier = NSToolbarItem.Identifier("importClip")
-    private static let recordItemIdentifier = NSToolbarItem.Identifier("recordClip")
-    private let practiceToolbar = NSToolbar(identifier: "PracticeToolbar")
+    // Practice's Import/Record actions live in the tab's own content, not the window's title-bar
+    // toolbar — a native toolbar button reads oversized/out-of-place at this button style's scale;
+    // this is real window content per the flat/branded surface, not title-bar chrome.
+    private let importActionButton = PopoverUI.toolbarActionButton(title: "Import", symbolName: "square.and.arrow.down", target: nil, action: nil)
+    private let recordActionButton = PopoverUI.toolbarActionButton(title: "Record", symbolName: "record.circle", target: nil, action: nil)
     private var systemAudioRecorderBox: Any?
     private var recordingPopover: NSPopover?
-    private weak var recordToolbarButton: NSButton?
 
     var onWindowClosed: (() -> Void)?
 
@@ -237,7 +238,6 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
         currentTab = tab
         segmentedControl.selectedSegment = tab.rawValue
         liveStatusDot.isHidden = tab != .practice
-        window?.toolbar = (tab == .practice) ? practiceToolbar : nil
 
         for child in contentContainer.subviews { child.removeFromSuperview() }
         let content: NSView
@@ -246,7 +246,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
             liveViewController.reloadFromPreferences()
             content = liveViewController.view
         case .practice:
-            content = practiceSplitViewController.view
+            content = practiceContainer
         }
         content.translatesAutoresizingMaskIntoConstraints = false
         contentContainer.addSubview(content)
@@ -267,56 +267,48 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
 
     // MARK: - Practice tab
 
+    /// Import/Record action row above the sidebar + deck split, at `Regular` scale like the rest
+    /// of the window's content.
+    private lazy var practiceContainer: NSView = {
+        let actionRow = NSStackView(views: [importActionButton, recordActionButton])
+        actionRow.orientation = .horizontal
+        actionRow.spacing = PopoverUI.Metrics.Regular.rowSpacing
+        actionRow.translatesAutoresizingMaskIntoConstraints = false
+
+        let splitView = practiceSplitViewController.view
+        splitView.translatesAutoresizingMaskIntoConstraints = false
+
+        let container = NSView()
+        container.addSubview(actionRow)
+        container.addSubview(splitView)
+
+        let pad = PopoverUI.Metrics.Regular.padding
+        NSLayoutConstraint.activate([
+            actionRow.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: pad),
+            actionRow.topAnchor.constraint(equalTo: container.topAnchor, constant: PopoverUI.Metrics.Regular.rowSpacing),
+            splitView.leadingAnchor.constraint(equalTo: container.leadingAnchor),
+            splitView.trailingAnchor.constraint(equalTo: container.trailingAnchor),
+            splitView.bottomAnchor.constraint(equalTo: container.bottomAnchor),
+            splitView.topAnchor.constraint(equalTo: actionRow.bottomAnchor, constant: PopoverUI.Metrics.Regular.rowSpacing)
+        ])
+        return container
+    }()
+
     private func configurePracticeTab() {
-        practiceToolbar.delegate = self
-        practiceToolbar.displayMode = .iconAndLabel
+        importActionButton.target = self
+        importActionButton.action = #selector(importButtonClicked)
+        recordActionButton.target = self
+        recordActionButton.action = #selector(recordButtonClicked(_:))
+        if #unavailable(macOS 14.2) {
+            recordActionButton.isEnabled = false
+            recordActionButton.toolTip = "Recording system audio requires macOS 14.2 or later"
+        }
 
         deck.onImportRequested = { [weak self] in self?.importButtonClicked() }
         deck.onRecordRequested = { [weak self] in
-            guard let self, let button = self.recordToolbarButton else { return }
-            self.recordButtonClicked(button)
+            guard let self else { return }
+            self.recordButtonClicked(self.recordActionButton)
         }
-    }
-
-    func toolbar(_ toolbar: NSToolbar, itemForItemIdentifier itemIdentifier: NSToolbarItem.Identifier, willBeInsertedIntoToolbar flag: Bool) -> NSToolbarItem? {
-        switch itemIdentifier {
-        case Self.importItemIdentifier:
-            let item = NSToolbarItem(itemIdentifier: itemIdentifier)
-            let button = PopoverUI.toolbarActionButton(title: "Import", symbolName: "square.and.arrow.down", target: self, action: #selector(importButtonClicked))
-            item.label = "Import"
-            item.paletteLabel = "Import Clip"
-            item.toolTip = "Import an audio file"
-            item.view = button
-            return item
-
-        case Self.recordItemIdentifier:
-            let item = NSToolbarItem(itemIdentifier: itemIdentifier)
-            let button = PopoverUI.toolbarActionButton(title: "Record", symbolName: "record.circle", target: self, action: #selector(recordButtonClicked(_:)))
-            item.label = "Record"
-            item.paletteLabel = "Record System Audio"
-            recordToolbarButton = button
-            item.view = button
-
-            if #available(macOS 14.2, *) {
-                item.toolTip = "Record system audio"
-                button.isEnabled = true
-            } else {
-                item.toolTip = "Recording system audio requires macOS 14.2 or later"
-                button.isEnabled = false
-            }
-            return item
-
-        default:
-            return nil
-        }
-    }
-
-    func toolbarDefaultItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
-        [Self.importItemIdentifier, Self.recordItemIdentifier, .flexibleSpace]
-    }
-
-    func toolbarAllowedItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
-        [Self.importItemIdentifier, Self.recordItemIdentifier, .flexibleSpace]
     }
 
     @objc private func importButtonClicked() {
@@ -336,10 +328,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
 
     @objc private func recordButtonClicked(_ sender: Any) {
         guard #available(macOS 14.2, *) else { return }
-        guard let anchorView = (sender as? NSView) ?? recordToolbarButton else {
-            AppLogger.shared.warning("Practice record button clicked but no anchor view was available")
-            return
-        }
+        let anchorView = (sender as? NSView) ?? recordActionButton
 
         let panel = RecordingPanelController(recorder: systemAudioRecorder) { [weak self] url in
             self?.handleImport(url: url)
