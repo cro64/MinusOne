@@ -270,6 +270,18 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
     /// Import/Record action row above the sidebar + deck split, at `Regular` scale like the rest
     /// of the window's content.
     private lazy var practiceContainer: NSView = {
+        // `toolbarActionButton`'s default sizing (14pt/.black title + FlatButton's own +28.8w/
+        // +16h padding, plus an unconfigured SF Symbol rendering at its full default point size)
+        // is tuned for a single prominent CTA (e.g. onboarding's "Download Neural Model"), not a
+        // compact action row — left as-is it dwarfs the sidebar/deck below it. Cap it down here
+        // rather than changing the shared factory, which `PracticeEmptyStateView` also uses at
+        // the larger, prominent-CTA scale intentionally.
+        for button in [importActionButton, recordActionButton] {
+            button.pointSize = 12
+            button.image = button.image?.withSymbolConfiguration(.init(pointSize: 12, weight: .medium))
+            button.heightAnchor.constraint(equalToConstant: 26).isActive = true
+        }
+
         let actionRow = NSStackView(views: [importActionButton, recordActionButton])
         actionRow.orientation = .horizontal
         actionRow.spacing = PopoverUI.Metrics.Regular.rowSpacing
