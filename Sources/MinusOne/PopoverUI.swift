@@ -332,14 +332,62 @@ enum PopoverUI {
         return stack
     }
 
-    static func pinContent(_ content: NSView, in container: NSView) {
-        container.addSubview(content)
-        NSLayoutConstraint.activate([
-            content.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: Metrics.padding),
-            content.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -Metrics.padding),
-            content.topAnchor.constraint(equalTo: container.topAnchor, constant: Metrics.padding),
-            content.bottomAnchor.constraint(equalTo: container.bottomAnchor, constant: -Metrics.padding)
-        ])
+    /// Which edges `pin(_:to:edges:insets:)` constrains to the container's matching edge.
+    struct PinnedEdges: OptionSet {
+        let rawValue: Int
+        static let leading = PinnedEdges(rawValue: 1 << 0)
+        static let trailing = PinnedEdges(rawValue: 1 << 1)
+        static let top = PinnedEdges(rawValue: 1 << 2)
+        static let bottom = PinnedEdges(rawValue: 1 << 3)
+        static let all: PinnedEdges = [.leading, .trailing, .top, .bottom]
+    }
+
+    /// Adds `view` to `container` (if not already a subview of it) and activates constraints
+    /// pinning `edges` to the matching edges of `container`, inset by `insets`. Covers the ~20
+    /// hand-written "pin this view to its container" constraint blocks that used to be scattered
+    /// across the app, each rewritten slightly differently — a single call site here is one fewer
+    /// place to get an edge or a sign wrong.
+    @discardableResult
+    static func pin(_ view: NSView, to container: NSView, edges: PinnedEdges = .all, insets: NSEdgeInsets = NSEdgeInsetsZero) -> [NSLayoutConstraint] {
+        view.translatesAutoresizingMaskIntoConstraints = false
+        if view.superview !== container {
+            container.addSubview(view)
+        }
+        var constraints: [NSLayoutConstraint] = []
+        if edges.contains(.leading) {
+            constraints.append(view.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: insets.left))
+        }
+        if edges.contains(.trailing) {
+            constraints.append(view.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -insets.right))
+        }
+        if edges.contains(.top) {
+            constraints.append(view.topAnchor.constraint(equalTo: container.topAnchor, constant: insets.top))
+        }
+        if edges.contains(.bottom) {
+            constraints.append(view.bottomAnchor.constraint(equalTo: container.bottomAnchor, constant: -insets.bottom))
+        }
+        NSLayoutConstraint.activate(constraints)
+        return constraints
+    }
+}
+
+/// `NSView` whose `translatesAutoresizingMaskIntoConstraints` defaults to `false` — the correct
+/// default for every view in this codebase, which is laid out entirely with constraints. AppKit's
+/// own default of `true` is what produced the Practice sidebar/deck/action-row layout bugs: a
+/// programmatically created view resolves its frame via its (unset, `.zero`) autoresizing mask
+/// against whatever frame it happened to be created with, instead of the constraints meant to
+/// size it — visible only once the view is embedded somewhere (e.g. an `NSSplitViewItem`) that
+/// doesn't itself force the flag off. Subclass this instead of `NSView` for any programmatic root
+/// or container view and the failure mode stops being possible.
+class AutoLayoutView: NSView {
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        translatesAutoresizingMaskIntoConstraints = false
+    }
+
+    required init?(coder: NSCoder) {
+        super.init(coder: coder)
+        translatesAutoresizingMaskIntoConstraints = false
     }
 }
 

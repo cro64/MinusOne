@@ -44,12 +44,7 @@ final class PracticeDeckViewController: NSViewController {
     }
 
     override func loadView() {
-        view = NSView(frame: NSRect(x: 0, y: 0, width: 700, height: 560))
-        // Created programmatically, so this defaults to `true` — left unset, `NSSplitView`
-        // resolves this arranged subview's frame via autoresizing against its *initial* 700x560
-        // frame instead of the constraints below being resolved against the split pane's actual
-        // size, leaving the content anchored to a small box in one corner of a much larger pane.
-        view.translatesAutoresizingMaskIntoConstraints = false
+        view = AutoLayoutView(frame: NSRect(x: 0, y: 0, width: 700, height: 560))
 
         emptyStateView.translatesAutoresizingMaskIntoConstraints = false
         view.addSubview(emptyStateView)
@@ -125,13 +120,8 @@ final class PracticeDeckViewController: NSViewController {
         content.setCustomSpacing(4, after: statusLabel)
         waveformView.widthAnchor.constraint(equalTo: content.widthAnchor).isActive = true
 
-        view.addSubview(content)
         let pad = PopoverUI.Metrics.Regular.padding
-        NSLayoutConstraint.activate([
-            content.topAnchor.constraint(equalTo: view.topAnchor, constant: pad),
-            content.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: pad),
-            content.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -pad)
-        ])
+        PopoverUI.pin(content, to: view, edges: [.top, .leading, .trailing], insets: NSEdgeInsets(top: pad, left: pad, bottom: 0, right: pad))
         contentStack = content
     }
 
@@ -301,14 +291,7 @@ private final class MixerRowView: NSView {
         row.orientation = .horizontal
         row.spacing = PopoverUI.Metrics.Regular.rowSpacing
         row.alignment = .centerY
-        row.translatesAutoresizingMaskIntoConstraints = false
-        addSubview(row)
-        NSLayoutConstraint.activate([
-            row.leadingAnchor.constraint(equalTo: leadingAnchor),
-            row.trailingAnchor.constraint(equalTo: trailingAnchor),
-            row.topAnchor.constraint(equalTo: topAnchor),
-            row.bottomAnchor.constraint(equalTo: bottomAnchor)
-        ])
+        PopoverUI.pin(row, to: self)
 
         slider.target = self
         slider.action = #selector(sliderChanged(_:))

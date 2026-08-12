@@ -128,14 +128,7 @@ final class MenuBarPopoverViewController: NSViewController {
 
         if statusHeader.superview !== statusHeaderContainer {
             statusHeaderContainer.subviews.forEach { $0.removeFromSuperview() }
-            statusHeader.translatesAutoresizingMaskIntoConstraints = false
-            statusHeaderContainer.addSubview(statusHeader)
-            NSLayoutConstraint.activate([
-                statusHeader.leadingAnchor.constraint(equalTo: statusHeaderContainer.leadingAnchor),
-                statusHeader.trailingAnchor.constraint(equalTo: statusHeaderContainer.trailingAnchor),
-                statusHeader.topAnchor.constraint(equalTo: statusHeaderContainer.topAnchor),
-                statusHeader.bottomAnchor.constraint(equalTo: statusHeaderContainer.bottomAnchor)
-            ])
+            PopoverUI.pin(statusHeader, to: statusHeaderContainer)
         }
         statusHeader.update(title: title, indicatorColor: indicatorColor, errorDetail: errorDetail)
     }

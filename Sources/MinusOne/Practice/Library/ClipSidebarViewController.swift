@@ -3,7 +3,7 @@ import UniformTypeIdentifiers
 
 /// Drop target that forwards dragged file URLs — used as the sidebar's root view so dropping an
 /// audio file onto the library list imports it.
-private final class DropTargetView: NSView {
+private final class DropTargetView: AutoLayoutView {
     var onDropFiles: (([URL]) -> Void)?
 
     override func awakeFromNib() { super.awakeFromNib() }
@@ -54,17 +54,11 @@ final class ClipSidebarViewController: NSViewController, NSTableViewDataSource, 
     override func loadView() {
         let root = DropTargetView(frame: NSRect(x: 0, y: 0, width: 260, height: 500))
         root.onDropFiles = { [weak self] urls in self?.onDropFiles?(urls) }
-        // Created programmatically, so this defaults to `true` — left unset, `NSSplitView`
-        // resolves this arranged subview's frame via autoresizing against its *initial* 260x500
-        // frame instead of the constraints below being resolved against the split pane's actual
-        // size, leaving the content anchored to a small box in one corner of a much larger pane.
-        root.translatesAutoresizingMaskIntoConstraints = false
         view = root
 
         searchField.placeholderString = "Search clips"
         searchField.target = self
         searchField.action = #selector(searchChanged)
-        searchField.translatesAutoresizingMaskIntoConstraints = false
 
         let column = NSTableColumn(identifier: .init("clip"))
         column.width = 240
@@ -82,21 +76,10 @@ final class ClipSidebarViewController: NSViewController, NSTableViewDataSource, 
         scrollView.documentView = tableView
         scrollView.hasVerticalScroller = true
         scrollView.drawsBackground = false
-        scrollView.translatesAutoresizingMaskIntoConstraints = false
 
-        root.addSubview(searchField)
-        root.addSubview(scrollView)
-
-        NSLayoutConstraint.activate([
-            searchField.topAnchor.constraint(equalTo: root.topAnchor, constant: 10),
-            searchField.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: 10),
-            searchField.trailingAnchor.constraint(equalTo: root.trailingAnchor, constant: -10),
-
-            scrollView.topAnchor.constraint(equalTo: searchField.bottomAnchor, constant: 8),
-            scrollView.leadingAnchor.constraint(equalTo: root.leadingAnchor),
-            scrollView.trailingAnchor.constraint(equalTo: root.trailingAnchor),
-            scrollView.bottomAnchor.constraint(equalTo: root.bottomAnchor)
-        ])
+        PopoverUI.pin(searchField, to: root, edges: [.top, .leading, .trailing], insets: NSEdgeInsets(top: 10, left: 10, bottom: 0, right: 10))
+        PopoverUI.pin(scrollView, to: root, edges: [.leading, .trailing, .bottom])
+        scrollView.topAnchor.constraint(equalTo: searchField.bottomAnchor, constant: 8).isActive = true
     }
 
     func reloadClips() {

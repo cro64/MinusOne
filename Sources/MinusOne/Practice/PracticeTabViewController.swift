@@ -26,7 +26,7 @@ final class PracticeTabViewController: NSViewController {
     }
 
     override func loadView() {
-        let root = NSView()
+        let root = AutoLayoutView()
         view = root
 
         // `toolbarActionButton`'s default sizing (14pt/.black title + FlatButton's own +28.8w/
@@ -42,29 +42,20 @@ final class PracticeTabViewController: NSViewController {
         let actionRow = NSStackView(views: [importActionButton, recordActionButton])
         actionRow.orientation = .horizontal
         actionRow.spacing = PopoverUI.Metrics.Regular.rowSpacing
-        actionRow.translatesAutoresizingMaskIntoConstraints = false
         // Only pinned by leading+top below, with no height/bottom of its own — nothing stops
         // Auto Layout from stretching it to soak up whatever height `splitView` doesn't claim
         // (confirmed via direct frame logging: actionRow measured 374pt tall, not ~26pt, exactly
         // filling the gap between the button row's real height and wherever splitView ended up).
         // A hard height, matching the buttons it holds, removes it as a possible slack-absorber.
+        actionRow.translatesAutoresizingMaskIntoConstraints = false
         actionRow.heightAnchor.constraint(equalToConstant: 26).isActive = true
 
         addChild(splitViewController)
         let splitView = splitViewController.view
-        splitView.translatesAutoresizingMaskIntoConstraints = false
-
-        root.addSubview(actionRow)
-        root.addSubview(splitView)
 
         let pad = PopoverUI.Metrics.Regular.padding
-        NSLayoutConstraint.activate([
-            actionRow.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: pad),
-            actionRow.topAnchor.constraint(equalTo: root.topAnchor, constant: PopoverUI.Metrics.Regular.rowSpacing),
-            splitView.leadingAnchor.constraint(equalTo: root.leadingAnchor),
-            splitView.trailingAnchor.constraint(equalTo: root.trailingAnchor),
-            splitView.bottomAnchor.constraint(equalTo: root.bottomAnchor),
-            splitView.topAnchor.constraint(equalTo: actionRow.bottomAnchor, constant: PopoverUI.Metrics.Regular.rowSpacing)
-        ])
+        PopoverUI.pin(actionRow, to: root, edges: [.leading, .top], insets: NSEdgeInsets(top: PopoverUI.Metrics.Regular.rowSpacing, left: pad, bottom: 0, right: 0))
+        PopoverUI.pin(splitView, to: root, edges: [.leading, .trailing, .bottom])
+        splitView.topAnchor.constraint(equalTo: actionRow.bottomAnchor, constant: PopoverUI.Metrics.Regular.rowSpacing).isActive = true
     }
 }

@@ -4,7 +4,7 @@ import AppKit
 /// view's `intrinsicContentSize`, not from constraints on an arbitrary child (an `NSStackView`
 /// with only constraint-based sizing measured as zero-width at title-bar layout time even with
 /// its children fully constrained). Overriding this directly is the documented, reliable fix.
-private final class TitlebarAccessoryContainerView: NSView {
+private final class TitlebarAccessoryContainerView: AutoLayoutView {
     var fixedSize: NSSize = .zero {
         didSet { invalidateIntrinsicContentSize() }
     }
@@ -199,18 +199,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         let container = TitlebarAccessoryContainerView()
         container.fixedSize = NSSize(width: stackWidth, height: stackHeight)
         container.setFrameSize(container.fixedSize)
-        // `intrinsicContentSize` is only consulted by Auto Layout's content-hugging/compression
-        // machinery when the view itself participates in constraint-based layout — leaving the
-        // default `true` here means AppKit derives the container's size from its (empty, .zero)
-        // autoresizing frame instead of the override above.
-        container.translatesAutoresizingMaskIntoConstraints = false
-        container.addSubview(stack)
-        NSLayoutConstraint.activate([
-            stack.leadingAnchor.constraint(equalTo: container.leadingAnchor),
-            stack.trailingAnchor.constraint(equalTo: container.trailingAnchor),
-            stack.topAnchor.constraint(equalTo: container.topAnchor),
-            stack.bottomAnchor.constraint(equalTo: container.bottomAnchor)
-        ])
+        PopoverUI.pin(stack, to: container)
 
         let accessoryViewController = NSTitlebarAccessoryViewController()
         accessoryViewController.view = container
@@ -253,15 +242,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         }
 
         contentRootViewController.addChild(child)
-        let childView = child.view
-        childView.translatesAutoresizingMaskIntoConstraints = false
-        contentContainer.addSubview(childView)
-        NSLayoutConstraint.activate([
-            childView.leadingAnchor.constraint(equalTo: contentContainer.leadingAnchor),
-            childView.trailingAnchor.constraint(equalTo: contentContainer.trailingAnchor),
-            childView.topAnchor.constraint(equalTo: contentContainer.topAnchor),
-            childView.bottomAnchor.constraint(equalTo: contentContainer.bottomAnchor)
-        ])
+        PopoverUI.pin(child.view, to: contentContainer)
         currentContentViewController = child
     }
 

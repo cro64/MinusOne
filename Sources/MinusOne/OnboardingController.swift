@@ -373,14 +373,9 @@ private final class ModelSourceInfoViewController: NSViewController {
         stack.orientation = .vertical
         stack.alignment = .leading
         stack.spacing = 8
-        stack.translatesAutoresizingMaskIntoConstraints = false
-        root.addSubview(stack)
+        PopoverUI.pin(stack, to: root, insets: NSEdgeInsets(top: 12, left: 14, bottom: 12, right: 14))
 
         NSLayoutConstraint.activate([
-            stack.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: 14),
-            stack.trailingAnchor.constraint(equalTo: root.trailingAnchor, constant: -14),
-            stack.topAnchor.constraint(equalTo: root.topAnchor, constant: 12),
-            stack.bottomAnchor.constraint(equalTo: root.bottomAnchor, constant: -12),
             stack.widthAnchor.constraint(equalToConstant: 252),
             body.widthAnchor.constraint(equalTo: stack.widthAnchor)
         ])

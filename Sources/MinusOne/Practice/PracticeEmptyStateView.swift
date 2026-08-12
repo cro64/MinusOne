@@ -44,13 +44,7 @@ final class PracticeEmptyStateView: NSView {
         super.init(frame: frameRect)
 
         subtitle.widthAnchor.constraint(lessThanOrEqualToConstant: 280).isActive = true
-        addSubview(stack)
-        NSLayoutConstraint.activate([
-            stack.leadingAnchor.constraint(equalTo: leadingAnchor),
-            stack.trailingAnchor.constraint(equalTo: trailingAnchor),
-            stack.topAnchor.constraint(equalTo: topAnchor),
-            stack.bottomAnchor.constraint(equalTo: bottomAnchor)
-        ])
+        PopoverUI.pin(stack, to: self)
 
         importButton.target = self
         importButton.action = #selector(importClicked)

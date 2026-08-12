@@ -60,14 +60,9 @@ final class RecordingPanelController: NSViewController {
         let content = NSStackView(views: [idle, recording])
         content.orientation = .vertical
         content.alignment = .leading
-        content.translatesAutoresizingMaskIntoConstraints = false
-        root.addSubview(content)
+        PopoverUI.pin(content, to: root, insets: NSEdgeInsets(top: 20, left: 20, bottom: 20, right: 20))
 
         NSLayoutConstraint.activate([
-            content.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: 20),
-            content.trailingAnchor.constraint(equalTo: root.trailingAnchor, constant: -20),
-            content.topAnchor.constraint(equalTo: root.topAnchor, constant: 20),
-            content.bottomAnchor.constraint(equalTo: root.bottomAnchor, constant: -20),
             idle.widthAnchor.constraint(equalToConstant: Self.panelWidth - 40),
             recording.widthAnchor.constraint(equalToConstant: Self.panelWidth - 40)
         ])
@@ -330,14 +325,7 @@ final class RecordingPanelController: NSViewController {
         container.wantsLayer = true
         container.layer?.borderWidth = 1
         container.layer?.borderColor = NSColor.flatDivider.cgColor
-        content.translatesAutoresizingMaskIntoConstraints = false
-        container.addSubview(content)
-        NSLayoutConstraint.activate([
-            content.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 12),
-            content.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -12),
-            content.topAnchor.constraint(equalTo: container.topAnchor, constant: 12),
-            content.bottomAnchor.constraint(equalTo: container.bottomAnchor, constant: -12)
-        ])
+        PopoverUI.pin(content, to: container, insets: NSEdgeInsets(top: 12, left: 12, bottom: 12, right: 12))
         return container
     }
 

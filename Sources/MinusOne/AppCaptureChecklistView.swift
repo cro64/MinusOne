@@ -58,8 +58,7 @@ final class AppCaptureChecklistView: NSView {
         scrollView.autohidesScrollers = true
         scrollView.drawsBackground = false
         scrollView.borderType = .noBorder
-        scrollView.translatesAutoresizingMaskIntoConstraints = false
-        addSubview(scrollView)
+        PopoverUI.pin(scrollView, to: self)
 
         emptyLabel.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
         emptyLabel.textColor = .secondaryLabelColor
@@ -69,10 +68,6 @@ final class AppCaptureChecklistView: NSView {
 
         NSLayoutConstraint.activate([
             heightAnchor.constraint(equalToConstant: Layout.rowHeight * Layout.maxVisibleRows),
-            scrollView.leadingAnchor.constraint(equalTo: leadingAnchor),
-            scrollView.trailingAnchor.constraint(equalTo: trailingAnchor),
-            scrollView.topAnchor.constraint(equalTo: topAnchor),
-            scrollView.bottomAnchor.constraint(equalTo: bottomAnchor),
             stack.leadingAnchor.constraint(equalTo: scrollView.leadingAnchor),
             stack.trailingAnchor.constraint(equalTo: scrollView.trailingAnchor),
             stack.widthAnchor.constraint(equalTo: scrollView.widthAnchor),
