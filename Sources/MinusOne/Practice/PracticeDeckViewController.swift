@@ -81,20 +81,14 @@ final class PracticeDeckViewController: NSViewController {
         timeLabel.isHidden = false
         timeLabel.stringValue = "0:00 / 0:00"
 
-        let transportStack = NSStackView(views: [playPauseButton, loopButton, timeLabel])
-        transportStack.orientation = .horizontal
-        transportStack.spacing = PopoverUI.Metrics.Regular.rowSpacing
-        transportStack.alignment = .centerY
+        let transportStack = PopoverUI.horizontalStack([playPauseButton, loopButton, timeLabel], spacing: PopoverUI.Metrics.Regular.rowSpacing)
 
         tempoSlider.isContinuous = true
         tempoSlider.target = self
         tempoSlider.action = #selector(tempoChanged)
         let tempoLabel = PopoverUI.fieldLabel("Tempo")
         tempoLabel.widthAnchor.constraint(equalToConstant: PopoverUI.Metrics.Regular.labelWidth).isActive = true
-        let tempoRow = NSStackView(views: [tempoLabel, tempoSlider, tempoValueLabel])
-        tempoRow.orientation = .horizontal
-        tempoRow.spacing = PopoverUI.Metrics.Regular.rowSpacing
-        tempoRow.alignment = .centerY
+        let tempoRow = PopoverUI.horizontalStack([tempoLabel, tempoSlider, tempoValueLabel], spacing: PopoverUI.Metrics.Regular.rowSpacing)
         tempoSlider.widthAnchor.constraint(greaterThanOrEqualToConstant: 160).isActive = true
 
         let mixerHeader = PopoverUI.sectionHeader("Stems")
@@ -287,10 +281,7 @@ private final class MixerRowView: NSView {
 
         super.init(frame: .zero)
 
-        let row = NSStackView(views: [label, slider, soloButton, muteButton])
-        row.orientation = .horizontal
-        row.spacing = PopoverUI.Metrics.Regular.rowSpacing
-        row.alignment = .centerY
+        let row = PopoverUI.horizontalStack([label, slider, soloButton, muteButton], spacing: PopoverUI.Metrics.Regular.rowSpacing)
         PopoverUI.pin(row, to: self)
 
         slider.target = self

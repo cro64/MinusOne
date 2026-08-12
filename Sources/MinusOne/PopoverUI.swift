@@ -332,6 +332,24 @@ enum PopoverUI {
         return stack
     }
 
+    static func horizontalStack(_ views: [NSView], spacing: CGFloat, alignment: NSLayoutConstraint.Attribute = .centerY) -> NSStackView {
+        let stack = NSStackView(views: views)
+        stack.orientation = .horizontal
+        stack.alignment = alignment
+        stack.spacing = spacing
+        stack.translatesAutoresizingMaskIntoConstraints = false
+        return stack
+    }
+
+    /// Content-less view with minimal horizontal hugging priority — the lowest-priority view in a
+    /// horizontal stack absorbs all the stack's slack, pushing its neighbors to opposite ends
+    /// without a fixed-width spacer.
+    static func flexibleSpacer() -> NSView {
+        let view = NSView()
+        view.setContentHuggingPriority(.init(1), for: .horizontal)
+        return view
+    }
+
     /// Which edges `pin(_:to:edges:insets:)` constrains to the container's matching edge.
     struct PinnedEdges: OptionSet {
         let rawValue: Int

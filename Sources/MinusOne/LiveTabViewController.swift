@@ -197,12 +197,8 @@ final class LiveTabViewController: NSViewController {
         statusHeader.translatesAutoresizingMaskIntoConstraints = false
         liveToggle.translatesAutoresizingMaskIntoConstraints = false
 
-        let row = NSStackView(views: [statusHeader, NSView(), liveToggle])
-        row.orientation = .horizontal
-        row.alignment = .centerY
+        let row = PopoverUI.horizontalStack([statusHeader, NSView(), liveToggle], spacing: PopoverUI.Metrics.Regular.rowSpacing)
         row.distribution = .fill
-        row.spacing = PopoverUI.Metrics.Regular.rowSpacing
-        row.translatesAutoresizingMaskIntoConstraints = false
         return row
     }
 

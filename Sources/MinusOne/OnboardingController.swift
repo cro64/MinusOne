@@ -85,12 +85,7 @@ final class OnboardingViewController: NSViewController {
         modelLabel.font = .systemFont(ofSize: NSFont.smallSystemFontSize, weight: .semibold)
         modelLabel.textColor = .secondaryLabelColor
 
-        let modelHeaderSpacer = NSView()
-        modelHeaderSpacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
-        let modelHeader = NSStackView(views: [modelLabel, modelHeaderSpacer, modelInfoButton])
-        modelHeader.orientation = .horizontal
-        modelHeader.alignment = .centerY
-        modelHeader.spacing = 4
+        let modelHeader = PopoverUI.horizontalStack([modelLabel, PopoverUI.flexibleSpacer(), modelInfoButton], spacing: 4)
 
         statusLabel.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
         statusLabel.textColor = .secondaryLabelColor
@@ -120,25 +115,12 @@ final class OnboardingViewController: NSViewController {
 
         updatePrimaryButtonTitle()
 
-        let spacer = NSView()
-        spacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
-        let buttonRow = NSStackView(views: [spacer, skipButton, primaryButton])
-        buttonRow.orientation = .horizontal
-        buttonRow.spacing = 10
-        buttonRow.alignment = .centerY
+        let buttonRow = PopoverUI.horizontalStack([PopoverUI.flexibleSpacer(), skipButton, primaryButton], spacing: 10)
 
-        let header = NSStackView(views: [logoView, name])
-        header.orientation = .vertical
+        let header = PopoverUI.verticalStack([logoView, name], spacing: 8)
         header.alignment = .centerX
-        header.spacing = 8
 
-        let stack = NSStackView(views: [
-            header, body, modelHeader, statusLabel, progress, buttonRow
-        ])
-        stack.orientation = .vertical
-        stack.alignment = .leading
-        stack.spacing = 10
-        stack.translatesAutoresizingMaskIntoConstraints = false
+        let stack = PopoverUI.verticalStack([header, body, modelHeader, statusLabel, progress, buttonRow], spacing: 10)
         stack.setCustomSpacing(12, after: header)
         stack.setCustomSpacing(14, after: body)
         stack.setCustomSpacing(14, after: progress)
@@ -369,10 +351,7 @@ private final class ModelSourceInfoViewController: NSViewController {
             arranged.append(link)
         }
 
-        let stack = NSStackView(views: arranged)
-        stack.orientation = .vertical
-        stack.alignment = .leading
-        stack.spacing = 8
+        let stack = PopoverUI.verticalStack(arranged, spacing: 8)
         PopoverUI.pin(stack, to: root, insets: NSEdgeInsets(top: 12, left: 14, bottom: 12, right: 14))
 
         NSLayoutConstraint.activate([

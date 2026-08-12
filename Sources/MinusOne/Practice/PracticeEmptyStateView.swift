@@ -31,9 +31,7 @@ final class PracticeEmptyStateView: NSView {
         importButton = PopoverUI.toolbarActionButton(title: "Import a clip", symbolName: "square.and.arrow.down", target: nil, action: nil)
         recordButton = PopoverUI.toolbarActionButton(title: "Record system audio", symbolName: "record.circle", target: nil, action: nil)
 
-        let actionsRow = NSStackView(views: [importButton, recordButton])
-        actionsRow.orientation = .horizontal
-        actionsRow.spacing = PopoverUI.Metrics.Regular.rowSpacing
+        let actionsRow = PopoverUI.horizontalStack([importButton, recordButton], spacing: PopoverUI.Metrics.Regular.rowSpacing)
 
         let stack = PopoverUI.verticalStack([mark, title, subtitle, actionsRow], spacing: PopoverUI.Metrics.Regular.rowSpacing)
         stack.alignment = .centerX

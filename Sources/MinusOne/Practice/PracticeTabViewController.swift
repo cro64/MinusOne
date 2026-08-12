@@ -39,15 +39,12 @@ final class PracticeTabViewController: NSViewController {
             button.heightAnchor.constraint(equalToConstant: 26).isActive = true
         }
 
-        let actionRow = NSStackView(views: [importActionButton, recordActionButton])
-        actionRow.orientation = .horizontal
-        actionRow.spacing = PopoverUI.Metrics.Regular.rowSpacing
+        let actionRow = PopoverUI.horizontalStack([importActionButton, recordActionButton], spacing: PopoverUI.Metrics.Regular.rowSpacing)
         // Only pinned by leading+top below, with no height/bottom of its own — nothing stops
         // Auto Layout from stretching it to soak up whatever height `splitView` doesn't claim
         // (confirmed via direct frame logging: actionRow measured 374pt tall, not ~26pt, exactly
         // filling the gap between the button row's real height and wherever splitView ended up).
         // A hard height, matching the buttons it holds, removes it as a possible slack-absorber.
-        actionRow.translatesAutoresizingMaskIntoConstraints = false
         actionRow.heightAnchor.constraint(equalToConstant: 26).isActive = true
 
         addChild(splitViewController)

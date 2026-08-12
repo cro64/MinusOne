@@ -174,12 +174,8 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         liveStatusDot.isHidden = true
         liveStatusDot.translatesAutoresizingMaskIntoConstraints = false
 
-        let stack = NSStackView(views: [liveStatusDot, segmentedControl])
-        stack.orientation = .horizontal
-        stack.alignment = .centerY
-        stack.spacing = 8
+        let stack = PopoverUI.horizontalStack([liveStatusDot, segmentedControl], spacing: 8)
         stack.edgeInsets = NSEdgeInsets(top: 4, left: 0, bottom: 4, right: 8)
-        stack.translatesAutoresizingMaskIntoConstraints = false
 
         let segmentedSize = segmentedControl.fittingSize
         let segmentedWidth = max(segmentedSize.width, 120)
