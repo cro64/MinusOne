@@ -172,7 +172,6 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         liveStatusDot.layer?.cornerRadius = 4
         liveStatusDot.layer?.backgroundColor = NSColor.tertiaryLabelColor.cgColor
         liveStatusDot.isHidden = true
-        liveStatusDot.translatesAutoresizingMaskIntoConstraints = false
 
         let stack = PopoverUI.horizontalStack([liveStatusDot, segmentedControl], spacing: 8)
         stack.edgeInsets = NSEdgeInsets(top: 4, left: 0, bottom: 4, right: 8)
@@ -183,14 +182,9 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         let segmentedHeight = max(segmentedSize.height, 26)
         let stackWidth = stack.edgeInsets.left + 8 + stack.spacing + segmentedWidth + stack.edgeInsets.right
         let stackHeight = segmentedHeight + stack.edgeInsets.top + stack.edgeInsets.bottom
-        NSLayoutConstraint.activate([
-            liveStatusDot.widthAnchor.constraint(equalToConstant: 8),
-            liveStatusDot.heightAnchor.constraint(equalToConstant: 8),
-            segmentedControl.widthAnchor.constraint(equalToConstant: segmentedWidth),
-            segmentedControl.heightAnchor.constraint(equalToConstant: segmentedHeight),
-            stack.widthAnchor.constraint(equalToConstant: stackWidth),
-            stack.heightAnchor.constraint(equalToConstant: stackHeight)
-        ])
+        liveStatusDot.constrainSize(width: 8, height: 8)
+        segmentedControl.constrainSize(width: segmentedWidth, height: segmentedHeight)
+        stack.constrainSize(width: stackWidth, height: stackHeight)
 
         let container = TitlebarAccessoryContainerView()
         container.fixedSize = NSSize(width: stackWidth, height: stackHeight)

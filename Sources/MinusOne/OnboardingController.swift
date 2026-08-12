@@ -63,9 +63,7 @@ final class OnboardingViewController: NSViewController {
         let logoImage = MinusOneIcon.waveform(size: 56, color: .brandAccent, isActive: true)
         let logoView = NSImageView(image: logoImage)
         logoView.imageScaling = .scaleProportionallyUpOrDown
-        logoView.translatesAutoresizingMaskIntoConstraints = false
-        logoView.widthAnchor.constraint(equalToConstant: 56).isActive = true
-        logoView.heightAnchor.constraint(equalToConstant: 56).isActive = true
+        logoView.constrainSize(width: 56, height: 56)
 
         let name = NSTextField(labelWithString: "MinusOne")
         name.font = .systemFont(ofSize: 22, weight: .semibold)
@@ -155,8 +153,7 @@ final class OnboardingViewController: NSViewController {
         modelInfoButton.action = #selector(showModelInfo)
         modelInfoButton.setContentHuggingPriority(.required, for: .horizontal)
         modelInfoButton.setContentCompressionResistancePriority(.required, for: .horizontal)
-        modelInfoButton.widthAnchor.constraint(equalToConstant: 18).isActive = true
-        modelInfoButton.heightAnchor.constraint(equalToConstant: 18).isActive = true
+        modelInfoButton.constrainSize(width: 18, height: 18)
     }
 
     private func defaultStatusText() -> String {

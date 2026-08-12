@@ -409,6 +409,20 @@ class AutoLayoutView: NSView {
     }
 }
 
+extension NSView {
+    /// Activates width/height constraints pinning this view to a fixed size — covers the ~13
+    /// duplicated `widthAnchor.constraint(equalToConstant:)` + `heightAnchor...` pairs scattered
+    /// across the app for small fixed-size views (status dots, icons, square buttons).
+    @discardableResult
+    func constrainSize(width: CGFloat, height: CGFloat) -> (width: NSLayoutConstraint, height: NSLayoutConstraint) {
+        translatesAutoresizingMaskIntoConstraints = false
+        let widthConstraint = widthAnchor.constraint(equalToConstant: width)
+        let heightConstraint = heightAnchor.constraint(equalToConstant: height)
+        NSLayoutConstraint.activate([widthConstraint, heightConstraint])
+        return (widthConstraint, heightConstraint)
+    }
+}
+
 /// Layer-backed `NSButton` replacement for the native bezel styles (`.accessoryBar`,
 /// `.texturedRounded`, `.accessoryBarAction`, `.inline`) this file used to reach for — flat
 /// fill/border/text per REDESIGN's `.btn-primary`/`.btn-secondary`/`.btn-ghost`, `.btn`'s
@@ -758,18 +772,16 @@ final class StatusHeaderView: NSView {
         addSubview(titleField)
         addSubview(infoButton)
 
+        dot.constrainSize(width: 8, height: 8)
+        infoButton.constrainSize(width: 16, height: 16)
         NSLayoutConstraint.activate([
             heightAnchor.constraint(equalToConstant: PopoverUI.Metrics.rowHeight),
             dot.leadingAnchor.constraint(equalTo: leadingAnchor),
             dot.centerYAnchor.constraint(equalTo: centerYAnchor),
-            dot.widthAnchor.constraint(equalToConstant: 8),
-            dot.heightAnchor.constraint(equalToConstant: 8),
             titleField.leadingAnchor.constraint(equalTo: dot.trailingAnchor, constant: 8),
             titleField.centerYAnchor.constraint(equalTo: centerYAnchor),
             infoButton.leadingAnchor.constraint(equalTo: titleField.trailingAnchor, constant: 4),
-            infoButton.centerYAnchor.constraint(equalTo: centerYAnchor),
-            infoButton.widthAnchor.constraint(equalToConstant: 16),
-            infoButton.heightAnchor.constraint(equalToConstant: 16)
+            infoButton.centerYAnchor.constraint(equalTo: centerYAnchor)
         ])
     }
 

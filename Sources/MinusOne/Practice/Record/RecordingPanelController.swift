@@ -87,8 +87,7 @@ final class RecordingPanelController: NSViewController {
 
         let header = PopoverUI.horizontalStack([titles, PopoverUI.flexibleSpacer(), modeTag], spacing: 8)
 
-        sourceDot.widthAnchor.constraint(equalToConstant: 5).isActive = true
-        sourceDot.heightAnchor.constraint(equalToConstant: 5).isActive = true
+        sourceDot.constrainSize(width: 5, height: 5)
         sourceStatusLabel.font = .systemFont(ofSize: 10, weight: .medium)
         sourceStatusLabel.textColor = .secondaryLabelColor
         let sourceLabel = NSTextField(labelWithString: "Input source")
@@ -147,8 +146,7 @@ final class RecordingPanelController: NSViewController {
     // MARK: - Recording state UI
 
     private func buildRecordingContainer() -> NSStackView {
-        recDot.widthAnchor.constraint(equalToConstant: 8).isActive = true
-        recDot.heightAnchor.constraint(equalToConstant: 8).isActive = true
+        recDot.constrainSize(width: 8, height: 8)
         recDot.startPulsing()
         let recLabel = NSTextField(labelWithString: "RECORDING")
         recLabel.font = .systemFont(ofSize: 11, weight: .semibold)
@@ -310,9 +308,7 @@ final class RecordingPanelController: NSViewController {
         field.layer?.borderWidth = 1
         field.layer?.borderColor = NSColor.flatDivider.cgColor
         field.isEnabled = false
-        field.translatesAutoresizingMaskIntoConstraints = false
-        field.widthAnchor.constraint(equalToConstant: 44).isActive = true
-        field.heightAnchor.constraint(equalToConstant: 26).isActive = true
+        field.constrainSize(width: 44, height: 26)
         return field
     }
 }

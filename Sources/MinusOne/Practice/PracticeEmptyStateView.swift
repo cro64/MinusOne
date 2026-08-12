@@ -12,9 +12,7 @@ final class PracticeEmptyStateView: NSView {
 
     override init(frame frameRect: NSRect) {
         let mark = NSImageView(image: MinusOneIcon.waveform(size: 56, color: .tertiaryLabelColor, isActive: false))
-        mark.translatesAutoresizingMaskIntoConstraints = false
-        mark.widthAnchor.constraint(equalToConstant: 56).isActive = true
-        mark.heightAnchor.constraint(equalToConstant: 56).isActive = true
+        mark.constrainSize(width: 56, height: 56)
 
         let title = NSTextField(labelWithString: "No clip selected")
         title.font = .systemFont(ofSize: 15, weight: .semibold)

@@ -146,19 +146,17 @@ private final class AppChecklistRow: NSView {
             addGestureRecognizer(click)
         }
 
+        iconView.constrainSize(width: 16, height: 16)
+        checkmark.constrainSize(width: 16, height: 16)
         NSLayoutConstraint.activate([
             heightAnchor.constraint(equalToConstant: rowHeight),
             iconView.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 8),
             iconView.centerYAnchor.constraint(equalTo: centerYAnchor),
-            iconView.widthAnchor.constraint(equalToConstant: 16),
-            iconView.heightAnchor.constraint(equalToConstant: 16),
             nameLabel.leadingAnchor.constraint(equalTo: iconView.trailingAnchor, constant: 8),
             nameLabel.centerYAnchor.constraint(equalTo: centerYAnchor),
             nameLabel.trailingAnchor.constraint(lessThanOrEqualTo: checkmark.leadingAnchor, constant: -8),
             checkmark.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -8),
-            checkmark.centerYAnchor.constraint(equalTo: centerYAnchor),
-            checkmark.widthAnchor.constraint(equalToConstant: 16),
-            checkmark.heightAnchor.constraint(equalToConstant: 16)
+            checkmark.centerYAnchor.constraint(equalTo: centerYAnchor)
         ])
 
         updateCheckmark()
