@@ -11,17 +11,20 @@ import XCTest
 final class MinusOneUITests: XCTestCase {
     private var app: XCUIApplication!
 
-    override func setUpWithError() throws {
-        continueAfterFailure = false
-        let appURL = URL(fileURLWithPath: #filePath)
+    private static var appURL: URL {
+        URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent() // MinusOneUITests
             .deletingLastPathComponent() // Tests
             .deletingLastPathComponent() // repo root
             .appendingPathComponent("build/MinusOne.app")
-        guard FileManager.default.fileExists(atPath: appURL.path) else {
+    }
+
+    override func setUpWithError() throws {
+        continueAfterFailure = false
+        guard FileManager.default.fileExists(atPath: Self.appURL.path) else {
             throw XCTSkip("build/MinusOne.app not found — run Scripts/build-app.sh first.")
         }
-        app = XCUIApplication(url: appURL)
+        app = XCUIApplication(url: Self.appURL)
         app.launch()
     }
 
@@ -104,5 +107,35 @@ final class MinusOneUITests: XCTestCase {
             checklistFrame.minY, scopeFrame.maxY,
             "Checklist row overlaps the Scope row above it (top of checklist is above bottom of Scope)"
         )
+    }
+
+    /// Diagnostic, not a pass/fail check: dumps exact frame coordinates for the Practice tab's
+    /// action row, split view pane, and sidebar content — the same technique that found the real
+    /// cause of the titlebar-switch bug in `1096bdb`, instead of guessing again from screenshots.
+    ///
+    /// Launches its own app instance directly into the Practice tab via
+    /// `MINUSONE_UI_TEST_OPEN_WINDOW=practice`, bypassing the menu-bar-click open flow — that
+    /// flow's flakiness (see `openMainWindow()` above) is a separate, already-tracked problem and
+    /// has nothing to do with what's being diagnosed here.
+    func testDumpPracticeTabFrames() throws {
+        app.terminate()
+        app = XCUIApplication(url: Self.appURL)
+        app.launchEnvironment["MINUSONE_UI_TEST_OPEN_WINDOW"] = "practice"
+        app.launch()
+
+        let window = app.windows["MinusOne"]
+        XCTAssertTrue(window.waitForExistence(timeout: 5), "Main window never opened")
+
+        func dump(_ label: String, _ element: XCUIElement) {
+            print("FRAME_DUMP \(label): exists=\(element.exists) hittable=\(element.isHittable) frame=\(element.frame)")
+        }
+
+        dump("window", window)
+        dump("importButton", app.buttons["Import"])
+        dump("recordButton", app.buttons["Record"])
+        dump("searchField", window.searchFields.firstMatch)
+        dump("emptyStateTitle", window.staticTexts["No clip selected"])
+        dump("splitGroup", window.splitGroups.firstMatch)
+        dump("outline/table (sidebar)", window.outlines.firstMatch.exists ? window.outlines.firstMatch : window.tables.firstMatch)
     }
 }

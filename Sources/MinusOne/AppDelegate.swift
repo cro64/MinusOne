@@ -86,6 +86,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
         }
 
+        // Test-only: opens straight to the window/tab named, bypassing the menu-bar-click flow
+        // entirely. That flow is a real, separately-flaky thing to test (display-arrangement
+        // dependent, see MinusOneUITests' openMainWindow() comment) — this exists so layout tests
+        // for a *specific tab* aren't gated on it too.
+        if let tabName = ProcessInfo.processInfo.environment["MINUSONE_UI_TEST_OPEN_WINDOW"] {
+            let tab: MainWindowController.Tab = tabName == "practice" ? .practice : .live
+            DispatchQueue.main.async { [weak self] in
+                self?.openMainWindow(tab: tab)
+            }
+        }
+
         restoreSessionIfNeeded()
     }
 
