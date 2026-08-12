@@ -73,7 +73,7 @@ final class LiveTabViewController: NSViewController {
 
         let header = PopoverUI.sectionHeader("Processing")
         processingBody.translatesAutoresizingMaskIntoConstraints = false
-        sections.append(regularSection(header: header, body: processingBody))
+        sections.append(PopoverUI.regularSection(header: header, body: processingBody))
 
         sections.append(permissionButton)
 
@@ -82,10 +82,10 @@ final class LiveTabViewController: NSViewController {
             let checklist = AppCaptureChecklistView(preferences: preferences, audioEngine: audioEngine)
             appChecklist = checklist
             let captureRows: [NSView] = [
-                regularFormRow(label: "Scope", control: captureScopePopUp),
+                PopoverUI.regularFormRow(label: "Scope", control: captureScopePopUp),
                 checklist
             ]
-            let section = regularSection(title: "Capture", rows: captureRows)
+            let section = PopoverUI.regularSection(title: "Capture", rows: captureRows)
             captureSection = section
             sections.append(section)
         }
@@ -193,45 +193,6 @@ final class LiveTabViewController: NSViewController {
 
     // MARK: - Regular-scale layout helpers
 
-    private func regularSection(title: String, rows: [NSView]) -> NSView {
-        regularSection(header: PopoverUI.sectionHeader(title), rows: rows)
-    }
-
-    private func regularSection(header: NSView, body: NSView) -> NSView {
-        PopoverUI.verticalStack([header, body], spacing: PopoverUI.Metrics.Regular.rowSpacing)
-    }
-
-    private func regularSection(header: NSView, rows: [NSView]) -> NSView {
-        let rowsStack = PopoverUI.verticalStack(rows, spacing: PopoverUI.Metrics.Regular.rowSpacing)
-        let section = PopoverUI.verticalStack([header, rowsStack], spacing: PopoverUI.Metrics.Regular.rowSpacing)
-        // `.leading`-aligned stacks only pin the leading edge of arranged subviews, they don't
-        // stretch them — chain explicit width-equal constraints down so any row without its own
-        // intrinsic width (e.g. AppCaptureChecklistView) doesn't end up horizontally ambiguous.
-        rowsStack.widthAnchor.constraint(equalTo: section.widthAnchor).isActive = true
-        for row in rows {
-            row.widthAnchor.constraint(equalTo: rowsStack.widthAnchor).isActive = true
-        }
-        return section
-    }
-
-    private func regularFormRow(label: String, control: NSView) -> NSView {
-        let title = PopoverUI.fieldLabel(label)
-        control.translatesAutoresizingMaskIntoConstraints = false
-
-        let row = NSStackView(views: [title, control])
-        row.orientation = .horizontal
-        row.alignment = .centerY
-        row.distribution = .fill
-        row.spacing = PopoverUI.Metrics.Regular.rowSpacing
-        row.translatesAutoresizingMaskIntoConstraints = false
-
-        NSLayoutConstraint.activate([
-            title.widthAnchor.constraint(equalToConstant: PopoverUI.Metrics.Regular.labelWidth),
-            row.heightAnchor.constraint(equalToConstant: 24)
-        ])
-        return row
-    }
-
     private func statusRow() -> NSView {
         statusHeader.translatesAutoresizingMaskIntoConstraints = false
         liveToggle.translatesAutoresizingMaskIntoConstraints = false
@@ -322,8 +283,8 @@ final class LiveTabViewController: NSViewController {
         if let existing = cachedProcessingRowsView { return existing }
         let view = PopoverUI.verticalStack(
             [
-                regularFormRow(label: "Intensity", control: intensitySlider),
-                regularFormRow(label: "Gain", control: makeupSlider)
+                PopoverUI.regularFormRow(label: "Intensity", control: intensitySlider),
+                PopoverUI.regularFormRow(label: "Gain", control: makeupSlider)
             ],
             spacing: PopoverUI.Metrics.Regular.rowSpacing
         )

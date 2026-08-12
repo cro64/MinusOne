@@ -182,10 +182,12 @@ enum PopoverUI {
 
     /// Label pinned to the row's leading edge, control pinned to its trailing edge — matches the
     /// mockup's `justify-content: space-between` treatment for these rows (`Live [toggle]`,
-    /// `Record [toggle]`). Requires the caller to give the returned row an explicit width (e.g.
-    /// stretching it to match its container), since leading+trailing pins with only a minimum gap
-    /// between them are otherwise width-ambiguous.
-    static func formRow(label: String, control: NSView) -> NSView {
+    /// `Record [toggle]`). Menu bar popover only — `regularFormRow` below is the desktop window's
+    /// counterpart, and the two are NOT interchangeable: this one requires the caller to give the
+    /// returned row an explicit width (e.g. stretching it to match its container), since
+    /// leading+trailing pins with only a minimum gap between them are otherwise width-ambiguous,
+    /// where `regularFormRow` stretches itself via `NSStackView` distribution.
+    static func compactFormRow(label: String, control: NSView) -> NSView {
         let title = fieldLabel(label)
         control.translatesAutoresizingMaskIntoConstraints = false
 
@@ -205,8 +207,50 @@ enum PopoverUI {
         return row
     }
 
-    static func sliderRow(label: String, slider: NSSlider) -> NSView {
-        formRow(label: label, control: slider)
+    /// Desktop window counterpart to `compactFormRow` above — label + control in a fill-distributed
+    /// `NSStackView` at `Metrics.Regular` scale. Was reimplemented privately inside
+    /// `LiveTabViewController` before this moved here; promoted so the next `Regular`-scale screen
+    /// doesn't have to reinvent it (or worse, reach for `compactFormRow`, which behaves differently).
+    static func regularFormRow(label: String, control: NSView) -> NSView {
+        let title = fieldLabel(label)
+        control.translatesAutoresizingMaskIntoConstraints = false
+
+        let row = NSStackView(views: [title, control])
+        row.orientation = .horizontal
+        row.alignment = .centerY
+        row.distribution = .fill
+        row.spacing = Metrics.Regular.rowSpacing
+        row.translatesAutoresizingMaskIntoConstraints = false
+
+        NSLayoutConstraint.activate([
+            title.widthAnchor.constraint(equalToConstant: Metrics.Regular.labelWidth),
+            row.heightAnchor.constraint(equalToConstant: 24)
+        ])
+        return row
+    }
+
+    /// Section header + a single pre-built body view, at `Regular` scale.
+    static func regularSection(header: NSView, body: NSView) -> NSView {
+        verticalStack([header, body], spacing: Metrics.Regular.rowSpacing)
+    }
+
+    /// Section header (from a title) + a list of rows, at `Regular` scale.
+    static func regularSection(title: String, rows: [NSView]) -> NSView {
+        regularSection(header: sectionHeader(title), rows: rows)
+    }
+
+    /// Section header + a list of rows, at `Regular` scale.
+    static func regularSection(header: NSView, rows: [NSView]) -> NSView {
+        let rowsStack = verticalStack(rows, spacing: Metrics.Regular.rowSpacing)
+        let section = verticalStack([header, rowsStack], spacing: Metrics.Regular.rowSpacing)
+        // `.leading`-aligned stacks only pin the leading edge of arranged subviews, they don't
+        // stretch them — chain explicit width-equal constraints down so any row without its own
+        // intrinsic width (e.g. AppCaptureChecklistView) doesn't end up horizontally ambiguous.
+        rowsStack.widthAnchor.constraint(equalTo: section.widthAnchor).isActive = true
+        for row in rows {
+            row.widthAnchor.constraint(equalTo: rowsStack.widthAnchor).isActive = true
+        }
+        return section
     }
 
     /// `.hr` token: a flat 2px divider fill, not a native 1px `NSBox` hairline.

@@ -48,8 +48,8 @@ final class MenuBarPopoverViewController: NSViewController {
     private func configureContent(in effectView: NSVisualEffectView) {
         statusHeaderContainer.translatesAutoresizingMaskIntoConstraints = false
 
-        let liveRow = PopoverUI.formRow(label: "Live", control: liveToggle)
-        let recordRow = PopoverUI.formRow(label: "Record", control: recordToggle)
+        let liveRow = PopoverUI.compactFormRow(label: "Live", control: liveToggle)
+        let recordRow = PopoverUI.compactFormRow(label: "Record", control: recordToggle)
         let toggleRows = PopoverUI.verticalStack([liveRow, recordRow], spacing: PopoverUI.Metrics.rowSpacing)
 
         let openButton = PopoverUI.nativeLinkButton(title: "Open MinusOne…", target: self, action: #selector(openWindow))
