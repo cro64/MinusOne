@@ -57,6 +57,10 @@ enum PopoverUI {
         /// design direction: native shape/materials there, flat/branded look reserved for the
         /// desktop window) — this rounding is only ever consumed by `makeMenuRoot`/`makeEffectView`.
         static let cornerRadius: CGFloat = 8
+        /// `FlatButton`'s corner radius — softens the previously-square "Modernist" buttons per
+        /// user direction; kept smaller than the popover's `cornerRadius` so buttons still read
+        /// as flat/branded rather than native-rounded.
+        static let buttonCornerRadius: CGFloat = 6
         /// Usable track length for Intensity / Gain (also drives menu width).
         static let sliderMinWidth: CGFloat = 88
         /// Row content: label + gap + control.
@@ -341,8 +345,10 @@ enum PopoverUI {
 
 /// Layer-backed `NSButton` replacement for the native bezel styles (`.accessoryBar`,
 /// `.texturedRounded`, `.accessoryBarAction`, `.inline`) this file used to reach for — flat
-/// fill/border/text per REDESIGN's `.btn-primary`/`.btn-secondary`/`.btn-ghost`, zero corner
-/// radius, `.btn`'s `8px 14.4px` padding and Archivo-800-equivalent (`.black`) title weight.
+/// fill/border/text per REDESIGN's `.btn-primary`/`.btn-secondary`/`.btn-ghost`, `.btn`'s
+/// `8px 14.4px` padding and Archivo-800-equivalent (`.black`) title weight. Corners are rounded
+/// (`Metrics.buttonCornerRadius`) rather than the original design's square corners, and hover/
+/// press states lighten/darken the fill so buttons read as clickable — both per user direction.
 ///
 /// `title` is overridden so plain `button.title = "…"` assignments (several call sites already
 /// did this against a stock `NSButton`) keep restyling automatically; `isApplyingStyle` guards
@@ -381,6 +387,19 @@ final class FlatButton: NSButton {
         didSet { refreshStyle() }
     }
 
+    /// Cursor is over the button — lightens filled backgrounds, tints unfilled ones.
+    private var isHovering = false {
+        didSet { refreshStyle() }
+    }
+
+    /// Mouse is down inside the button (set for the duration of `mouseDown(with:)`'s tracking
+    /// loop) — darkens filled backgrounds, tints unfilled ones more strongly than hover.
+    private var isPressed = false {
+        didSet { refreshStyle() }
+    }
+
+    private var trackingArea: NSTrackingArea?
+
     private var isApplyingStyle = false
 
     override var title: String {
@@ -399,7 +418,7 @@ final class FlatButton: NSButton {
         super.init(frame: .zero)
         isBordered = false
         wantsLayer = true
-        layer?.cornerRadius = 0
+        layer?.cornerRadius = PopoverUI.Metrics.buttonCornerRadius
         layer?.borderWidth = 1
         self.target = target
         self.action = action
@@ -413,6 +432,61 @@ final class FlatButton: NSButton {
         fatalError("init(coder:) has not been implemented")
     }
 
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        if let trackingArea {
+            removeTrackingArea(trackingArea)
+        }
+        let area = NSTrackingArea(
+            rect: bounds,
+            options: [.mouseEnteredAndExited, .activeInKeyWindow, .inVisibleRect],
+            owner: self,
+            userInfo: nil
+        )
+        addTrackingArea(area)
+        trackingArea = area
+    }
+
+    override func resetCursorRects() {
+        super.resetCursorRects()
+        addCursorRect(bounds, cursor: .pointingHand)
+    }
+
+    override func mouseEntered(with event: NSEvent) {
+        super.mouseEntered(with: event)
+        guard isEnabled else { return }
+        isHovering = true
+    }
+
+    override func mouseExited(with event: NSEvent) {
+        super.mouseExited(with: event)
+        isHovering = false
+    }
+
+    override func mouseDown(with event: NSEvent) {
+        guard isEnabled else { return super.mouseDown(with: event) }
+        isPressed = true
+        // NSButton's mouseDown(with:) runs its own tracking loop and only returns once the
+        // mouse goes up (after sending the action), so isPressed correctly spans the whole
+        // press-and-hold gesture.
+        super.mouseDown(with: event)
+        isPressed = false
+    }
+
+    /// Blends `base` toward black (pressed) or white (hover) for filled buttons; for unfilled
+    /// buttons (`base == .clear`), shows a faint `labelColor` tint instead since blending a
+    /// transparent color has no visible effect.
+    private func interactionFill(base: NSColor, isFilled: Bool) -> NSColor {
+        guard isFilled else {
+            if isPressed { return NSColor.labelColor.withAlphaComponent(0.14) }
+            if isHovering { return NSColor.labelColor.withAlphaComponent(0.07) }
+            return .clear
+        }
+        if isPressed { return base.blended(withFraction: 0.25, of: .black) ?? base }
+        if isHovering { return base.blended(withFraction: 0.12, of: .white) ?? base }
+        return base
+    }
+
     func refreshStyle() {
         isApplyingStyle = true
         defer { isApplyingStyle = false }
@@ -422,16 +496,16 @@ final class FlatButton: NSButton {
         let textColor: NSColor
         switch kind {
         case .primary:
-            layer?.backgroundColor = NSColor.brandAccent.cgColor
+            layer?.backgroundColor = interactionFill(base: .brandAccent, isFilled: true).cgColor
             layer?.borderColor = NSColor.clear.cgColor
             textColor = .white
         case .secondary:
             let fillColor = engagedFillColorOverride ?? .brandAccent
-            layer?.backgroundColor = (engaged ? fillColor : .clear).cgColor
+            layer?.backgroundColor = interactionFill(base: fillColor, isFilled: engaged).cgColor
             layer?.borderColor = NSColor.flatDivider.cgColor
             textColor = engaged ? .white : .labelColor
         case .ghost:
-            layer?.backgroundColor = NSColor.clear.cgColor
+            layer?.backgroundColor = interactionFill(base: .clear, isFilled: false).cgColor
             layer?.borderColor = NSColor.clear.cgColor
             textColor = textColorOverride ?? .brandAccent
         }
