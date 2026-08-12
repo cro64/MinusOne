@@ -45,6 +45,11 @@ final class PracticeDeckViewController: NSViewController {
 
     override func loadView() {
         view = NSView(frame: NSRect(x: 0, y: 0, width: 700, height: 560))
+        // Created programmatically, so this defaults to `true` — left unset, `NSSplitView`
+        // resolves this arranged subview's frame via autoresizing against its *initial* 700x560
+        // frame instead of the constraints below being resolved against the split pane's actual
+        // size, leaving the content anchored to a small box in one corner of a much larger pane.
+        view.translatesAutoresizingMaskIntoConstraints = false
 
         emptyStateView.translatesAutoresizingMaskIntoConstraints = false
         view.addSubview(emptyStateView)

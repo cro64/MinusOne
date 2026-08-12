@@ -54,6 +54,11 @@ final class ClipSidebarViewController: NSViewController, NSTableViewDataSource, 
     override func loadView() {
         let root = DropTargetView(frame: NSRect(x: 0, y: 0, width: 260, height: 500))
         root.onDropFiles = { [weak self] urls in self?.onDropFiles?(urls) }
+        // Created programmatically, so this defaults to `true` — left unset, `NSSplitView`
+        // resolves this arranged subview's frame via autoresizing against its *initial* 260x500
+        // frame instead of the constraints below being resolved against the split pane's actual
+        // size, leaving the content anchored to a small box in one corner of a much larger pane.
+        root.translatesAutoresizingMaskIntoConstraints = false
         view = root
 
         searchField.placeholderString = "Search clips"
