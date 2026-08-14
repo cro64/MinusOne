@@ -58,7 +58,7 @@ final class AppCaptureChecklistView: NSView {
         scrollView.autohidesScrollers = true
         scrollView.drawsBackground = false
         scrollView.borderType = .noBorder
-        PopoverUI.pin(scrollView, to: self)
+        MinusOne.Layout.pin(scrollView, to: self)
 
         emptyLabel.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
         emptyLabel.textColor = .secondaryLabelColor

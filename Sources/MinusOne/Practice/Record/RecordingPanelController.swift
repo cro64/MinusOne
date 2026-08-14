@@ -57,8 +57,8 @@ final class RecordingPanelController: NSViewController {
         idleContainer = idle
         recordingContainer = recording
 
-        let content = PopoverUI.verticalStack([idle, recording], spacing: 8)
-        PopoverUI.pin(content, to: root, insets: NSEdgeInsets(top: 20, left: 20, bottom: 20, right: 20))
+        let content = Layout.verticalStack([idle, recording], spacing: 8)
+        Layout.pin(content, to: root, insets: NSEdgeInsets(top: 20, left: 20, bottom: 20, right: 20))
 
         NSLayoutConstraint.activate([
             idle.widthAnchor.constraint(equalToConstant: Self.panelWidth - 40),
@@ -83,9 +83,9 @@ final class RecordingPanelController: NSViewController {
         subtitle.font = .systemFont(ofSize: 11)
         subtitle.textColor = .secondaryLabelColor
 
-        let titles = PopoverUI.verticalStack([title, subtitle], spacing: 4)
+        let titles = Layout.verticalStack([title, subtitle], spacing: 4)
 
-        let header = PopoverUI.horizontalStack([titles, PopoverUI.flexibleSpacer(), modeTag], spacing: 8)
+        let header = Layout.horizontalStack([titles, Layout.flexibleSpacer(), modeTag], spacing: 8)
 
         sourceDot.constrainSize(width: 5, height: 5)
         sourceStatusLabel.font = .systemFont(ofSize: 10, weight: .medium)
@@ -93,8 +93,8 @@ final class RecordingPanelController: NSViewController {
         let sourceLabel = NSTextField(labelWithString: "Input source")
         sourceLabel.font = .systemFont(ofSize: 13)
         sourceLabel.textColor = .secondaryLabelColor
-        let sourceStatus = PopoverUI.horizontalStack([sourceDot, sourceStatusLabel], spacing: 6)
-        let source = PopoverUI.horizontalStack([sourceLabel, PopoverUI.flexibleSpacer(), sourceStatus], spacing: 8)
+        let sourceStatus = Layout.horizontalStack([sourceDot, sourceStatusLabel], spacing: 6)
+        let source = Layout.horizontalStack([sourceLabel, Layout.flexibleSpacer(), sourceStatus], spacing: 8)
         sourceRow = borderedBox(source)
 
         settingsButton.target = self
@@ -110,11 +110,11 @@ final class RecordingPanelController: NSViewController {
         timerSub.maximumNumberOfLines = 2
         timerSub.lineBreakMode = .byWordWrapping
         timerSub.preferredMaxLayoutWidth = 190
-        let timerTitles = PopoverUI.verticalStack([timerLabel, timerSub], spacing: 2)
+        let timerTitles = Layout.verticalStack([timerLabel, timerSub], spacing: 2)
 
         autoStopToggle.translatesAutoresizingMaskIntoConstraints = false
         autoStopToggle.onToggle = { [weak self] isOn in self?.autoStopToggleChanged(isOn) }
-        let timerRow1 = PopoverUI.horizontalStack([timerTitles, PopoverUI.flexibleSpacer(), autoStopToggle], spacing: 8)
+        let timerRow1 = Layout.horizontalStack([timerTitles, Layout.flexibleSpacer(), autoStopToggle], spacing: 8)
 
         let colon = NSTextField(labelWithString: ":")
         colon.font = .monospacedDigitSystemFont(ofSize: 14, weight: .regular)
@@ -126,16 +126,16 @@ final class RecordingPanelController: NSViewController {
         minutesField.action = #selector(timeFieldChanged)
         secondsField.target = self
         secondsField.action = #selector(timeFieldChanged)
-        let timerRow2 = PopoverUI.horizontalStack([minutesField, colon, secondsField, unit], spacing: 8)
+        let timerRow2 = Layout.horizontalStack([minutesField, colon, secondsField, unit], spacing: 8)
 
-        let timerStack = PopoverUI.verticalStack([timerRow1, timerRow2], spacing: 10)
+        let timerStack = Layout.verticalStack([timerRow1, timerRow2], spacing: 10)
         let timerField = borderedBox(timerStack)
 
         armButton.target = self
         armButton.action = #selector(armClicked)
         armButton.heightAnchor.constraint(equalToConstant: 40).isActive = true
 
-        let stack = PopoverUI.verticalStack([header, sourceRow, settingsButton, timerField, armButton], spacing: 14)
+        let stack = Layout.verticalStack([header, sourceRow, settingsButton, timerField, armButton], spacing: 14)
         stack.setCustomSpacing(6, after: sourceRow)
         [header, sourceRow, settingsButton, timerField, armButton].forEach {
             $0.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
@@ -151,12 +151,12 @@ final class RecordingPanelController: NSViewController {
         let recLabel = NSTextField(labelWithString: "RECORDING")
         recLabel.font = .systemFont(ofSize: 11, weight: .semibold)
         recLabel.textColor = .brandAccentDeep
-        let recIndicator = PopoverUI.horizontalStack([recDot, recLabel], spacing: 8)
+        let recIndicator = Layout.horizontalStack([recDot, recLabel], spacing: 8)
 
         elapsedLabel.font = .monospacedDigitSystemFont(ofSize: 20, weight: .medium)
         elapsedLabel.textColor = .labelColor
 
-        let recHead = PopoverUI.horizontalStack([recIndicator, PopoverUI.flexibleSpacer(), elapsedLabel], spacing: 8)
+        let recHead = Layout.horizontalStack([recIndicator, Layout.flexibleSpacer(), elapsedLabel], spacing: 8)
 
         liveWaveform.translatesAutoresizingMaskIntoConstraints = false
         liveWaveform.heightAnchor.constraint(equalToConstant: 68).isActive = true
@@ -171,13 +171,13 @@ final class RecordingPanelController: NSViewController {
         elapsedMetaLabel.textColor = .secondaryLabelColor
         targetMetaLabel.font = .monospacedDigitSystemFont(ofSize: 10, weight: .regular)
         targetMetaLabel.textColor = .brandAccentDeep
-        let metaRow = PopoverUI.horizontalStack([elapsedMetaLabel, PopoverUI.flexibleSpacer(), targetMetaLabel], spacing: 8)
+        let metaRow = Layout.horizontalStack([elapsedMetaLabel, Layout.flexibleSpacer(), targetMetaLabel], spacing: 8)
 
         stopButton.target = self
         stopButton.action = #selector(stopClicked)
         stopButton.heightAnchor.constraint(equalToConstant: 40).isActive = true
 
-        let stack = PopoverUI.verticalStack([recHead, liveWaveform, metaRow, stopButton], spacing: 10)
+        let stack = Layout.verticalStack([recHead, liveWaveform, metaRow, stopButton], spacing: 10)
         [recHead, liveWaveform, metaRow, stopButton].forEach {
             $0.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
         }
@@ -292,7 +292,7 @@ final class RecordingPanelController: NSViewController {
         container.wantsLayer = true
         container.layer?.borderWidth = 1
         container.layer?.borderColor = NSColor.flatDivider.cgColor
-        PopoverUI.pin(content, to: container, insets: NSEdgeInsets(top: 12, left: 12, bottom: 12, right: 12))
+        Layout.pin(content, to: container, insets: NSEdgeInsets(top: 12, left: 12, bottom: 12, right: 12))
         return container
     }
 

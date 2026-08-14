@@ -77,8 +77,8 @@ final class ClipSidebarViewController: NSViewController, NSTableViewDataSource, 
         scrollView.hasVerticalScroller = true
         scrollView.drawsBackground = false
 
-        PopoverUI.pin(searchField, to: root, edges: [.top, .leading, .trailing], insets: NSEdgeInsets(top: 10, left: 10, bottom: 0, right: 10))
-        PopoverUI.pin(scrollView, to: root, edges: [.leading, .trailing, .bottom])
+        Layout.pin(searchField, to: root, edges: [.top, .leading, .trailing], insets: NSEdgeInsets(top: 10, left: 10, bottom: 0, right: 10))
+        Layout.pin(scrollView, to: root, edges: [.leading, .trailing, .bottom])
         scrollView.topAnchor.constraint(equalTo: searchField.bottomAnchor, constant: 8).isActive = true
     }
 
@@ -150,7 +150,7 @@ private final class ClipRowView: NSView {
 
         let subtitle = clip.processingFailed
             ? "Processing failed"
-            : (clip.isFullyProcessed ? Self.formatDuration(clip.durationSeconds) : "Processing… \(Self.formatDuration(clip.readyDurationSeconds)) ready")
+            : (clip.isFullyProcessed ? clip.durationSeconds.formattedAsDuration : "Processing… \(clip.readyDurationSeconds.formattedAsDuration) ready")
         let subtitleField = NSTextField(labelWithString: subtitle)
         subtitleField.font = .systemFont(ofSize: 10)
         subtitleField.textColor = clip.processingFailed ? .systemRed : .secondaryLabelColor
@@ -187,9 +187,4 @@ private final class ClipRowView: NSView {
         fatalError("init(coder:) has not been implemented")
     }
 
-    private static func formatDuration(_ seconds: Double) -> String {
-        guard seconds.isFinite, seconds >= 0 else { return "0:00" }
-        let total = Int(seconds.rounded())
-        return String(format: "%d:%02d", total / 60, total % 60)
-    }
 }

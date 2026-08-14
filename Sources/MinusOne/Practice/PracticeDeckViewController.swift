@@ -15,7 +15,7 @@ final class PracticeDeckViewController: NSViewController {
     private let waveformView = WaveformView(style: .interactive)
     private let playPauseButton = FlatButton(title: "Play", kind: .secondary)
     private let loopButton = FlatButton(title: "Loop", kind: .secondary)
-    private let timeLabel = PopoverUI.valueLabel(initialValue: "0:00 / 0:00")
+    private let timeLabel = SharedUI.valueLabel(initialValue: "0:00 / 0:00")
     private let tempoSlider = NSSlider(value: 100, minValue: 50, maxValue: 100, target: nil, action: nil)
     private let tempoValueLabel = NSTextField(labelWithString: "100%")
     private var mixerRows: [SeparationStem: MixerRowView] = [:]
@@ -51,8 +51,8 @@ final class PracticeDeckViewController: NSViewController {
         NSLayoutConstraint.activate([
             emptyStateView.centerXAnchor.constraint(equalTo: view.centerXAnchor),
             emptyStateView.centerYAnchor.constraint(equalTo: view.centerYAnchor),
-            emptyStateView.leadingAnchor.constraint(greaterThanOrEqualTo: view.leadingAnchor, constant: PopoverUI.Metrics.Regular.padding),
-            emptyStateView.trailingAnchor.constraint(lessThanOrEqualTo: view.trailingAnchor, constant: -PopoverUI.Metrics.Regular.padding)
+            emptyStateView.leadingAnchor.constraint(greaterThanOrEqualTo: view.leadingAnchor, constant: WindowUI.Metrics.padding),
+            emptyStateView.trailingAnchor.constraint(lessThanOrEqualTo: view.trailingAnchor, constant: -WindowUI.Metrics.padding)
         ])
 
         buildContent()
@@ -81,17 +81,17 @@ final class PracticeDeckViewController: NSViewController {
         timeLabel.isHidden = false
         timeLabel.stringValue = "0:00 / 0:00"
 
-        let transportStack = PopoverUI.horizontalStack([playPauseButton, loopButton, timeLabel], spacing: PopoverUI.Metrics.Regular.rowSpacing)
+        let transportStack = Layout.horizontalStack([playPauseButton, loopButton, timeLabel], spacing: WindowUI.Metrics.rowSpacing)
 
         tempoSlider.isContinuous = true
         tempoSlider.target = self
         tempoSlider.action = #selector(tempoChanged)
-        let tempoLabel = PopoverUI.fieldLabel("Tempo")
-        tempoLabel.widthAnchor.constraint(equalToConstant: PopoverUI.Metrics.Regular.labelWidth).isActive = true
-        let tempoRow = PopoverUI.horizontalStack([tempoLabel, tempoSlider, tempoValueLabel], spacing: PopoverUI.Metrics.Regular.rowSpacing)
+        let tempoLabel = SharedUI.fieldLabel("Tempo")
+        tempoLabel.widthAnchor.constraint(equalToConstant: WindowUI.Metrics.labelWidth).isActive = true
+        let tempoRow = Layout.horizontalStack([tempoLabel, tempoSlider, tempoValueLabel], spacing: WindowUI.Metrics.rowSpacing)
         tempoSlider.widthAnchor.constraint(greaterThanOrEqualToConstant: 160).isActive = true
 
-        let mixerHeader = PopoverUI.sectionHeader("Stems")
+        let mixerHeader = SharedUI.sectionHeader("Stems")
         var mixerViews: [NSView] = [mixerHeader]
         for stem in SeparationStem.allCases {
             let row = MixerRowView(stem: stem)
@@ -104,18 +104,18 @@ final class PracticeDeckViewController: NSViewController {
             mixerRows[stem] = row
             mixerViews.append(row)
         }
-        let mixerStack = PopoverUI.verticalStack(mixerViews, spacing: PopoverUI.Metrics.Regular.rowSpacing)
+        let mixerStack = Layout.verticalStack(mixerViews, spacing: WindowUI.Metrics.rowSpacing)
 
-        let content = PopoverUI.verticalStack(
+        let content = Layout.verticalStack(
             [titleLabel, statusLabel, waveformView, transportStack, tempoRow, mixerStack],
-            spacing: PopoverUI.Metrics.Regular.sectionSpacing
+            spacing: WindowUI.Metrics.sectionSpacing
         )
         content.setCustomSpacing(4, after: titleLabel)
         content.setCustomSpacing(4, after: statusLabel)
         waveformView.widthAnchor.constraint(equalTo: content.widthAnchor).isActive = true
 
-        let pad = PopoverUI.Metrics.Regular.padding
-        PopoverUI.pin(content, to: view, edges: [.top, .leading, .trailing], insets: NSEdgeInsets(top: pad, left: pad, bottom: 0, right: pad))
+        let pad = WindowUI.Metrics.padding
+        Layout.pin(content, to: view, edges: [.top, .leading, .trailing], insets: NSEdgeInsets(top: pad, left: pad, bottom: 0, right: pad))
         contentStack = content
     }
 
@@ -193,14 +193,14 @@ final class PracticeDeckViewController: NSViewController {
             statusLabel.textColor = .systemRed
             statusLabel.isHidden = false
         } else if !clip.isFullyProcessed {
-            statusLabel.stringValue = "Separating in the background… \(formatDuration(clip.readyDurationSeconds)) ready of \(formatDuration(clip.durationSeconds))"
+            statusLabel.stringValue = "Separating in the background… \(clip.readyDurationSeconds.formattedAsDuration) ready of \(clip.durationSeconds.formattedAsDuration)"
             statusLabel.textColor = .secondaryLabelColor
             statusLabel.isHidden = false
         } else {
             statusLabel.isHidden = true
         }
 
-        timeLabel.stringValue = "\(formatDuration(0)) / \(formatDuration(clip.durationSeconds))"
+        timeLabel.stringValue = "\(0.0.formattedAsDuration) / \(clip.durationSeconds.formattedAsDuration)"
     }
 
     private func showEmptyState(_ empty: Bool) {
@@ -237,7 +237,7 @@ final class PracticeDeckViewController: NSViewController {
     private func updatePlayhead(_ time: Double) {
         guard let clip else { return }
         waveformView.playheadFraction = clip.durationSeconds > 0 ? CGFloat(time / clip.durationSeconds) : 0
-        timeLabel.stringValue = "\(formatDuration(time)) / \(formatDuration(clip.durationSeconds))"
+        timeLabel.stringValue = "\(time.formattedAsDuration) / \(clip.durationSeconds.formattedAsDuration)"
     }
 
     private func refreshMixerButtonStates() {
@@ -246,11 +246,6 @@ final class PracticeDeckViewController: NSViewController {
         }
     }
 
-    private func formatDuration(_ seconds: Double) -> String {
-        guard seconds.isFinite, seconds >= 0 else { return "0:00" }
-        let total = Int(seconds.rounded())
-        return String(format: "%d:%02d", total / 60, total % 60)
-    }
 }
 
 /// One stem's mixer controls: label, volume fader, mute, solo.
@@ -265,24 +260,24 @@ private final class MixerRowView: NSView {
     init(stem: SeparationStem) {
         let color = stem.identityColor
 
-        let label = PopoverUI.fieldLabel(stem.displayName)
+        let label = SharedUI.fieldLabel(stem.displayName)
         label.textColor = color
         label.font = .systemFont(ofSize: NSFont.systemFontSize, weight: .semibold)
-        label.widthAnchor.constraint(equalToConstant: PopoverUI.Metrics.Regular.labelWidth).isActive = true
+        label.widthAnchor.constraint(equalToConstant: WindowUI.Metrics.labelWidth).isActive = true
 
         let slider = NSSlider(value: 1, minValue: 0, maxValue: 1, target: nil, action: nil)
         slider.isContinuous = true
         slider.trackFillColor = color
         slider.widthAnchor.constraint(greaterThanOrEqualToConstant: 140).isActive = true
 
-        soloButton = PopoverUI.toggleControlButton(title: "Solo", target: nil, action: nil)
-        muteButton = PopoverUI.toggleControlButton(title: "Mute", target: nil, action: nil)
+        soloButton = WindowUI.toggleControlButton(title: "Solo", target: nil, action: nil)
+        muteButton = WindowUI.toggleControlButton(title: "Mute", target: nil, action: nil)
         muteButton.engagedFillColorOverride = .systemRed
 
         super.init(frame: .zero)
 
-        let row = PopoverUI.horizontalStack([label, slider, soloButton, muteButton], spacing: PopoverUI.Metrics.Regular.rowSpacing)
-        PopoverUI.pin(row, to: self)
+        let row = Layout.horizontalStack([label, slider, soloButton, muteButton], spacing: WindowUI.Metrics.rowSpacing)
+        Layout.pin(row, to: self)
 
         slider.target = self
         slider.action = #selector(sliderChanged(_:))

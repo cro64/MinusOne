@@ -6,7 +6,7 @@ import AppKit
 /// unmodified — correct for the menu bar's own popover, wrong here, and the reason the Live tab
 /// rendered as a tiny, incorrectly-blended box instead of filling the window. The menu bar now has
 /// its own minimal `MenuBarPopoverViewController`, so this class is free to be a real
-/// window-filling, opaque-background view at `PopoverUI.Metrics.Regular` scale, pinned to all four
+/// window-filling, opaque-background view at `WindowUI.Metrics` scale, pinned to all four
 /// edges of its container. The model-gating and capture-scope logic below is unchanged from the
 /// popover version — it's the one place that logic lives now, not a fork of it.
 final class LiveTabViewController: NSViewController {
@@ -18,10 +18,10 @@ final class LiveTabViewController: NSViewController {
     private let liveToggle = NSSwitch()
     private let intensitySlider = DragValueSlider(value: 100, minValue: 0, maxValue: 100, target: nil, action: nil)
     private let makeupSlider = DragValueSlider(value: 4.5, minValue: 0, maxValue: 12, target: nil, action: nil)
-    private let sliderValueOverlay = PopoverUI.valueLabel()
+    private let sliderValueOverlay = SharedUI.valueLabel()
     private let captureScopePopUp = NSPopUpButton(frame: .zero, pullsDown: false)
     private var appChecklist: NSView?
-    private let permissionButton = PopoverUI.linkButton(title: "Open Microphone Settings…")
+    private let permissionButton = WindowUI.linkButton(title: "Open Microphone Settings…")
 
     // REDESIGN.md §5: the Neural model is required for Live to do anything. When it isn't
     // installed, `processingBody` swaps the Intensity/Gain rows for a persistent gate + download
@@ -71,9 +71,9 @@ final class LiveTabViewController: NSViewController {
         var sections: [NSView] = [statusHeaderContainer]
         statusHeaderContainer.translatesAutoresizingMaskIntoConstraints = false
 
-        let header = PopoverUI.sectionHeader("Processing")
+        let header = SharedUI.sectionHeader("Processing")
         processingBody.translatesAutoresizingMaskIntoConstraints = false
-        sections.append(PopoverUI.regularSection(header: header, body: processingBody))
+        sections.append(WindowUI.section(header: header, body: processingBody))
 
         sections.append(permissionButton)
 
@@ -82,20 +82,20 @@ final class LiveTabViewController: NSViewController {
             let checklist = AppCaptureChecklistView(preferences: preferences, audioEngine: audioEngine)
             appChecklist = checklist
             let captureRows: [NSView] = [
-                PopoverUI.regularFormRow(label: "Scope", control: captureScopePopUp),
+                WindowUI.formRow(label: "Scope", control: captureScopePopUp),
                 checklist
             ]
-            let section = PopoverUI.regularSection(title: "Capture", rows: captureRows)
+            let section = WindowUI.section(title: "Capture", rows: captureRows)
             captureSection = section
             sections.append(section)
         }
 
-        let content = PopoverUI.verticalStack(sections, spacing: PopoverUI.Metrics.Regular.sectionSpacing)
+        let content = Layout.verticalStack(sections, spacing: WindowUI.Metrics.sectionSpacing)
         content.setCustomSpacing(12, after: statusHeaderContainer)
         content.translatesAutoresizingMaskIntoConstraints = false
         root.addSubview(content)
 
-        let pad = PopoverUI.Metrics.Regular.padding
+        let pad = WindowUI.Metrics.padding
         NSLayoutConstraint.activate([
             content.centerXAnchor.constraint(equalTo: root.centerXAnchor),
             content.leadingAnchor.constraint(greaterThanOrEqualTo: root.leadingAnchor, constant: pad),
@@ -158,7 +158,7 @@ final class LiveTabViewController: NSViewController {
         liveToggle.action = #selector(liveToggleChanged)
         liveToggle.translatesAutoresizingMaskIntoConstraints = false
 
-        PopoverUI.configureSlider(intensitySlider)
+        WindowUI.configureSlider(intensitySlider)
         intensitySlider.trackFillColor = .brandAccent
         intensitySlider.target = self
         intensitySlider.action = #selector(intensityChanged)
@@ -169,7 +169,7 @@ final class LiveTabViewController: NSViewController {
             self?.endSliderOverlay()
         }
 
-        PopoverUI.configureSlider(makeupSlider)
+        WindowUI.configureSlider(makeupSlider)
         makeupSlider.trackFillColor = .brandAccent
         makeupSlider.target = self
         makeupSlider.action = #selector(makeupGainChanged)
@@ -180,7 +180,7 @@ final class LiveTabViewController: NSViewController {
             self?.endSliderOverlay()
         }
 
-        PopoverUI.configurePopUp(captureScopePopUp)
+        WindowUI.configurePopUp(captureScopePopUp)
         captureScopePopUp.target = self
         captureScopePopUp.action = #selector(captureScopeChanged)
         for scope in CaptureScope.allCases {
@@ -197,7 +197,7 @@ final class LiveTabViewController: NSViewController {
         statusHeader.translatesAutoresizingMaskIntoConstraints = false
         liveToggle.translatesAutoresizingMaskIntoConstraints = false
 
-        let row = PopoverUI.horizontalStack([statusHeader, NSView(), liveToggle], spacing: PopoverUI.Metrics.Regular.rowSpacing)
+        let row = Layout.horizontalStack([statusHeader, NSView(), liveToggle], spacing: WindowUI.Metrics.rowSpacing)
         row.distribution = .fill
         return row
     }
@@ -277,12 +277,12 @@ final class LiveTabViewController: NSViewController {
 
     private func processingRowsView() -> NSView {
         if let existing = cachedProcessingRowsView { return existing }
-        let view = PopoverUI.verticalStack(
+        let view = Layout.verticalStack(
             [
-                PopoverUI.regularFormRow(label: "Intensity", control: intensitySlider),
-                PopoverUI.regularFormRow(label: "Gain", control: makeupSlider)
+                WindowUI.formRow(label: "Intensity", control: intensitySlider),
+                WindowUI.formRow(label: "Gain", control: makeupSlider)
             ],
-            spacing: PopoverUI.Metrics.Regular.rowSpacing
+            spacing: WindowUI.Metrics.rowSpacing
         )
         cachedProcessingRowsView = view
         return view
@@ -312,7 +312,7 @@ final class LiveTabViewController: NSViewController {
         modelGateProgress.translatesAutoresizingMaskIntoConstraints = false
         modelGateProgress.heightAnchor.constraint(equalToConstant: 12).isActive = true
 
-        let view = PopoverUI.verticalStack(
+        let view = Layout.verticalStack(
             [message, modelGateDownloadButton, modelGateStatusLabel, modelGateProgress],
             spacing: 8
         )

@@ -64,14 +64,21 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         practiceSplitViewController = PracticeSplitViewController(sidebar: sidebar, detail: deck)
         practiceTabViewController = PracticeTabViewController(splitViewController: practiceSplitViewController)
 
+        let defaultContentSize = NSSize(width: 980, height: 640)
         let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 980, height: 640),
+            contentRect: NSRect(origin: .zero, size: defaultContentSize),
             styleMask: [.titled, .closable, .miniaturizable, .resizable],
             backing: .buffered,
             defer: false
         )
+        // Title text is hidden (the title bar only carries the Live/Practice switch), but the
+        // title itself stays set for accessibility and Mission Control.
         window.title = "MinusOne"
-        window.minSize = NSSize(width: 760, height: 480)
+        window.titleVisibility = .hidden
+        // Matches the window's starting content size rather than a smaller arbitrary floor — the
+        // app has no scroll views in its primary content, so the window must never shrink past
+        // the size that content was designed to fit in.
+        window.minSize = defaultContentSize
         // Explicit, not just relying on NSWindow's defaults: an ambiguous/false isOpaque or clear
         // backgroundColor is exactly what makes the Dock show through the window at the edges.
         window.isOpaque = true
@@ -173,8 +180,10 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         liveStatusDot.layer?.backgroundColor = NSColor.tertiaryLabelColor.cgColor
         liveStatusDot.isHidden = true
 
-        let stack = PopoverUI.horizontalStack([liveStatusDot, segmentedControl], spacing: 8)
-        stack.edgeInsets = NSEdgeInsets(top: 4, left: 0, bottom: 4, right: 8)
+        let stack = Layout.horizontalStack([liveStatusDot, segmentedControl], spacing: 8)
+        // top: 8 (space-2), not 4 — gives the pill toggle some breathing room below the traffic
+        // lights instead of sitting flush against the top of the title bar.
+        stack.edgeInsets = NSEdgeInsets(top: 8, left: 0, bottom: 4, right: 8)
 
         let segmentedSize = segmentedControl.fittingSize
         let segmentedWidth = max(segmentedSize.width, 120)
@@ -189,7 +198,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         let container = TitlebarAccessoryContainerView()
         container.fixedSize = NSSize(width: stackWidth, height: stackHeight)
         container.setFrameSize(container.fixedSize)
-        PopoverUI.pin(stack, to: container)
+        Layout.pin(stack, to: container)
 
         let accessoryViewController = NSTitlebarAccessoryViewController()
         accessoryViewController.view = container
@@ -232,7 +241,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         }
 
         contentRootViewController.addChild(child)
-        PopoverUI.pin(child.view, to: contentContainer)
+        Layout.pin(child.view, to: contentContainer)
         currentContentViewController = child
     }
 

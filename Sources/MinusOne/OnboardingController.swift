@@ -83,7 +83,7 @@ final class OnboardingViewController: NSViewController {
         modelLabel.font = .systemFont(ofSize: NSFont.smallSystemFontSize, weight: .semibold)
         modelLabel.textColor = .secondaryLabelColor
 
-        let modelHeader = PopoverUI.horizontalStack([modelLabel, PopoverUI.flexibleSpacer(), modelInfoButton], spacing: 4)
+        let modelHeader = Layout.horizontalStack([modelLabel, Layout.flexibleSpacer(), modelInfoButton], spacing: 4)
 
         statusLabel.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
         statusLabel.textColor = .secondaryLabelColor
@@ -113,12 +113,12 @@ final class OnboardingViewController: NSViewController {
 
         updatePrimaryButtonTitle()
 
-        let buttonRow = PopoverUI.horizontalStack([PopoverUI.flexibleSpacer(), skipButton, primaryButton], spacing: 10)
+        let buttonRow = Layout.horizontalStack([Layout.flexibleSpacer(), skipButton, primaryButton], spacing: 10)
 
-        let header = PopoverUI.verticalStack([logoView, name], spacing: 8)
+        let header = Layout.verticalStack([logoView, name], spacing: 8)
         header.alignment = .centerX
 
-        let stack = PopoverUI.verticalStack([header, body, modelHeader, statusLabel, progress, buttonRow], spacing: 10)
+        let stack = Layout.verticalStack([header, body, modelHeader, statusLabel, progress, buttonRow], spacing: 10)
         stack.setCustomSpacing(12, after: header)
         stack.setCustomSpacing(14, after: body)
         stack.setCustomSpacing(14, after: progress)
@@ -348,8 +348,8 @@ private final class ModelSourceInfoViewController: NSViewController {
             arranged.append(link)
         }
 
-        let stack = PopoverUI.verticalStack(arranged, spacing: 8)
-        PopoverUI.pin(stack, to: root, insets: NSEdgeInsets(top: 12, left: 14, bottom: 12, right: 14))
+        let stack = Layout.verticalStack(arranged, spacing: 8)
+        Layout.pin(stack, to: root, insets: NSEdgeInsets(top: 12, left: 14, bottom: 12, right: 14))
 
         NSLayoutConstraint.activate([
             stack.widthAnchor.constraint(equalToConstant: 252),

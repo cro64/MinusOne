@@ -50,18 +50,18 @@ final class MenuBarPopoverViewController: NSViewController {
 
         let liveRow = PopoverUI.compactFormRow(label: "Live", control: liveToggle)
         let recordRow = PopoverUI.compactFormRow(label: "Record", control: recordToggle)
-        let toggleRows = PopoverUI.verticalStack([liveRow, recordRow], spacing: PopoverUI.Metrics.rowSpacing)
+        let toggleRows = Layout.verticalStack([liveRow, recordRow], spacing: PopoverUI.Metrics.rowSpacing)
 
         let openButton = PopoverUI.nativeLinkButton(title: "Open MinusOne…", target: self, action: #selector(openWindow))
         let quitButton = PopoverUI.nativeLinkButton(title: "Quit", target: self, action: #selector(quit))
 
         let topSeparator = PopoverUI.nativeSeparator()
         let footerSeparator = PopoverUI.nativeSeparator()
-        let footer = PopoverUI.verticalStack([footerSeparator, openButton, quitButton], spacing: PopoverUI.Metrics.rowSpacing)
+        let footer = Layout.verticalStack([footerSeparator, openButton, quitButton], spacing: PopoverUI.Metrics.rowSpacing)
         footer.alignment = .leading
 
         let sections: [NSView] = [statusHeaderContainer, topSeparator, toggleRows, footer]
-        let content = PopoverUI.verticalStack(sections, spacing: PopoverUI.Metrics.sectionSpacing)
+        let content = Layout.verticalStack(sections, spacing: PopoverUI.Metrics.sectionSpacing)
         content.setCustomSpacing(PopoverUI.Metrics.rowSpacing, after: statusHeaderContainer)
         content.translatesAutoresizingMaskIntoConstraints = false
         contentStack = content
@@ -128,7 +128,7 @@ final class MenuBarPopoverViewController: NSViewController {
 
         if statusHeader.superview !== statusHeaderContainer {
             statusHeaderContainer.subviews.forEach { $0.removeFromSuperview() }
-            PopoverUI.pin(statusHeader, to: statusHeaderContainer)
+            Layout.pin(statusHeader, to: statusHeaderContainer)
         }
         statusHeader.update(title: title, indicatorColor: indicatorColor, errorDetail: errorDetail)
     }

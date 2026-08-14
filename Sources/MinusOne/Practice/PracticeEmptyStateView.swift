@@ -26,21 +26,21 @@ final class PracticeEmptyStateView: NSView {
         subtitle.maximumNumberOfLines = 2
         subtitle.lineBreakMode = .byWordWrapping
 
-        importButton = PopoverUI.toolbarActionButton(title: "Import a clip", symbolName: "square.and.arrow.down", target: nil, action: nil)
-        recordButton = PopoverUI.toolbarActionButton(title: "Record system audio", symbolName: "record.circle", target: nil, action: nil)
+        importButton = WindowUI.toolbarActionButton(title: "Import a clip", symbolName: "square.and.arrow.down", target: nil, action: nil)
+        recordButton = WindowUI.toolbarActionButton(title: "Record system audio", symbolName: "record.circle", target: nil, action: nil)
 
-        let actionsRow = PopoverUI.horizontalStack([importButton, recordButton], spacing: PopoverUI.Metrics.Regular.rowSpacing)
+        let actionsRow = Layout.horizontalStack([importButton, recordButton], spacing: WindowUI.Metrics.rowSpacing)
 
-        let stack = PopoverUI.verticalStack([mark, title, subtitle, actionsRow], spacing: PopoverUI.Metrics.Regular.rowSpacing)
+        let stack = Layout.verticalStack([mark, title, subtitle, actionsRow], spacing: WindowUI.Metrics.rowSpacing)
         stack.alignment = .centerX
-        stack.setCustomSpacing(PopoverUI.Metrics.Regular.sectionSpacing, after: mark)
+        stack.setCustomSpacing(WindowUI.Metrics.sectionSpacing, after: mark)
         stack.setCustomSpacing(4, after: title)
-        stack.setCustomSpacing(PopoverUI.Metrics.Regular.sectionSpacing, after: subtitle)
+        stack.setCustomSpacing(WindowUI.Metrics.sectionSpacing, after: subtitle)
 
         super.init(frame: frameRect)
 
         subtitle.widthAnchor.constraint(lessThanOrEqualToConstant: 280).isActive = true
-        PopoverUI.pin(stack, to: self)
+        Layout.pin(stack, to: self)
 
         importButton.target = self
         importButton.action = #selector(importClicked)
