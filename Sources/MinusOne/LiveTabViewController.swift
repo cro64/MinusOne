@@ -73,7 +73,8 @@ final class LiveTabViewController: NSViewController {
 
         let header = SharedUI.sectionHeader("Processing")
         processingBody.translatesAutoresizingMaskIntoConstraints = false
-        sections.append(WindowUI.section(header: header, body: processingBody))
+        let processingSection = WindowUI.section(header: header, body: processingBody)
+        sections.append(processingSection)
 
         sections.append(permissionButton)
 
@@ -114,10 +115,12 @@ final class LiveTabViewController: NSViewController {
         ])
 
         // `content`'s stack alignment is `.leading`, so arranged subviews are only leading-pinned,
-        // not stretched to its width — without an explicit width here `AppCaptureChecklistView`
-        // (which has a fixed height but no intrinsic width of its own) is left horizontally
-        // ambiguous, and Auto Layout resolves that ambiguity to a near-zero/garbage width that
-        // renders squashed up and overlapping the row above it.
+        // not stretched to its width — without this, `AppCaptureChecklistView` (which has a fixed
+        // height but no intrinsic width of its own) is left horizontally ambiguous and renders
+        // squashed/overlapping, and `processingSection` (and everything nested under it —
+        // Intensity/Gain's sliders) shrinks to its own minimum intrinsic width instead of using
+        // the space `content` actually has.
+        processingSection.widthAnchor.constraint(equalTo: content.widthAnchor).isActive = true
         if let captureSection {
             captureSection.widthAnchor.constraint(equalTo: content.widthAnchor).isActive = true
         }
@@ -285,13 +288,14 @@ final class LiveTabViewController: NSViewController {
 
     private func processingRowsView() -> NSView {
         if let existing = cachedProcessingRowsView { return existing }
-        let view = Layout.verticalStack(
-            [
-                WindowUI.formRow(label: "Intensity", control: intensitySlider),
-                WindowUI.formRow(label: "Gain", control: makeupSlider)
-            ],
-            spacing: WindowUI.Metrics.rowSpacing
-        )
+        let intensityRow = WindowUI.formRow(label: "Intensity", control: intensitySlider)
+        let gainRow = WindowUI.formRow(label: "Gain", control: makeupSlider)
+        let view = Layout.verticalStack([intensityRow, gainRow], spacing: WindowUI.Metrics.rowSpacing)
+        // Same "`.leading` stacks don't stretch their children" story as `WindowUI.section` —
+        // without this the rows (and the sliders inside them) sit at their own minimum width
+        // instead of stretching to fill this stack's actual width.
+        intensityRow.widthAnchor.constraint(equalTo: view.widthAnchor).isActive = true
+        gainRow.widthAnchor.constraint(equalTo: view.widthAnchor).isActive = true
         cachedProcessingRowsView = view
         return view
     }

@@ -60,7 +60,12 @@ enum WindowUI {
 
     /// Section header + a single pre-built body view.
     static func section(header: NSView, body: NSView) -> NSView {
-        Layout.verticalStack([header, body], spacing: Metrics.rowSpacing)
+        let section = Layout.verticalStack([header, body], spacing: Metrics.rowSpacing)
+        // `.leading`-aligned stacks only pin arranged subviews' leading edge, they don't stretch
+        // them — without this, `body` (and everything nested under it) shrinks to its own minimum
+        // intrinsic width instead of using the space the section actually has.
+        body.widthAnchor.constraint(equalTo: section.widthAnchor).isActive = true
+        return section
     }
 
     /// Section header (from a title) + a list of rows.
