@@ -98,10 +98,18 @@ final class LiveTabViewController: NSViewController {
         let pad = WindowUI.Metrics.padding
         NSLayoutConstraint.activate([
             content.centerXAnchor.constraint(equalTo: root.centerXAnchor),
+            content.centerYAnchor.constraint(equalTo: root.centerYAnchor),
             content.leadingAnchor.constraint(greaterThanOrEqualTo: root.leadingAnchor, constant: pad),
             content.trailingAnchor.constraint(lessThanOrEqualTo: root.trailingAnchor, constant: -pad),
-            content.topAnchor.constraint(equalTo: root.topAnchor, constant: pad),
-            content.widthAnchor.constraint(equalToConstant: 420),
+            content.topAnchor.constraint(greaterThanOrEqualTo: root.topAnchor, constant: pad),
+            content.bottomAnchor.constraint(lessThanOrEqualTo: root.bottomAnchor, constant: -pad),
+            // 640, not the old popover column's 420: this is REDESIGN.md §3's "full-width version
+            // of what the popover used to cram into ~190pt" — 420 was an unchanged leftover from
+            // the popover-width column, leaving huge dead margins on a ~760-980pt window. Capped
+            // (not edge-to-edge) because letting the slider/dropdown rows stretch to full window
+            // width looks worse, not better; 640 comfortably clears the window's 760pt minimum
+            // width with room for `pad` on both sides.
+            content.widthAnchor.constraint(equalToConstant: 640),
             statusHeaderContainer.widthAnchor.constraint(equalTo: content.widthAnchor)
         ])
 
