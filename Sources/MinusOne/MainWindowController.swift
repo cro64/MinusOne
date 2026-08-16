@@ -1,19 +1,7 @@
 import AppKit
 
-/// `NSTitlebarAccessoryViewController`'s clip view reserves title-bar space from the accessory
-/// view's `intrinsicContentSize`, not from constraints on an arbitrary child (an `NSStackView`
-/// with only constraint-based sizing measured as zero-width at title-bar layout time even with
-/// its children fully constrained). Overriding this directly is the documented, reliable fix.
-private final class TitlebarAccessoryContainerView: AutoLayoutView {
-    var fixedSize: NSSize = .zero {
-        didSet { invalidateIntrinsicContentSize() }
-    }
-
-    override var intrinsicContentSize: NSSize { fixedSize }
-}
-
-/// Owns the desktop window: a Live / Practice segmented switch in the title bar, and the two
-/// tabs' content. Live embeds `LiveTabViewController`, a full-width window-filling view (REDESIGN.md
+/// Owns the desktop window: a Live / Practice segmented switch in a content-area header, and the
+/// two tabs' content. Live embeds `LiveTabViewController`, a full-width window-filling view (REDESIGN.md
 /// §3); Practice embeds the existing sidebar + deck split view, reused as-is per REDESIGN.md §1.
 ///
 /// Activation policy (REDESIGN.md §1): opening the window promotes the app to `.regular` with a
@@ -35,11 +23,26 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
     private let deck: PracticeDeckViewController
     private let importService: ClipImportService
 
-    private let contentContainer = NSView()
+    /// Height reserved at the top of the content for the header. With `.fullSizeContentView` the
+    /// traffic lights float over the content rather than sitting in a strip of their own, so this
+    /// has to stay tall enough to clear them — they occupy roughly the top 20pt.
+    private static let headerHeight: CGFloat = 38
+
+    private let contentContainer = ThemedView(fill: .windowBackgroundColor)
     private let contentRootViewController = NSViewController()
+    /// Top strip of the content view holding the theme/status/tab cluster. Deliberately *not* a
+    /// title bar accessory and deliberately unpainted: it shares `contentContainer`'s background,
+    /// so there is no chrome band separating it from the tab content below.
+    private let headerRow = AutoLayoutView()
+    /// Everything below `headerRow` — the swappable Live/Practice content.
+    private let tabContentContainer = AutoLayoutView()
     private var currentContentViewController: NSViewController?
     private let segmentedControl = FlatSegmentedControl(titles: ["Live", "Practice"])
-    private let liveStatusDot = NSView()
+    private let liveStatusDot = ThemedView(fill: .tertiaryLabelColor)
+    /// Icon-only round button that cycles System → Light → Dark. Lives in the title bar to the left
+    /// of the Live/Practice switch rather than inside a tab, since the theme applies to the whole
+    /// app and shouldn't be reachable from only one of the two tabs.
+    private let appearanceButton = FlatButton(title: "", kind: .ghost)
     private var currentTab: Tab = .live
     private var onboardingViewController: OnboardingViewController?
 
@@ -67,17 +70,26 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         let defaultContentSize = NSSize(width: 980, height: 640)
         let window = NSWindow(
             contentRect: NSRect(origin: .zero, size: defaultContentSize),
-            styleMask: [.titled, .closable, .miniaturizable, .resizable],
+            // `.fullSizeContentView` so the content view extends up behind the title bar instead of
+            // starting below it. Together with `titlebarAppearsTransparent` this removes the thin
+            // chrome strip the Live/Practice switch used to sit in — the window becomes one
+            // continuous surface with the traffic lights floating over it. `.titled` stays: it is
+            // what provides the traffic lights, drag-to-move and the standard resize behaviour, all
+            // of which a borderless window would have to reimplement by hand.
+            styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
             backing: .buffered,
             defer: false
         )
-        // Title text is hidden (the title bar only carries the Live/Practice switch), but the
+        // Title text is hidden (the header carries the Live/Practice switch instead), but the
         // title itself stays set for accessibility and Mission Control.
         window.title = "MinusOne"
         window.titleVisibility = .hidden
-        // Matches the window's starting content size rather than a smaller arbitrary floor — the
-        // app has no scroll views in its primary content, so the window must never shrink past
-        // the size that content was designed to fit in.
+        window.titlebarAppearsTransparent = true
+        // Matches the window's starting content size rather than a smaller arbitrary floor. Live's
+        // card grid does now reflow, so *it* could take a lower floor — but this value is also what
+        // the Practice tab lands on when its view is installed (AppKit re-fits the window from the
+        // installed tab's constraints), so lowering it shrinks Practice's window rather than merely
+        // permitting a smaller one. Measured: at 860×560 here, Practice opens at 860×560.
         window.minSize = defaultContentSize
         // Explicit, not just relying on NSWindow's defaults: an ambiguous/false isOpaque or clear
         // backgroundColor is exactly what makes the Dock show through the window at the edges.
@@ -88,13 +100,13 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         super.init(window: window)
         window.delegate = self
 
-        contentContainer.wantsLayer = true
-        contentContainer.layer?.backgroundColor = NSColor.windowBackgroundColor.cgColor
-
+        // As in `RecordingPanelController`: `ThemedView` defaults this to `false`, but a window's
+        // content view is sized by AppKit through its frame, not by constraints of its own.
+        contentContainer.translatesAutoresizingMaskIntoConstraints = true
         contentRootViewController.view = contentContainer
         window.contentViewController = contentRootViewController
 
-        configureTitleBarAccessory()
+        configureHeader()
         configureLiveTab()
         configurePracticeTab()
 
@@ -122,7 +134,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
 
     func updateLiveStatus(_ status: AudioEngineStatus, isFilterActive: Bool) {
         liveViewController.updateStatusDisplay(status, isFilterActive: isFilterActive)
-        liveStatusDot.layer?.backgroundColor = (isFilterActive ? NSColor.brandAccentDeep : NSColor.tertiaryLabelColor).cgColor
+        liveStatusDot.fillColor = isFilterActive ? .brandAccentDeep : .tertiaryLabelColor
         liveStatusDot.isHidden = currentTab != .practice
     }
 
@@ -168,42 +180,79 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         sidebar.upsertClip(clip)
     }
 
-    // MARK: - Title bar accessory
+    // MARK: - Header
 
-    private func configureTitleBarAccessory() {
+    private func configureHeader() {
         segmentedControl.selectedSegment = Tab.live.rawValue
         segmentedControl.target = self
         segmentedControl.action = #selector(tabChanged)
 
-        liveStatusDot.wantsLayer = true
         liveStatusDot.layer?.cornerRadius = 4
-        liveStatusDot.layer?.backgroundColor = NSColor.tertiaryLabelColor.cgColor
         liveStatusDot.isHidden = true
 
-        let stack = Layout.horizontalStack([liveStatusDot, segmentedControl], spacing: 8)
-        // top: 8 (space-2), not 4 — gives the pill toggle some breathing room below the traffic
-        // lights instead of sitting flush against the top of the title bar.
-        stack.edgeInsets = NSEdgeInsets(top: 8, left: 0, bottom: 4, right: 8)
+        configureAppearanceButton()
 
+        // Theme switch first, then the dot, then the switch itself. The dot annotates the
+        // Live/Practice control (it reports that Live is still running while Practice is showing),
+        // so it stays adjacent to it rather than being separated by unrelated chrome.
         let segmentedSize = segmentedControl.fittingSize
         let segmentedWidth = max(segmentedSize.width, 120)
         // 26, not 20: a pill this short reads as squat rather than capsule-shaped.
         let segmentedHeight = max(segmentedSize.height, 26)
-        let stackWidth = stack.edgeInsets.left + 8 + stack.spacing + segmentedWidth + stack.edgeInsets.right
-        let stackHeight = segmentedHeight + stack.edgeInsets.top + stack.edgeInsets.bottom
+        // Square, so `cornerStyle == .capsule` renders it as a circle. Two points shorter than the
+        // switch beside it so a bare glyph doesn't out-weigh the labelled control it accompanies.
         liveStatusDot.constrainSize(width: 8, height: 8)
         segmentedControl.constrainSize(width: segmentedWidth, height: segmentedHeight)
-        stack.constrainSize(width: stackWidth, height: stackHeight)
+        appearanceButton.constrainSize(width: 24, height: 24)
 
-        let container = TitlebarAccessoryContainerView()
-        container.fixedSize = NSSize(width: stackWidth, height: stackHeight)
-        container.setFrameSize(container.fixedSize)
-        Layout.pin(stack, to: container)
+        // No `TitlebarAccessoryContainerView` and no `intrinsicContentSize` override any more: the
+        // cluster is an ordinary constraint-laid-out subview now, so the sizing workaround that
+        // `NSTitlebarAccessoryViewController`'s clip view required is gone with it.
+        let cluster = Layout.horizontalStack([appearanceButton, liveStatusDot, segmentedControl], spacing: 8)
+        headerRow.addSubview(cluster)
+        NSLayoutConstraint.activate([
+            // Trailing-aligned, matching the padding the tab content below uses, so the switch
+            // lines up with the right edge of the Live tab's card grid.
+            cluster.trailingAnchor.constraint(equalTo: headerRow.trailingAnchor, constant: -WindowUI.Metrics.padding),
+            cluster.centerYAnchor.constraint(equalTo: headerRow.centerYAnchor)
+        ])
 
-        let accessoryViewController = NSTitlebarAccessoryViewController()
-        accessoryViewController.view = container
-        accessoryViewController.layoutAttribute = .right
-        window?.addTitlebarAccessoryViewController(accessoryViewController)
+        Layout.pin(headerRow, to: contentContainer, edges: [.leading, .trailing, .top])
+        headerRow.heightAnchor.constraint(equalToConstant: Self.headerHeight).isActive = true
+        Layout.pin(tabContentContainer, to: contentContainer, edges: [.leading, .trailing, .bottom])
+        tabContentContainer.topAnchor.constraint(equalTo: headerRow.bottomAnchor).isActive = true
+    }
+
+    private func configureAppearanceButton() {
+        appearanceButton.cornerStyle = .capsule
+        appearanceButton.imagePosition = .imageOnly
+        appearanceButton.imageScaling = .scaleProportionallyDown
+        // Ghost's default is the coral accent, which would read as a primary action up here. The
+        // theme switch is chrome, so it takes the same secondary tint as the title bar's own glyphs.
+        appearanceButton.textColorOverride = .secondaryLabelColor
+        appearanceButton.setAccessibilityLabel("Theme")
+        appearanceButton.target = self
+        appearanceButton.action = #selector(appearanceButtonClicked)
+        syncAppearanceButton()
+    }
+
+    private func syncAppearanceButton() {
+        let appearance = preferences.appearance
+        appearanceButton.image = NSImage(systemSymbolName: appearance.symbolName, accessibilityDescription: nil)?
+            .withSymbolConfiguration(.init(pointSize: 12, weight: .medium))
+        // The button shows only the current stage, so the next one is named here rather than left
+        // to be discovered by clicking.
+        appearanceButton.toolTip = "Theme: \(appearance.displayName). Click for \(appearance.next.displayName)."
+        appearanceButton.setAccessibilityValue(appearance.displayName)
+    }
+
+    @objc private func appearanceButtonClicked() {
+        let appearance = preferences.appearance.next
+        preferences.appearance = appearance
+        // Cascades to every window and view, so each `ThemedView`/`FlatButton` repaints itself off
+        // the same `viewDidChangeEffectiveAppearance` path a system-wide switch would use.
+        appearance.apply()
+        syncAppearanceButton()
     }
 
     @objc private func tabChanged() {
@@ -241,7 +290,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         }
 
         contentRootViewController.addChild(child)
-        Layout.pin(child.view, to: contentContainer)
+        Layout.pin(child.view, to: tabContentContainer)
         currentContentViewController = child
     }
 
@@ -269,11 +318,6 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
             recordActionButton.toolTip = "Recording system audio requires macOS 14.2 or later"
         }
 
-        deck.onImportRequested = { [weak self] in self?.importButtonClicked() }
-        deck.onRecordRequested = { [weak self] in
-            guard let self else { return }
-            self.recordButtonClicked(self.practiceTabViewController.recordActionButton)
-        }
     }
 
     @objc private func importButtonClicked() {
@@ -302,7 +346,9 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         let popover = NSPopover()
         popover.contentViewController = panel
         popover.behavior = .transient
-        popover.appearance = NSAppearance(named: .darkAqua)
+        // Previously pinned to `.darkAqua`. That predated the app having any appearance story at
+        // all; now that it does, a hard-coded dark popover is the one surface that would ignore
+        // both the system setting and the user's own Light/Dark choice. Left unset so it inherits.
         popover.show(relativeTo: anchorView.bounds, of: anchorView, preferredEdge: .maxY)
         recordingPopover = popover
     }

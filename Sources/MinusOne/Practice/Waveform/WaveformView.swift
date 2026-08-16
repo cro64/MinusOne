@@ -34,6 +34,12 @@ final class WaveformView: NSView {
 
     override var isFlipped: Bool { true }
 
+    /// `draw(_:)` strokes with `labelColor`, which inverts between appearances.
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        needsDisplay = true
+    }
+
     override func draw(_ dirtyRect: NSRect) {
         super.draw(dirtyRect)
         guard let context = NSGraphicsContext.current?.cgContext else { return }

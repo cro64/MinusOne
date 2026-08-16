@@ -1,17 +1,22 @@
 import AppKit
 
-/// Practice deck's empty state (REDESIGN.md §4): the logo's waveform mark plus two direct
-/// actions, wired to the same Import/Record actions as the toolbar rather than prose telling
-/// the user what to do elsewhere.
+/// Practice deck's empty state (REDESIGN.md §4): the logo's waveform mark over a short prompt.
+///
+/// This used to carry its own Import / Record buttons duplicating the action row above the clip
+/// list. Two live copies of the same pair, a few hundred points apart, read as two different
+/// features rather than one — so the buttons live in exactly one place now, and the subtitle
+/// points at them.
 final class PracticeEmptyStateView: NSView {
-    var onImportRequested: (() -> Void)?
-    var onRecordRequested: (() -> Void)?
-
-    private let importButton: NSButton
-    private let recordButton: NSButton
-
     override init(frame frameRect: NSRect) {
-        let mark = NSImageView(image: MinusOneIcon.waveform(size: 56, color: .tertiaryLabelColor, isActive: false))
+        // Template mask + `contentTintColor`, the same treatment `MenuBarController` gives the
+        // idle menu bar glyph — *not* `waveform(color: .tertiaryLabelColor)`. A dynamic color drawn
+        // into an `NSImage` is resolved once and baked into the bitmap, so the mark kept whichever
+        // appearance was current when the deck was built and then disappeared against the opposite
+        // background. `contentTintColor` holds the `NSColor` itself and re-resolves on its own.
+        let markImage = MinusOneIcon.waveform(size: 56, color: .black, isActive: false)
+        markImage.isTemplate = true
+        let mark = NSImageView(image: markImage)
+        mark.contentTintColor = .tertiaryLabelColor
         mark.constrainSize(width: 56, height: 56)
 
         let title = NSTextField(labelWithString: "No clip selected")
@@ -26,38 +31,19 @@ final class PracticeEmptyStateView: NSView {
         subtitle.maximumNumberOfLines = 2
         subtitle.lineBreakMode = .byWordWrapping
 
-        importButton = WindowUI.toolbarActionButton(title: "Import a clip", symbolName: "square.and.arrow.down", target: nil, action: nil)
-        recordButton = WindowUI.toolbarActionButton(title: "Record system audio", symbolName: "record.circle", target: nil, action: nil)
-
-        let actionsRow = Layout.horizontalStack([importButton, recordButton], spacing: WindowUI.Metrics.rowSpacing)
-
-        let stack = Layout.verticalStack([mark, title, subtitle, actionsRow], spacing: WindowUI.Metrics.rowSpacing)
+        let stack = Layout.verticalStack([mark, title, subtitle], spacing: WindowUI.Metrics.rowSpacing)
         stack.alignment = .centerX
         stack.setCustomSpacing(WindowUI.Metrics.sectionSpacing, after: mark)
         stack.setCustomSpacing(4, after: title)
-        stack.setCustomSpacing(WindowUI.Metrics.sectionSpacing, after: subtitle)
 
         super.init(frame: frameRect)
 
         subtitle.widthAnchor.constraint(lessThanOrEqualToConstant: 280).isActive = true
         Layout.pin(stack, to: self)
-
-        importButton.target = self
-        importButton.action = #selector(importClicked)
-        recordButton.target = self
-        recordButton.action = #selector(recordClicked)
     }
 
     @available(*, unavailable)
     required init?(coder: NSCoder) {
         fatalError("init(coder:) has not been implemented")
-    }
-
-    @objc private func importClicked() {
-        onImportRequested?()
-    }
-
-    @objc private func recordClicked() {
-        onRecordRequested?()
     }
 }

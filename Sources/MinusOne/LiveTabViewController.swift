@@ -14,8 +14,11 @@ final class LiveTabViewController: NSViewController {
     private let audioEngine: AudioEngine
 
     private let statusHeaderContainer = NSView()
-    private let statusHeader = StatusHeaderView()
+    private let statusHeader = StatusHeaderView(scale: .hero)
     private let liveToggle = NSSwitch()
+    private let levelMeter = LiveLevelMeterView()
+    private let outputSummaryLabel = NSTextField(labelWithString: "")
+    private var meterTimer: Timer?
     private let intensitySlider = DragValueSlider(value: 100, minValue: 0, maxValue: 100, target: nil, action: nil)
     private let makeupSlider = DragValueSlider(value: 4.5, minValue: 0, maxValue: 12, target: nil, action: nil)
     private let sliderValueOverlay = SharedUI.valueLabel()
@@ -53,9 +56,7 @@ final class LiveTabViewController: NSViewController {
     }
 
     override func loadView() {
-        let root = NSView()
-        root.wantsLayer = true
-        root.layer?.backgroundColor = NSColor.windowBackgroundColor.cgColor
+        let root = ThemedView(fill: .windowBackgroundColor)
         view = root
 
         configureControls()
@@ -65,20 +66,91 @@ final class LiveTabViewController: NSViewController {
         updateCaptureScopeUI()
         refreshStatusHeader()
         updateModelGate()
+        updateOutputSummary()
+
+        audioEngine.onOutputConfigurationChanged = { [weak self] in
+            self?.updateOutputSummary()
+        }
     }
 
+    // MARK: - Live meter
+
+    override func viewWillAppear() {
+        super.viewWillAppear()
+        startMeter()
+    }
+
+    override func viewDidDisappear() {
+        super.viewDidDisappear()
+        stopMeter()
+    }
+
+    /// Polls `AudioEngine.liveLevels` while the Live tab is on screen. Deliberately driven from the
+    /// view and not from the engine, so nothing ticks while Practice is showing or the window is
+    /// closed. `.common` run loop mode keeps the meter moving during slider drags and menu tracking.
+    private func startMeter() {
+        guard meterTimer == nil else { return }
+        let timer = Timer(timeInterval: 1.0 / 25.0, repeats: true) { [weak self] _ in
+            self?.tickMeter()
+        }
+        RunLoop.main.add(timer, forMode: .common)
+        meterTimer = timer
+    }
+
+    private func stopMeter() {
+        meterTimer?.invalidate()
+        meterTimer = nil
+    }
+
+    private func tickMeter() {
+        levelMeter.append(levels: audioEngine.liveLevels)
+        levelMeter.caption = meterCaption()
+    }
+
+    /// `nil` once there's a signal worth showing — the meter draws its legend instead. The card
+    /// should never read as an empty box, so every non-running state names itself here.
+    private func meterCaption() -> String? {
+        switch currentStatus {
+        case .error:
+            return "Reduction stopped"
+        case .permissionRequired:
+            return "Permission needed to capture audio"
+        case .warmingUp:
+            return "Warming up…"
+        case .active where audioEngine.isVocalReductionActive:
+            return nil
+        default:
+            return "Turn Live on to see vocals being removed"
+        }
+    }
+
+    private func updateOutputSummary() {
+        guard isViewLoaded else { return }
+        guard let device = audioEngine.activeOutputDevice else {
+            outputSummaryLabel.stringValue = "No output device"
+            return
+        }
+        let kilohertz = audioEngine.sampleRate / 1000
+        let rateText = kilohertz == kilohertz.rounded()
+            ? String(format: "%.0f kHz", kilohertz)
+            : String(format: "%.1f kHz", kilohertz)
+        outputSummaryLabel.stringValue = "\(device.name) · \(rateText)"
+    }
+
+    /// A card grid, not the old fixed-width column. The previous layout centered a hard 640pt stack
+    /// of ~300pt-tall content in a 980×640 window, so most of the window was empty — the
+    /// information architecture had never moved past the menu bar popover it was lifted from. Now:
+    /// a full-width status/meter hero on top (which absorbs the vertical slack), and Processing +
+    /// Capture side by side beneath it, so the window's real width does work.
     private func configureContent(in root: NSView) {
-        var sections: [NSView] = [statusHeaderContainer]
-        statusHeaderContainer.translatesAutoresizingMaskIntoConstraints = false
+        let heroCard = WindowUI.card(content: heroContent())
 
         let header = SharedUI.sectionHeader("Processing")
         processingBody.translatesAutoresizingMaskIntoConstraints = false
-        let processingSection = WindowUI.section(header: header, body: processingBody)
-        sections.append(processingSection)
+        let processingCard = WindowUI.card(header: header, body: processingBody)
 
-        sections.append(permissionButton)
+        var bottomCards: [NSView] = [processingCard]
 
-        var captureSection: NSView?
         if #available(macOS 14.2, *) {
             let checklist = AppCaptureChecklistView(preferences: preferences, audioEngine: audioEngine)
             appChecklist = checklist
@@ -86,51 +158,99 @@ final class LiveTabViewController: NSViewController {
                 WindowUI.formRow(label: "Scope", control: captureScopePopUp),
                 checklist
             ]
-            let section = WindowUI.section(title: "Capture", rows: captureRows)
-            captureSection = section
-            sections.append(section)
+            bottomCards.append(WindowUI.card(title: "Capture", rows: captureRows))
         }
 
-        let content = Layout.verticalStack(sections, spacing: WindowUI.Metrics.sectionSpacing)
-        content.setCustomSpacing(12, after: statusHeaderContainer)
-        content.translatesAutoresizingMaskIntoConstraints = false
-        root.addSubview(content)
+
+        let bottomRow = NSStackView(views: bottomCards)
+        bottomRow.orientation = .horizontal
+        bottomRow.alignment = .top
+        bottomRow.distribution = .fill
+        bottomRow.spacing = WindowUI.Metrics.cardSpacing
+        bottomRow.translatesAutoresizingMaskIntoConstraints = false
+        // Explicit equal widths rather than `.fillEqually`: measured on the real window, the
+        // distribution lost to the intrinsic widths inside the cards and produced a ~2.5:1 split.
+        // Equal *heights* too, so the row reads as one band of cards rather than two boxes of
+        // different sizes — whichever card's content is tallest sets the height, and the other
+        // pads out to match. (`.top` alignment alone only aligned their top edges.)
+        if let first = bottomCards.first {
+            for card in bottomCards.dropFirst() {
+                card.widthAnchor.constraint(equalTo: first.widthAnchor).isActive = true
+                card.heightAnchor.constraint(equalTo: first.heightAnchor).isActive = true
+            }
+        }
+
+        let content = Layout.verticalStack([heroCard, permissionButton, bottomRow], spacing: WindowUI.Metrics.cardSpacing)
 
         let pad = WindowUI.Metrics.padding
-        NSLayoutConstraint.activate([
-            content.centerXAnchor.constraint(equalTo: root.centerXAnchor),
-            content.centerYAnchor.constraint(equalTo: root.centerYAnchor),
-            content.leadingAnchor.constraint(greaterThanOrEqualTo: root.leadingAnchor, constant: pad),
-            content.trailingAnchor.constraint(lessThanOrEqualTo: root.trailingAnchor, constant: -pad),
-            content.topAnchor.constraint(greaterThanOrEqualTo: root.topAnchor, constant: pad),
-            content.bottomAnchor.constraint(lessThanOrEqualTo: root.bottomAnchor, constant: -pad),
-            // 640, not the old popover column's 420: this is REDESIGN.md §3's "full-width version
-            // of what the popover used to cram into ~190pt" — 420 was an unchanged leftover from
-            // the popover-width column, leaving huge dead margins on a ~760-980pt window. Capped
-            // (not edge-to-edge) because letting the slider/dropdown rows stretch to full window
-            // width looks worse, not better; 640 comfortably clears the window's 760pt minimum
-            // width with room for `pad` on both sides.
-            content.widthAnchor.constraint(equalToConstant: 640),
-            statusHeaderContainer.widthAnchor.constraint(equalTo: content.widthAnchor)
-        ])
+        Layout.pin(content, to: root, insets: NSEdgeInsets(top: pad, left: pad, bottom: pad, right: pad))
 
-        // `content`'s stack alignment is `.leading`, so arranged subviews are only leading-pinned,
-        // not stretched to its width — without this, `AppCaptureChecklistView` (which has a fixed
-        // height but no intrinsic width of its own) is left horizontally ambiguous and renders
-        // squashed/overlapping, and `processingSection` (and everything nested under it —
-        // Intensity/Gain's sliders) shrinks to its own minimum intrinsic width instead of using
-        // the space `content` actually has.
-        processingSection.widthAnchor.constraint(equalTo: content.widthAnchor).isActive = true
-        if let captureSection {
-            captureSection.widthAnchor.constraint(equalTo: content.widthAnchor).isActive = true
+        NSLayoutConstraint.activate([
+            // Same `.leading`-stacks-don't-stretch-their-children story as `WindowUI.section`: the
+            // cards have to be chained to the stack's width explicitly or they collapse toward
+            // their intrinsic size instead of tracking the window. (`permissionButton` is left
+            // unchained on purpose — it's a link button that should hug its title.)
+            heroCard.widthAnchor.constraint(equalTo: content.widthAnchor),
+            bottomRow.widthAnchor.constraint(equalTo: content.widthAnchor),
+            // The hero takes the slack: the bottom cards hug their content, and everything left
+            // over goes to the meter rather than to empty space below the form.
+            heroCard.heightAnchor.constraint(greaterThanOrEqualToConstant: 220),
+            // ...but not *all* of it. Capture's content collapses to 78pt outright when the
+            // checklist is hidden for the All Apps scope, and with the hero hugging at priority 1
+            // there's nothing else stopping the row from being squashed. Deliberately below
+            // Processing's own ~110pt fitting height (measured) so it acts purely as a backstop:
+            // Processing is what sets this row's height, and Capture follows it.
+            bottomRow.heightAnchor.constraint(greaterThanOrEqualToConstant: 96),
+            // AppKit re-fits the window to this view's fitting size shortly after the tab is
+            // installed. Without this, the cards' own intrinsic width wins and the window collapses
+            // to 572pt the moment Live appears (measured) — the card grid has no fixed width of its
+            // own, which is the point. Breakable rather than required so the window stays
+            // resizable; `MainWindowController.minSize` remains the hard floor. Width only: height
+            // needs no equivalent, because `heroCard`'s near-zero vertical hugging already means
+            // the content exerts no upward pressure on the window's height.
+            preferredSize(root.widthAnchor, 980)
+        ])
+        heroCard.setContentHuggingPriority(.init(1), for: .vertical)
+        bottomRow.setContentHuggingPriority(.defaultHigh, for: .vertical)
+    }
+
+    /// Breakable size preference. Priority 800 is deliberate: above the 750 content-hugging of the
+    /// Scope popup and friends (measured — at 250 or 600 that hugging wins and the window settles
+    /// at its floor instead of its design size), and below required, so resizing still works.
+    private func preferredSize(_ anchor: NSLayoutDimension, _ constant: CGFloat) -> NSLayoutConstraint {
+        let constraint = anchor.constraint(equalToConstant: constant)
+        constraint.priority = NSLayoutConstraint.Priority(800)
+        return constraint
+    }
+
+    /// Status + toggle + output summary + the live before/after meter.
+    private func heroContent() -> NSView {
+        statusHeaderContainer.translatesAutoresizingMaskIntoConstraints = false
+
+        outputSummaryLabel.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
+        outputSummaryLabel.textColor = .secondaryLabelColor
+        outputSummaryLabel.translatesAutoresizingMaskIntoConstraints = false
+
+        levelMeter.translatesAutoresizingMaskIntoConstraints = false
+        levelMeter.setContentHuggingPriority(.init(1), for: .vertical)
+        levelMeter.heightAnchor.constraint(greaterThanOrEqualToConstant: 96).isActive = true
+
+        let stack = Layout.verticalStack(
+            [statusHeaderContainer, outputSummaryLabel, levelMeter],
+            spacing: WindowUI.Metrics.rowSpacing
+        )
+        stack.setCustomSpacing(WindowUI.Metrics.sectionSpacing, after: outputSummaryLabel)
+        for row in [statusHeaderContainer, outputSummaryLabel, levelMeter] as [NSView] {
+            row.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
         }
+        return stack
     }
 
     func reloadFromPreferences() {
         guard isViewLoaded, captureScopePopUp.numberOfItems > 0 else { return }
 
         if let scopeIndex = CaptureScope.allCases.firstIndex(of: preferences.captureScope) {
-            setPopUpSelection(captureScopePopUp, index: scopeIndex, action: #selector(captureScopeChanged))
+            setPopUpSelection(captureScopePopUp, index: scopeIndex)
         }
 
         intensitySlider.floatValue = preferences.targetIntensity * 100
@@ -148,6 +268,11 @@ final class LiveTabViewController: NSViewController {
         refreshStatusHeader(isFilterActive: isFilterActive)
         updatePermissionButton(for: status)
         setSwitchState(liveToggle, on: isFilterActive)
+        // Previously missing: if the engine falls back from Process Tap to BlackHole while this tab
+        // is already visible, the Scope popup stayed enabled with a stale tooltip until the tab was
+        // re-shown, because `refreshControlStates` only ran from `reloadFromPreferences`.
+        refreshControlStates()
+        updateOutputSummary()
     }
 
     func updatePermissionButton(for status: AudioEngineStatus) {
@@ -200,6 +325,7 @@ final class LiveTabViewController: NSViewController {
 
         permissionButton.target = self
         permissionButton.action = #selector(openPermissionSettings)
+
     }
 
     // MARK: - Regular-scale layout helpers
@@ -208,7 +334,13 @@ final class LiveTabViewController: NSViewController {
         statusHeader.translatesAutoresizingMaskIntoConstraints = false
         liveToggle.translatesAutoresizingMaskIntoConstraints = false
 
-        let row = Layout.horizontalStack([statusHeader, NSView(), liveToggle], spacing: WindowUI.Metrics.rowSpacing)
+        // `flexibleSpacer`, not a bare `NSView`: the container now stretches with the window, so the
+        // slack has to land in the middle (pushing the toggle to the trailing edge) rather than
+        // being distributed across a spacer with default hugging.
+        let row = Layout.horizontalStack(
+            [statusHeader, Layout.flexibleSpacer(), liveToggle],
+            spacing: WindowUI.Metrics.rowSpacing
+        )
         row.distribution = .fill
         return row
     }
@@ -438,7 +570,7 @@ final class LiveTabViewController: NSViewController {
         sliderValueOverlay.isHidden = false
     }
 
-    private func setPopUpSelection(_ popUp: NSPopUpButton, index: Int, action: Selector) {
+    private func setPopUpSelection(_ popUp: NSPopUpButton, index: Int) {
         let previousAction = popUp.action
         let previousTarget = popUp.target
         popUp.action = nil
@@ -465,7 +597,7 @@ final class LiveTabViewController: NSViewController {
         let scope = CaptureScope.allCases[index]
         audioEngine.setCaptureScope(scope)
         if let actual = CaptureScope.allCases.firstIndex(of: preferences.captureScope) {
-            setPopUpSelection(captureScopePopUp, index: actual, action: #selector(captureScopeChanged))
+            setPopUpSelection(captureScopePopUp, index: actual)
         }
         updateCaptureScopeUI()
         onSettingsChanged?()

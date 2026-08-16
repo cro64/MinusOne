@@ -18,11 +18,29 @@ final class LiveWaveformView: NSView {
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
         wantsLayer = true
+        layer?.borderWidth = 1
+        applyBorderColor()
     }
 
     @available(*, unavailable)
     required init?(coder: NSCoder) {
         fatalError("init(coder:) has not been implemented")
+    }
+
+    /// The border used to be assigned by `RecordingPanelController` at build time, which froze the
+    /// light-mode `flatDivider` into the layer for the life of the view. Owned here so it's
+    /// re-resolved, and so `draw(_:)` — which reads `windowBackgroundColor` and `labelColor` — gets
+    /// re-run for the new appearance rather than keeping its old pixels.
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        applyBorderColor()
+        needsDisplay = true
+    }
+
+    private func applyBorderColor() {
+        resolvingEffectiveAppearance {
+            layer?.borderColor = NSColor.flatDivider.cgColor
+        }
     }
 
     override var isFlipped: Bool { true }

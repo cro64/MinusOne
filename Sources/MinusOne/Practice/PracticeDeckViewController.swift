@@ -21,17 +21,6 @@ final class PracticeDeckViewController: NSViewController {
     private var mixerRows: [SeparationStem: MixerRowView] = [:]
     private var contentStack: NSStackView?
 
-    /// Wired by the owning window controller to the same actions as the toolbar's Import/Record,
-    /// so the empty state's CTAs (REDESIGN.md §4) aren't a second, divergent code path.
-    var onImportRequested: (() -> Void)? {
-        get { emptyStateView.onImportRequested }
-        set { emptyStateView.onImportRequested = newValue }
-    }
-    var onRecordRequested: (() -> Void)? {
-        get { emptyStateView.onRecordRequested }
-        set { emptyStateView.onRecordRequested = newValue }
-    }
-
     init(libraryStore: ClipLibraryStore, playbackEngine: PracticePlaybackEngine) {
         self.libraryStore = libraryStore
         self.playbackEngine = playbackEngine
@@ -261,7 +250,10 @@ private final class MixerRowView: NSView {
         let color = stem.identityColor
 
         let label = SharedUI.fieldLabel(stem.displayName)
-        label.textColor = color
+        // The text variant, not the fill color: as a 13pt label the raw stem hues measure 2.7:1
+        // (Drums), 3.7:1 (Bass) and 4.2:1 (Other) against a light card. The slider below still
+        // takes the canonical `identityColor` — as an area of fill it has no such problem.
+        label.textColor = stem.identityTextColor
         label.font = .systemFont(ofSize: NSFont.systemFontSize, weight: .semibold)
         label.widthAnchor.constraint(equalToConstant: WindowUI.Metrics.labelWidth).isActive = true
 

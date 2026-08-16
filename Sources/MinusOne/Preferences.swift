@@ -14,6 +14,7 @@ final class Preferences {
         static let separationModelVariant = "separationModelVariant"
         static let captureScope = "captureScope"
         static let selectedAppBundleIDs = "selectedAppBundleIDs"
+        static let appearance = "appearance"
     }
 
     private let defaults: UserDefaults
@@ -29,7 +30,8 @@ final class Preferences {
             Key.hasCompletedOnboarding: false,
             Key.separationModelVariant: SeparationModelVariant.balanced.rawValue,
             Key.captureScope: CaptureScope.allApps.rawValue,
-            Key.selectedAppBundleIDs: [String]()
+            Key.selectedAppBundleIDs: [String](),
+            Key.appearance: AppAppearance.system.rawValue
         ])
     }
 
@@ -78,6 +80,17 @@ final class Preferences {
             return scope
         }
         set { defaults.set(newValue.rawValue, forKey: Key.captureScope) }
+    }
+
+    var appearance: AppAppearance {
+        get {
+            guard let raw = defaults.string(forKey: Key.appearance),
+                  let appearance = AppAppearance(rawValue: raw) else {
+                return .system
+            }
+            return appearance
+        }
+        set { defaults.set(newValue.rawValue, forKey: Key.appearance) }
     }
 
     var selectedAppBundleIDs: Set<String> {

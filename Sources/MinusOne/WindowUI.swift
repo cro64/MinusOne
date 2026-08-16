@@ -17,6 +17,16 @@ enum WindowUI {
         static let buttonCornerRadius: CGFloat = 6
         /// Minimum track length for Live tab's Intensity/Gain sliders.
         static let sliderMinWidth: CGFloat = 88
+        /// Inset between a card's border and its content — space-4, matching `sectionSpacing` so
+        /// a card's inner rhythm lines up with the gaps between cards.
+        static let cardPadding: CGFloat = 16
+        /// Gap between adjacent cards in the Live tab's grid — space-4.
+        static let cardSpacing: CGFloat = 16
+        static let cardCornerRadius: CGFloat = 10
+        /// Gap between a button's leading icon and its title. `NSButton` exposes no image/title
+        /// spacing, and `imageHugsTitle` alone leaves them ~2pt apart, so this is baked into the
+        /// image's trailing edge instead.
+        static let iconTitleSpacing: CGFloat = 5
     }
 
     static func configurePopUp(_ popUp: NSPopUpButton) {
@@ -87,13 +97,39 @@ enum WindowUI {
         return section
     }
 
+    /// A `section(...)` wrapped in card chrome — the Live tab's grid unit. Kept here rather than
+    /// built per-call-site so the `.leading`-stack width-chaining that `section(...)` already gets
+    /// right isn't reimplemented (and re-broken) inside each card.
+    static func card(header: NSView, body: NSView) -> NSView {
+        card(content: section(header: header, body: body))
+    }
+
+    /// Card chrome around a section built from rows.
+    static func card(title: String, rows: [NSView]) -> NSView {
+        card(content: section(title: title, rows: rows))
+    }
+
+    /// Card chrome around arbitrary content (the Live tab's status hero, which isn't a `section`).
+    static func card(content: NSView) -> NSView {
+        let container = ThemedView(fill: .cardBackground, stroke: .cardBorder)
+        container.layer?.borderWidth = 1
+        container.layer?.cornerRadius = Metrics.cardCornerRadius
+
+        content.translatesAutoresizingMaskIntoConstraints = false
+        container.addSubview(content)
+        Layout.pin(content, to: container, insets: NSEdgeInsets(
+            top: Metrics.cardPadding,
+            left: Metrics.cardPadding,
+            bottom: Metrics.cardPadding,
+            right: Metrics.cardPadding
+        ))
+        return container
+    }
+
     /// `.hr` token: a flat 2px divider fill, not a native 1px `NSBox` hairline (that's
     /// `PopoverUI.nativeSeparator`, for the popover only).
     static func separator() -> NSView {
-        let view = NSView()
-        view.wantsLayer = true
-        view.layer?.backgroundColor = NSColor.flatDivider.cgColor
-        view.translatesAutoresizingMaskIntoConstraints = false
+        let view = ThemedView(fill: .flatDivider)
         view.heightAnchor.constraint(equalToConstant: 2).isActive = true
         return view
     }
@@ -108,11 +144,30 @@ enum WindowUI {
 
     /// Shared style for window-scale toolbar actions (Practice tab's Import/Record) so both use
     /// one button language instead of mixing a plain toolbar item with a custom-styled button.
-    static func toolbarActionButton(title: String, symbolName: String, target: AnyObject?, action: Selector?) -> FlatButton {
+    /// `symbolPointSize` is taken here rather than left to the caller to re-apply afterwards: the
+    /// icon/title gap is baked into the image, so a later `button.image = button.image?
+    /// .withSymbolConfiguration(…)` would silently throw the spacing away.
+    static func toolbarActionButton(
+        title: String,
+        symbolName: String,
+        symbolPointSize: CGFloat = 14,
+        target: AnyObject?,
+        action: Selector?
+    ) -> FlatButton {
         let button = FlatButton(title: title, kind: .primary, target: target, action: action)
-        button.image = NSImage(systemSymbolName: symbolName, accessibilityDescription: title)
+        button.image = NSImage(systemSymbolName: symbolName, accessibilityDescription: title)?
+            .withSymbolConfiguration(.init(pointSize: symbolPointSize, weight: .medium))?
+            .withTrailingPadding(Metrics.iconTitleSpacing)
         button.imagePosition = .imageLeading
         button.imageScaling = .scaleProportionallyDown
+        // Without this, `NSButtonCell` pins the image to the button's leading edge and then centers
+        // the title inside *all* the remaining width — measured on the 93pt Import button: image at
+        // x=0 (flush to the edge) with the title rect running to x=93, which reads as an icon stuck
+        // to the rim and a large gap before the label. `FlatButton` inflates `intrinsicContentSize`
+        // by 14.4pt a side, so there is always surplus width for that to go wrong in. Hugging keeps
+        // image and title together as one group and centers the pair: 16.5pt of padding on both
+        // sides, measured.
+        button.imageHugsTitle = true
         return button
     }
 
@@ -124,6 +179,22 @@ enum WindowUI {
         button.pointSize = NSFont.smallSystemFontSize
         button.setButtonType(.pushOnPushOff)
         return button
+    }
+}
+
+extension NSImage {
+    /// Copy with `points` of transparent space on the trailing edge — the only way to put a gap
+    /// between an `NSButton`'s icon and its title, since the cell offers no spacing knob.
+    /// `isTemplate` is carried over so SF Symbols keep taking their color from `contentTintColor`
+    /// rather than being flattened into the bitmap.
+    func withTrailingPadding(_ points: CGFloat) -> NSImage {
+        guard points > 0 else { return self }
+        let padded = NSImage(size: NSSize(width: size.width + points, height: size.height))
+        padded.lockFocus()
+        draw(in: NSRect(origin: .zero, size: size))
+        padded.unlockFocus()
+        padded.isTemplate = isTemplate
+        return padded
     }
 }
 
@@ -145,6 +216,20 @@ final class FlatButton: NSButton {
         case primary
         case secondary
         case ghost
+    }
+
+    enum CornerStyle {
+        /// Fixed `WindowUI.Metrics.buttonCornerRadius` — the default for buttons sitting in a
+        /// card's form rhythm, where a capsule would fight the square-ish chrome around it.
+        case rounded
+        /// Fully round ends, radius tracking half the button's height. Used by Practice's
+        /// Import/Record row, which sits directly under the title bar's capsule Live/Practice
+        /// switch and reads as part of that same band of controls.
+        case capsule
+    }
+
+    var cornerStyle: CornerStyle = .rounded {
+        didSet { needsLayout = true }
     }
 
     var kind: Kind {
@@ -217,6 +302,15 @@ final class FlatButton: NSButton {
         fatalError("init(coder:) has not been implemented")
     }
 
+    /// A capsule's radius depends on the resolved height, so it can't be set once in `init` the
+    /// way the fixed radius can.
+    override func layout() {
+        super.layout()
+        layer?.cornerRadius = cornerStyle == .capsule
+            ? bounds.height / 2
+            : WindowUI.Metrics.buttonCornerRadius
+    }
+
     override func updateTrackingAreas() {
         super.updateTrackingAreas()
         if let trackingArea {
@@ -272,29 +366,41 @@ final class FlatButton: NSButton {
         return base
     }
 
+    /// Ghost/secondary buttons derive their fill and border from `labelColor`/`flatDivider`, which
+    /// invert between appearances — and a layer's colors are frozen `CGColor`s, so they have to be
+    /// rewritten rather than left to update themselves.
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        refreshStyle()
+    }
+
     func refreshStyle() {
         isApplyingStyle = true
         defer { isApplyingStyle = false }
 
         let engaged = isOn || state == .on
         let font = NSFont.systemFont(ofSize: pointSize, weight: .black)
-        let textColor: NSColor
-        switch kind {
-        case .primary:
-            layer?.backgroundColor = interactionFill(base: .brandAccent, isFilled: true).cgColor
-            layer?.borderColor = NSColor.clear.cgColor
-            textColor = .white
-        case .secondary:
-            let fillColor = engagedFillColorOverride ?? .brandAccent
-            layer?.backgroundColor = interactionFill(base: fillColor, isFilled: engaged).cgColor
-            layer?.borderColor = NSColor.flatDivider.cgColor
-            textColor = engaged ? .white : .labelColor
-        case .ghost:
-            layer?.backgroundColor = interactionFill(base: .clear, isFilled: false).cgColor
-            layer?.borderColor = NSColor.clear.cgColor
-            textColor = textColorOverride ?? .brandAccent
+        var textColor: NSColor = .labelColor
+        resolvingEffectiveAppearance {
+            switch kind {
+            case .primary:
+                layer?.backgroundColor = interactionFill(base: .brandAccent, isFilled: true).cgColor
+                layer?.borderColor = NSColor.clear.cgColor
+                textColor = .white
+            case .secondary:
+                let fillColor = engagedFillColorOverride ?? .brandAccent
+                layer?.backgroundColor = interactionFill(base: fillColor, isFilled: engaged).cgColor
+                layer?.borderColor = NSColor.flatDivider.cgColor
+                textColor = engaged ? .white : .labelColor
+            case .ghost:
+                layer?.backgroundColor = interactionFill(base: .clear, isFilled: false).cgColor
+                layer?.borderColor = NSColor.clear.cgColor
+                textColor = textColorOverride ?? .brandAccent
+            }
         }
 
+        // Outside the block on purpose: `attributedTitle` and `contentTintColor` hold the `NSColor`
+        // itself, so they re-resolve on their own and want the dynamic value, not a snapshot.
         attributedTitle = NSAttributedString(string: title, attributes: [
             .font: font,
             .foregroundColor: textColor
@@ -302,9 +408,26 @@ final class FlatButton: NSButton {
         contentTintColor = textColor
     }
 
+    /// `NSButton` reports insets derived from the native bezel it would normally draw (measured:
+    /// top 4, bottom 3.5, right 0.5). Auto Layout constrains the *alignment rect*, not the frame,
+    /// so those insets silently inflate the painted box — a `constrainSize(24, 24)` produced a
+    /// 24.5×31.5 layer, which rendered the capsule hover as a vertical oval rather than a circle,
+    /// and made the 26pt Import/Record buttons paint 33.5pt tall inside a 26pt row.
+    ///
+    /// `FlatButton` sets `isBordered = false` and paints its own fill, border and corner radius
+    /// into its layer from `bounds`, so there is no bezel for the insets to describe. Zeroing them
+    /// makes the painted box exactly the size that was constrained.
+    override var alignmentRectInsets: NSEdgeInsets { NSEdgeInsetsZero }
+
     override var intrinsicContentSize: NSSize {
         var size = super.intrinsicContentSize
         guard size.width > 0 else { return size }
+        // `.btn`'s 8pt × 14.4pt padding is *text* padding. An icon-only button (empty title, as in
+        // the title bar's theme switch and `StatusHeaderView`'s info button) has no text to pad,
+        // and adding it anyway inflates the intrinsic height enough to fight the square size those
+        // call sites constrain — leaving a 24×30 button whose capsule hover renders as a vertical
+        // oval rather than a circle.
+        guard !title.isEmpty else { return size }
         size.width += 14.4 * 2
         size.height += 8 * 2
         return size
@@ -323,9 +446,9 @@ final class FlatSegmentedControl: NSView {
     private let optionFont = NSFont.systemFont(ofSize: 13, weight: .semibold)
     /// Faint capsule track the sliding pill sits inside — without it the control has no visible
     /// footprint in its unselected state, just floating text.
-    private let track = NSView()
+    private let track = ThemedView(frame: .zero)
     /// The sliding accent-filled capsule behind whichever segment is selected.
-    private let selectionPill = NSView()
+    private let selectionPill = ThemedView(frame: .zero)
     private var pillLeading: NSLayoutConstraint?
     private var pillTrailing: NSLayoutConstraint?
     private static let pillInset: CGFloat = 3
@@ -342,14 +465,12 @@ final class FlatSegmentedControl: NSView {
         translatesAutoresizingMaskIntoConstraints = false
         wantsLayer = true
 
-        track.wantsLayer = true
-        track.layer?.backgroundColor = NSColor.labelColor.withAlphaComponent(0.06).cgColor
-        track.translatesAutoresizingMaskIntoConstraints = false
+        // `labelTint`, not `labelColor.withAlphaComponent` — the latter resolves immediately and
+        // would store a fixed dark wash that never flips to a light one.
+        track.fillColor = .labelTint(0.06)
         addSubview(track)
 
-        selectionPill.wantsLayer = true
-        selectionPill.layer?.backgroundColor = NSColor.brandAccent.cgColor
-        selectionPill.translatesAutoresizingMaskIntoConstraints = false
+        selectionPill.fillColor = .brandAccent
         addSubview(selectionPill)
 
         var previousTrailing = leadingAnchor

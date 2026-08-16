@@ -10,8 +10,8 @@ import AppKit
 /// the window" bug — the split view's initial layout was baked in against a not-yet-final frame
 /// with no later pass to correct it. Wrapping it in a real parent view controller fixes that.
 final class PracticeTabViewController: NSViewController {
-    let importActionButton = WindowUI.toolbarActionButton(title: "Import", symbolName: "square.and.arrow.down", target: nil, action: nil)
-    let recordActionButton = WindowUI.toolbarActionButton(title: "Record", symbolName: "record.circle", target: nil, action: nil)
+    let importActionButton = WindowUI.toolbarActionButton(title: "Import", symbolName: "square.and.arrow.down", symbolPointSize: 12, target: nil, action: nil)
+    let recordActionButton = WindowUI.toolbarActionButton(title: "Record", symbolName: "record.circle", symbolPointSize: 12, target: nil, action: nil)
 
     private let splitViewController: PracticeSplitViewController
 
@@ -30,13 +30,19 @@ final class PracticeTabViewController: NSViewController {
         view = root
 
         // `toolbarActionButton`'s default sizing (14pt/.black title + FlatButton's own +28.8w/
-        // +16h padding, plus an unconfigured SF Symbol rendering at its full default point size)
-        // is tuned for a single prominent CTA (e.g. onboarding's "Download Neural Model"), not a
-        // compact action row — left as-is it dwarfs the sidebar/deck below it.
+        // +16h padding) is tuned for a single prominent CTA (e.g. onboarding's "Download Neural
+        // Model"), not a compact action row — left as-is it dwarfs the sidebar/deck below it. The
+        // matching 12pt symbol size is passed at construction, above.
         for button in [importActionButton, recordActionButton] {
             button.pointSize = 12
-            button.image = button.image?.withSymbolConfiguration(.init(pointSize: 12, weight: .medium))
-            button.heightAnchor.constraint(equalToConstant: 26).isActive = true
+            // 32, not 26. `FlatButton` used to inherit `NSButton`'s alignment rect insets, so a
+            // 26pt constraint painted a 33.5pt box — this row's proportions were tuned against
+            // that. Now that the constraint produces the size it says, the number has to be the
+            // one that was always being drawn, or the buttons come out 7.5pt shorter.
+            button.heightAnchor.constraint(equalToConstant: 32).isActive = true
+            // Matches the title bar's Live/Practice pill sitting directly above this row — at the
+            // same 26pt height the two read as one family instead of two button languages.
+            button.cornerStyle = .capsule
         }
 
         let actionRow = Layout.horizontalStack([importActionButton, recordActionButton], spacing: WindowUI.Metrics.rowSpacing)
@@ -45,7 +51,7 @@ final class PracticeTabViewController: NSViewController {
         // (confirmed via direct frame logging: actionRow measured 374pt tall, not ~26pt, exactly
         // filling the gap between the button row's real height and wherever splitView ended up).
         // A hard height, matching the buttons it holds, removes it as a possible slack-absorber.
-        actionRow.heightAnchor.constraint(equalToConstant: 26).isActive = true
+        actionRow.heightAnchor.constraint(equalToConstant: 32).isActive = true
 
         addChild(splitViewController)
         let splitView = splitViewController.view
@@ -53,6 +59,11 @@ final class PracticeTabViewController: NSViewController {
         let pad = WindowUI.Metrics.padding
         Layout.pin(actionRow, to: root, edges: [.leading, .top], insets: NSEdgeInsets(top: WindowUI.Metrics.rowSpacing, left: pad, bottom: 0, right: 0))
         Layout.pin(splitView, to: root, edges: [.leading, .trailing, .bottom])
-        splitView.topAnchor.constraint(equalTo: actionRow.bottomAnchor, constant: WindowUI.Metrics.rowSpacing).isActive = true
+        // 4, not the full 8pt row spacing: both panes below already carry their own top padding
+        // (10pt to the sidebar's search field, 24pt to the deck's content), so a full token gap
+        // here stacks on top of that and reads as a hole under the buttons. Measured, this puts the
+        // buttons 14pt above the clip search field — the spacing the row had before `FlatButton`'s
+        // alignment-rect fix stopped its 33.5pt paint from overlapping the gap.
+        splitView.topAnchor.constraint(equalTo: actionRow.bottomAnchor, constant: 4).isActive = true
     }
 }

@@ -56,6 +56,19 @@ final class ClipSidebarViewController: NSViewController, NSTableViewDataSource, 
         root.onDropFiles = { [weak self] urls in self?.onDropFiles?(urls) }
         view = root
 
+        // The sidebar's translucent background used to come from
+        // `NSSplitViewItem(sidebarWithViewController:)`. That item type assumes the full-height
+        // sidebar pattern — content running up under the title bar — so in a `.fullSizeContentView`
+        // window it reserves title-bar room at its top whether or not it actually sits there.
+        // Measured: 24pt of dead space above the search field, even though `PracticeTabViewController`
+        // places this pane well below the header. `PracticeSplitViewController` now uses a plain
+        // item, and the material moves here, where it can be applied without that assumption.
+        let background = NSVisualEffectView()
+        background.material = .sidebar
+        background.blendingMode = .behindWindow
+        background.state = .followsWindowActiveState
+        Layout.pin(background, to: root)
+
         searchField.placeholderString = "Search clips"
         searchField.target = self
         searchField.action = #selector(searchChanged)

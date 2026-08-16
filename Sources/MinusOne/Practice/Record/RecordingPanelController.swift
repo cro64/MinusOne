@@ -47,9 +47,12 @@ final class RecordingPanelController: NSViewController {
     }
 
     override func loadView() {
-        let root = NSView(frame: NSRect(x: 0, y: 0, width: Self.panelWidth, height: 200))
-        root.wantsLayer = true
-        root.layer?.backgroundColor = NSColor.windowBackgroundColor.cgColor
+        let root = ThemedView(frame: NSRect(x: 0, y: 0, width: Self.panelWidth, height: 200))
+        // `ThemedView` inherits `AutoLayoutView`'s `false` default, which is right for the
+        // constraint-laid-out containers it's normally used for but wrong here: this is a popover's
+        // root view, and `NSPopover` takes its content size from this frame.
+        root.translatesAutoresizingMaskIntoConstraints = true
+        root.fillColor = .windowBackgroundColor
         view = root
 
         let idle = buildIdleContainer()
@@ -160,9 +163,6 @@ final class RecordingPanelController: NSViewController {
 
         liveWaveform.translatesAutoresizingMaskIntoConstraints = false
         liveWaveform.heightAnchor.constraint(equalToConstant: 68).isActive = true
-        liveWaveform.wantsLayer = true
-        liveWaveform.layer?.borderWidth = 1
-        liveWaveform.layer?.borderColor = NSColor.flatDivider.cgColor
         liveWaveform.onDragAutoStop = { [weak self] seconds in
             self?.setAutoStop(seconds: seconds)
         }
@@ -288,48 +288,82 @@ final class RecordingPanelController: NSViewController {
     // MARK: - Layout helpers
 
     private func borderedBox(_ content: NSView) -> NSView {
-        let container = NSView()
-        container.wantsLayer = true
+        let container = ThemedView(stroke: .flatDivider)
         container.layer?.borderWidth = 1
-        container.layer?.borderColor = NSColor.flatDivider.cgColor
         Layout.pin(content, to: container, insets: NSEdgeInsets(top: 12, left: 12, bottom: 12, right: 12))
         return container
     }
 
     private static func makeTimeField() -> NSTextField {
-        let field = NSTextField(string: "00")
+        let field = DividerBorderedTextField(string: "00")
         field.font = .monospacedDigitSystemFont(ofSize: 14, weight: .regular)
         field.textColor = .secondaryLabelColor
         field.alignment = .center
         field.isBordered = false
         field.drawsBackground = true
         field.backgroundColor = .windowBackgroundColor
-        field.wantsLayer = true
-        field.layer?.borderWidth = 1
-        field.layer?.borderColor = NSColor.flatDivider.cgColor
         field.isEnabled = false
         field.constrainSize(width: 44, height: 26)
         return field
     }
 }
 
+/// `NSTextField` with a `flatDivider` layer border. A subclass only because layer borders are
+/// frozen `CGColor`s: a plain `field.layer?.borderColor = …` at build time keeps the appearance it
+/// was built under forever.
+private final class DividerBorderedTextField: NSTextField {
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        wantsLayer = true
+        layer?.borderWidth = 1
+        applyBorderColor()
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        applyBorderColor()
+    }
+
+    private func applyBorderColor() {
+        resolvingEffectiveAppearance {
+            layer?.borderColor = NSColor.flatDivider.cgColor
+        }
+    }
+}
+
 /// Small filled circle — used for the permission-status dot and the pulsing recording dot.
 private final class DotView: NSView {
     var color: NSColor {
-        didSet { layer?.backgroundColor = color.cgColor }
+        didSet { applyColor() }
     }
 
     init(color: NSColor) {
         self.color = color
         super.init(frame: .zero)
         wantsLayer = true
-        layer?.backgroundColor = color.cgColor
         layer?.cornerRadius = 3
+        applyColor()
     }
 
     @available(*, unavailable)
     required init?(coder: NSCoder) {
         fatalError("init(coder:) has not been implemented")
+    }
+
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        applyColor()
+    }
+
+    private func applyColor() {
+        resolvingEffectiveAppearance {
+            layer?.backgroundColor = color.cgColor
+        }
     }
 
     override func layout() {
@@ -352,7 +386,10 @@ private final class DotView: NSView {
 /// Small bordered status pill — the "Not recording" mode tag. Flat (zero corner radius) to match
 /// the rest of the window's chrome instead of `RecordingTheme`'s retired rounded-pill look.
 private final class StatusTagView: NSTextField {
+    private let tagColor: NSColor
+
     init(text: String, color: NSColor) {
+        tagColor = color
         super.init(frame: .zero)
         stringValue = text
         isEditable = false
@@ -363,12 +400,25 @@ private final class StatusTagView: NSTextField {
         textColor = color
         wantsLayer = true
         layer?.borderWidth = 1
-        layer?.borderColor = color.withAlphaComponent(0.4).cgColor
         translatesAutoresizingMaskIntoConstraints = false
+        applyBorderColor()
     }
 
     @available(*, unavailable)
     required init?(coder: NSCoder) {
         fatalError("init(coder:) has not been implemented")
+    }
+
+    /// `textColor` holds the `NSColor` and re-resolves itself; the border is a frozen `CGColor` in
+    /// a layer and doesn't.
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        applyBorderColor()
+    }
+
+    private func applyBorderColor() {
+        resolvingEffectiveAppearance {
+            layer?.borderColor = tagColor.withAlphaComponent(0.4).cgColor
+        }
     }
 }

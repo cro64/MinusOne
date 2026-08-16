@@ -17,6 +17,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var mainWindowController: MainWindowController?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        // Before any window or the menu bar item is built, so nothing gets one frame of the wrong
+        // appearance (and, more importantly, so no layer color is resolved against it).
+        preferences.appearance.apply()
+
         if #available(macOS 14.2, *) {
             ProcessTapSession.destroyStaleAggregates()
         }

@@ -6,8 +6,10 @@ import AppKit
 final class MenuBarPopoverViewController: NSViewController {
     private let statusHeaderContainer = NSView()
     private let statusHeader = StatusHeaderView()
-    private let liveToggle = NSSwitch()
-    private let recordToggle = NSSwitch()
+    // `ToggleSwitchView`, not `NSSwitch`: the on-state has to be the brand coral (REDESIGN.md §6),
+    // and a native switch paints its on-state with the *system* accent color with no tint hook.
+    private let liveToggle = ToggleSwitchView()
+    private let recordToggle = ToggleSwitchView()
     private var contentStack: NSStackView?
 
     private var currentStatus: AudioEngineStatus = .idle
@@ -32,12 +34,12 @@ final class MenuBarPopoverViewController: NSViewController {
     }
 
     private func configureControls() {
-        liveToggle.target = self
-        liveToggle.action = #selector(liveToggleChanged)
+        liveToggle.setAccessibilityLabel("Live")
+        liveToggle.onToggle = { [weak self] _ in self?.onToggleLive?() }
         liveToggle.translatesAutoresizingMaskIntoConstraints = false
 
-        recordToggle.target = self
-        recordToggle.action = #selector(recordToggleChanged)
+        recordToggle.setAccessibilityLabel("Record")
+        recordToggle.onToggle = { [weak self] _ in self?.onToggleRecord?() }
         recordToggle.translatesAutoresizingMaskIntoConstraints = false
         if #unavailable(macOS 14.2) {
             recordToggle.isEnabled = false
@@ -118,9 +120,9 @@ final class MenuBarPopoverViewController: NSViewController {
         setSwitchState(recordToggle, on: isRecording)
     }
 
-    private func setSwitchState(_ toggle: NSSwitch, on: Bool) {
-        guard toggle.state != (on ? .on : .off) else { return }
-        toggle.state = on ? .on : .off
+    private func setSwitchState(_ toggle: ToggleSwitchView, on: Bool) {
+        guard toggle.isOn != on else { return }
+        toggle.isOn = on
     }
 
     private func refreshStatusHeader() {
@@ -148,14 +150,6 @@ final class MenuBarPopoverViewController: NSViewController {
                 ? ("On", .brandAccentDeep, nil)
                 : ("Off", .tertiaryLabelColor, nil)
         }
-    }
-
-    @objc private func liveToggleChanged() {
-        onToggleLive?()
-    }
-
-    @objc private func recordToggleChanged() {
-        onToggleRecord?()
     }
 
     @objc private func openWindow() {

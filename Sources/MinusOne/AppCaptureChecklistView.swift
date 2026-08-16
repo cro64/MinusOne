@@ -8,7 +8,6 @@ import CoreAudio
 final class AppCaptureChecklistView: NSView {
     private enum Layout {
         static let rowHeight: CGFloat = 26
-        static let maxVisibleRows: CGFloat = 4.5
     }
 
     private let preferences: Preferences
@@ -34,14 +33,28 @@ final class AppCaptureChecklistView: NSView {
         fatalError("init(coder:) has not been implemented")
     }
 
+    /// Both the fill and the border derive from system colors that invert between appearances, and
+    /// a layer stores them as frozen `CGColor`s — so they get rewritten here rather than only in
+    /// `configure()`.
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        applyChromeColors()
+    }
+
+    private func applyChromeColors() {
+        resolvingEffectiveAppearance {
+            layer?.backgroundColor = NSColor.controlBackgroundColor.withAlphaComponent(0.5).cgColor
+            layer?.borderColor = NSColor.separatorColor.withAlphaComponent(0.6).cgColor
+        }
+    }
+
     private func configure() {
         translatesAutoresizingMaskIntoConstraints = false
         wantsLayer = true
-        layer?.backgroundColor = NSColor.controlBackgroundColor.withAlphaComponent(0.5).cgColor
         layer?.cornerRadius = 0
         layer?.masksToBounds = true
         layer?.borderWidth = 1
-        layer?.borderColor = NSColor.separatorColor.withAlphaComponent(0.6).cgColor
+        applyChromeColors()
 
         stack.orientation = .vertical
         stack.alignment = .leading
@@ -66,8 +79,22 @@ final class AppCaptureChecklistView: NSView {
         emptyLabel.translatesAutoresizingMaskIntoConstraints = false
         addSubview(emptyLabel)
 
+        // The list never dictates its card's height — it's a scroller, so a short list costs
+        // scrolling, not function. It asks to be as short as one row and stretches into whatever
+        // its card turns out to have. Note this *has* to be a constraint rather than a content
+        // hugging priority: the view has no `intrinsicContentSize`, so hugging on it is inert.
+        //
+        // The previous required `>= 4.5 rows` floor is what made the Capture card 203pt tall and
+        // left ~93pt of dead space in Processing beside it (measured). With the two cards' heights
+        // tied together, the card whose content genuinely needs the room should be the one setting
+        // it, and that's Processing.
+        let preferShortest = heightAnchor.constraint(equalToConstant: Layout.rowHeight)
+        preferShortest.priority = .defaultLow
+        preferShortest.isActive = true
+
         NSLayoutConstraint.activate([
-            heightAnchor.constraint(equalToConstant: Layout.rowHeight * Layout.maxVisibleRows),
+            // A row of list is the hard floor: enough that the control still reads as a list.
+            heightAnchor.constraint(greaterThanOrEqualToConstant: Layout.rowHeight),
             stack.leadingAnchor.constraint(equalTo: scrollView.leadingAnchor),
             stack.trailingAnchor.constraint(equalTo: scrollView.trailingAnchor),
             stack.widthAnchor.constraint(equalTo: scrollView.widthAnchor),

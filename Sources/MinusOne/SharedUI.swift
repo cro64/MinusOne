@@ -36,7 +36,8 @@ enum SharedUI {
         label.textColor = .labelColor
         label.alignment = .center
         label.drawsBackground = true
-        label.backgroundColor = NSColor.controlBackgroundColor.withAlphaComponent(0.92)
+        // Stored on the field, so it has to be a genuinely dynamic color — see `NSColor.derived`.
+        label.backgroundColor = .controlBackgroundTint(0.92)
         label.wantsLayer = true
         label.layer?.cornerRadius = 0
         label.layer?.masksToBounds = true
@@ -49,26 +50,37 @@ enum SharedUI {
 /// Status row: title only. For errors, an info button shows the message on click. Used by both
 /// `LiveTabViewController` (window) and `MenuBarPopoverViewController` (popover).
 final class StatusHeaderView: NSView {
-    /// Fixed row height regardless of which scale the caller otherwise uses — this component
-    /// doesn't derive its size from either `PopoverUI.Metrics` or `WindowUI.Metrics`.
-    private static let height: CGFloat = 20
+    /// How large to render. The status *semantics* — colors, copy, the error info button — are
+    /// identical across surfaces on purpose (the menu bar icon, the popover, and the window all
+    /// have to read as the same state), so this is a scale knob on one component rather than a
+    /// second component. `.hero` exists for the Live tab's status card, which is meant to be
+    /// glanceable from across the room; `.compact` is the original popover-scale row.
+    enum Scale {
+        case compact
+        case hero
+
+        var rowHeight: CGFloat { self == .hero ? 34 : 20 }
+        var dotDiameter: CGFloat { self == .hero ? 14 : 8 }
+        var titlePointSize: CGFloat { self == .hero ? 26 : 13 }
+        var infoPointSize: CGFloat { self == .hero ? 15 : 11 }
+        var infoButtonSize: CGFloat { self == .hero ? 22 : 16 }
+        var dotSpacing: CGFloat { self == .hero ? 12 : 8 }
+    }
 
     // Left as a circle, not squared off — a status dot is an indicator glyph, not one of the
     // box-shaped elements (buttons/panels/rows) the design system's zero-radius tokens target.
-    private let dot = NSView()
+    private let dot = ThemedView(frame: .zero)
     private let titleField = NSTextField(labelWithString: "")
     private let infoButton = FlatButton(title: "", kind: .ghost)
     private var errorDetail: String?
     private var infoPopover: NSPopover?
 
-    override init(frame frameRect: NSRect) {
-        super.init(frame: frameRect)
+    init(scale: Scale = .compact) {
+        super.init(frame: .zero)
 
-        dot.wantsLayer = true
-        dot.layer?.cornerRadius = 4
-        dot.translatesAutoresizingMaskIntoConstraints = false
+        dot.layer?.cornerRadius = scale.dotDiameter / 2
 
-        titleField.font = .systemFont(ofSize: 13, weight: .black) // Archivo-800-equivalent
+        titleField.font = .systemFont(ofSize: scale.titlePointSize, weight: .black) // Archivo-800-equivalent
         titleField.isEditable = false
         titleField.isBordered = false
         titleField.drawsBackground = false
@@ -76,7 +88,7 @@ final class StatusHeaderView: NSView {
         titleField.setContentCompressionResistancePriority(.required, for: .horizontal)
         titleField.translatesAutoresizingMaskIntoConstraints = false
 
-        let config = NSImage.SymbolConfiguration(pointSize: 11, weight: .regular)
+        let config = NSImage.SymbolConfiguration(pointSize: scale.infoPointSize, weight: .regular)
         infoButton.image = NSImage(systemSymbolName: "info.circle", accessibilityDescription: "Error details")?
             .withSymbolConfiguration(config)
         infoButton.imagePosition = .imageOnly
@@ -90,13 +102,13 @@ final class StatusHeaderView: NSView {
         addSubview(titleField)
         addSubview(infoButton)
 
-        dot.constrainSize(width: 8, height: 8)
-        infoButton.constrainSize(width: 16, height: 16)
+        dot.constrainSize(width: scale.dotDiameter, height: scale.dotDiameter)
+        infoButton.constrainSize(width: scale.infoButtonSize, height: scale.infoButtonSize)
         NSLayoutConstraint.activate([
-            heightAnchor.constraint(equalToConstant: Self.height),
+            heightAnchor.constraint(equalToConstant: scale.rowHeight),
             dot.leadingAnchor.constraint(equalTo: leadingAnchor),
             dot.centerYAnchor.constraint(equalTo: centerYAnchor),
-            titleField.leadingAnchor.constraint(equalTo: dot.trailingAnchor, constant: 8),
+            titleField.leadingAnchor.constraint(equalTo: dot.trailingAnchor, constant: scale.dotSpacing),
             titleField.centerYAnchor.constraint(equalTo: centerYAnchor),
             infoButton.leadingAnchor.constraint(equalTo: titleField.trailingAnchor, constant: 4),
             infoButton.centerYAnchor.constraint(equalTo: centerYAnchor)
@@ -114,7 +126,10 @@ final class StatusHeaderView: NSView {
 
         titleField.stringValue = title
         titleField.textColor = indicatorColor == .brandAccentDeep ? .brandAccentDeep : .labelColor
-        dot.layer?.backgroundColor = indicatorColor.cgColor
+        // `fillColor`, not a direct `layer.backgroundColor` write: `brandAccentDeep` and
+        // `tertiaryLabelColor` both resolve differently per appearance, and `ThemedView` re-applies
+        // whichever is current when the appearance changes under a state that isn't changing.
+        dot.fillColor = indicatorColor
 
         let detail = errorDetail?.trimmingCharacters(in: .whitespacesAndNewlines)
         self.errorDetail = (detail?.isEmpty == false) ? detail : nil

@@ -8,6 +8,12 @@ private let unspecifiedAudioStatus = OSStatus(-1)
 final class AudioEngine {
     var onStatusChanged: ((AudioEngineStatus) -> Void)?
 
+    /// Fires on the main queue whenever `activeOutputDevice` or `sampleRate` changes. Device
+    /// switches are already handled internally (`DeviceMonitor` → `scheduleRebuildForDeviceChange`)
+    /// but were previously invisible to the UI, which is why the Live tab never named the device
+    /// it was actually routing through.
+    var onOutputConfigurationChanged: (() -> Void)?
+
     private let preferences: Preferences
     private var neuralPipeline: NeuralSeparationPipeline?
     private var separationModel: AudioSeparationModel?
@@ -38,9 +44,19 @@ final class AudioEngine {
 
     private(set) var isRunning = false
     private(set) var isReductionEnabled = false
-    private var activeOutputDevice: AudioDevice?
+    private(set) var activeOutputDevice: AudioDevice? {
+        didSet {
+            guard oldValue != activeOutputDevice else { return }
+            notifyOutputConfigurationChanged()
+        }
+    }
     private var previousDefaultOutputID: AudioDeviceID?
-    private var sampleRate: Double = 48_000
+    private(set) var sampleRate: Double = 48_000 {
+        didSet {
+            guard oldValue != sampleRate else { return }
+            notifyOutputConfigurationChanged()
+        }
+    }
     private var suppressDeviceRebuild = false
     private var pendingDeviceRebuild: DispatchWorkItem?
     private var lastProcessTapPermissionDenied = false
@@ -513,6 +529,21 @@ final class AudioEngine {
     private func applyReductionIntensity(_ value: Float) {
         neuralPipeline?.mixDSP.targetIntensity.store(value)
         neuralPipeline?.mixDSP.makeupGainDecibels.store(preferences.makeupGainDecibels)
+    }
+
+    /// Latest aligned dry/wet peak pair from the mix stage, or `nil` when no pipeline is running.
+    /// Callers poll this at their own cadence — deliberately no timer here, so nothing ticks while
+    /// the window is closed. `nil` (rather than a zeroed pair) lets the meter decay to silence
+    /// instead of snapping to a flat line.
+    var liveLevels: (dry: Float, wet: Float)? {
+        guard let mixDSP = neuralPipeline?.mixDSP else { return nil }
+        return (mixDSP.dryPeak.load(), mixDSP.wetPeak.load())
+    }
+
+    private func notifyOutputConfigurationChanged() {
+        DispatchQueue.main.async { [onOutputConfigurationChanged] in
+            onOutputConfigurationChanged?()
+        }
     }
 
     private func updateActiveStatus() {
