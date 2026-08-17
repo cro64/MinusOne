@@ -11,7 +11,6 @@ enum AudioEngineStatus: Equatable {
     case passthrough
     case active
     case warmingUp
-    case monoInput
     case permissionRequired(AudioPermissionKind)
     case error(String)
 
@@ -25,8 +24,6 @@ enum AudioEngineStatus: Equatable {
             return "Active — reducing vocals"
         case .warmingUp:
             return "Warming up — neural model loading"
-        case .monoInput:
-            return "Mono input — vocal reduction unavailable"
         case .permissionRequired(.microphone):
             return "Microphone permission required for BlackHole"
         case .permissionRequired(.systemAudioRecording):
@@ -34,11 +31,6 @@ enum AudioEngineStatus: Equatable {
         case .error(let message):
             return message
         }
-    }
-
-    var monoInputTooltip: String? {
-        guard case .monoInput = self else { return nil }
-        return "Mono input — Center Cut unavailable"
     }
 }
 

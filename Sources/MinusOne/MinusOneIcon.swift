@@ -5,6 +5,20 @@ enum MinusOneIcon {
     /// Off: bars with a tall center. On: center collapses to a dot.
     /// App icon: Resources/MinusOne.icon · vector: Resources/MinusOneIcon.svg
 
+    /// Recording is a fully separate glyph — a solid coral dot replacing the waveform
+    /// entirely, not a badge composited on top (REDESIGN.md §2).
+    static func recordingDot(size: CGFloat) -> NSImage {
+        let image = NSImage(size: NSSize(width: size, height: size))
+        image.lockFocus()
+        let diameter = size * 0.62
+        let rect = CGRect(x: (size - diameter) / 2, y: (size - diameter) / 2, width: diameter, height: diameter)
+        NSColor.brandAccent.setFill()
+        NSBezierPath(ovalIn: rect).fill()
+        image.unlockFocus()
+        image.isTemplate = false
+        return image
+    }
+
     static func waveform(size: CGFloat, color: NSColor, isActive: Bool) -> NSImage {
         let image = NSImage(size: NSSize(width: size, height: size))
         image.lockFocus()
@@ -56,6 +70,7 @@ enum MinusOneIcon {
         }
 
         context.restoreGState()
+
         image.unlockFocus()
         // Caller sets isTemplate for idle (system light/dark menu bar tint).
         image.isTemplate = false

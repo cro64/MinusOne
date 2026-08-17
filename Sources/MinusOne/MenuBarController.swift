@@ -4,24 +4,28 @@ final class MenuBarController: NSObject {
 
     private let preferences: Preferences
     private let audioEngine: AudioEngine
+    private let importService: ClipImportService
     private let statusItem: NSStatusItem
-    private let settingsViewController: SettingsPopoverViewController
+    private let settingsViewController: MenuBarPopoverViewController
     private let settingsPanel: NSPanel
 
     private var currentStatus: AudioEngineStatus = .idle
     private var isFilterActive = false
+    private var isRecording = false
+    private var recorderBox: Any?
     private var dismissMonitor: Any?
     private var localDismissMonitor: Any?
     private var appearanceObserver: NSObjectProtocol?
 
-    init(preferences: Preferences, audioEngine: AudioEngine) {
+    var onOpenPracticeMode: (() -> Void)?
+    var onClipRecorded: ((PracticeClip) -> Void)?
+
+    init(preferences: Preferences, audioEngine: AudioEngine, importService: ClipImportService) {
         self.preferences = preferences
         self.audioEngine = audioEngine
+        self.importService = importService
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
-        settingsViewController = SettingsPopoverViewController(
-            preferences: preferences,
-            audioEngine: audioEngine
-        )
+        settingsViewController = MenuBarPopoverViewController()
         settingsPanel = Self.makeSettingsPanel()
         super.init()
         _ = settingsViewController.view
@@ -47,13 +51,10 @@ final class MenuBarController: NSObject {
     func updateStatus(_ status: AudioEngineStatus) {
         currentStatus = status
         isFilterActive = audioEngine.isVocalReductionActive
-        if let button = statusItem.button {
+        if let button = statusItem.button, !isRecording {
             var text = status.displayText
             if let backend = audioEngine.activeCaptureBackend {
                 text += " — \(backend.displayName)"
-            }
-            if let monoTooltip = status.monoInputTooltip {
-                text = monoTooltip
             }
             button.toolTip = text
         }
@@ -61,11 +62,68 @@ final class MenuBarController: NSObject {
         settingsViewController.updateStatusDisplay(status, isFilterActive: isFilterActive)
     }
 
-    func performToggleWithOnboarding() {
-        OnboardingController.showIfNeeded(
-            preferences: preferences,
-            captureBackend: CaptureBackend.preferred
+    // MARK: - Record toggle
+
+    @available(macOS 14.2, *)
+    private var recorder: SystemAudioRecorder {
+        if let existing = recorderBox as? SystemAudioRecorder { return existing }
+        let recorder = SystemAudioRecorder()
+        recorderBox = recorder
+        return recorder
+    }
+
+    private func performRecordToggle() {
+        guard #available(macOS 14.2, *) else { return }
+        if isRecording {
+            stopRecording()
+        } else {
+            startRecording()
+        }
+    }
+
+    @available(macOS 14.2, *)
+    private func startRecording() {
+        recorder.startRecording { [weak self] result in
+            guard let self else { return }
+            switch result {
+            case .success:
+                self.isRecording = true
+                self.updateIcon()
+                self.settingsViewController.updateRecordingState(true)
+            case .failure(let error):
+                AppLogger.shared.error("Menu bar record failed to start: \(error.localizedDescription)")
+                self.settingsViewController.updateRecordingState(false)
+            }
+        }
+    }
+
+    @available(macOS 14.2, *)
+    private func stopRecording() {
+        isRecording = false
+        updateIcon()
+        settingsViewController.updateRecordingState(false)
+
+        guard let url = recorder.stopRecording() else { return }
+        importService.importFile(
+            at: url,
+            onImported: { [weak self] clip in self?.onClipRecorded?(clip) },
+            onProgress: { [weak self] clip in self?.onClipRecorded?(clip) },
+            onFailure: { error in
+                AppLogger.shared.error("Menu bar recorded clip failed to import: \(error.localizedDescription)")
+            }
         )
+    }
+
+    /// Live is either off or Neural now — there's no fallback processing path (REDESIGN.md §5).
+    /// If onboarding hasn't run, or the model isn't installed, this routes into the window's Live
+    /// tab (where the model-required gate + download CTA live) instead of silently toggling a
+    /// pipeline that has nothing to do.
+    func performToggleWithOnboarding() {
+        guard preferences.hasCompletedOnboarding, audioEngine.isNeuralSeparationAvailable else {
+            closeSettings()
+            onOpenPracticeMode?()
+            return
+        }
         audioEngine.toggleReduction()
         updateStatus(audioEngine.status)
     }
@@ -99,12 +157,19 @@ final class MenuBarController: NSObject {
     }
 
     private func configureSettingsCallbacks() {
-        settingsViewController.onSettingsChanged = { [weak self] in
-            self?.updateIcon()
+        settingsViewController.onToggleLive = { [weak self] in
+            self?.performToggleWithOnboarding()
+        }
+        settingsViewController.onToggleRecord = { [weak self] in
+            self?.performRecordToggle()
         }
         settingsViewController.onQuit = { [weak self] in
             self?.closeSettings()
             NSApp.terminate(nil)
+        }
+        settingsViewController.onOpenWindow = { [weak self] in
+            self?.closeSettings()
+            self?.onOpenPracticeMode?()
         }
         settingsViewController.onPreferredSizeChange = { [weak self] size in
             guard let self else { return }
@@ -119,6 +184,15 @@ final class MenuBarController: NSObject {
         guard let button = statusItem.button else { return }
 
         let size: CGFloat = 18
+
+        if isRecording {
+            // Solid coral dot always wins over whatever Live is doing underneath (REDESIGN.md §2).
+            button.image = MinusOneIcon.recordingDot(size: size)
+            button.toolTip = "Recording — \(liveStatusPhrase())"
+            button.contentTintColor = nil
+            return
+        }
+
         let color: NSColor
         let usesTemplate: Bool
 
@@ -131,11 +205,8 @@ final class MenuBarController: NSObject {
         } else if case .warmingUp = currentStatus {
             color = .systemCyan
             usesTemplate = false
-        } else if case .monoInput = currentStatus {
-            color = .systemYellow
-            usesTemplate = false
         } else if isFilterActive {
-            color = .controlAccentColor
+            color = .brandAccent
             usesTemplate = false
         } else {
             // Black mask + template → AppKit tints for light/dark menu bar.
@@ -147,6 +218,19 @@ final class MenuBarController: NSObject {
         image.isTemplate = usesTemplate
         button.image = image
         button.contentTintColor = nil
+    }
+
+    private func liveStatusPhrase() -> String {
+        switch currentStatus {
+        case .error:
+            return "Error"
+        case .permissionRequired:
+            return "Permission needed"
+        case .warmingUp:
+            return "Warming up"
+        default:
+            return isFilterActive ? "Live on" : "Live off"
+        }
     }
 
     @objc private func statusItemClicked(_ sender: NSStatusBarButton) {
@@ -167,8 +251,8 @@ final class MenuBarController: NSObject {
         }
 
         _ = settingsViewController.view
-        settingsViewController.reloadFromPreferences()
         settingsViewController.updateStatusDisplay(currentStatus, isFilterActive: isFilterActive)
+        settingsViewController.updateRecordingState(isRecording)
         settingsViewController.sizeToFitContent()
 
         positionSettingsPanel(relativeTo: button)
@@ -208,7 +292,6 @@ final class MenuBarController: NSObject {
         }
         settingsPanel.orderOut(nil)
         stopDismissMonitors()
-        settingsViewController.reloadFromPreferences()
     }
 
     private func startDismissMonitors() {
