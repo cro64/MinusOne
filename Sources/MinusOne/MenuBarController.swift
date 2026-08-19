@@ -11,6 +11,9 @@ final class MenuBarController: NSObject {
 
     private var currentStatus: AudioEngineStatus = .idle
     private var isFilterActive = false
+    /// Mirrors the shared recorder's state rather than owning it. Kept as a plain stored bool
+    /// because `updateIcon()` reads it and isn't gated on macOS 14.2; `AppDelegate` pushes every
+    /// change here through `updateRecordingState(_:)`, including recordings the window started.
     private var isRecording = false
     private var recorderBox: Any?
     private var dismissMonitor: Any?
@@ -64,12 +67,24 @@ final class MenuBarController: NSObject {
 
     // MARK: - Record toggle
 
+    /// Injected by `AppDelegate` at launch — the menu bar no longer builds its own recorder.
     @available(macOS 14.2, *)
-    private var recorder: SystemAudioRecorder {
-        if let existing = recorderBox as? SystemAudioRecorder { return existing }
-        let recorder = SystemAudioRecorder()
+    func attachRecorder(_ recorder: ClipRecorder) {
         recorderBox = recorder
-        return recorder
+    }
+
+    /// Called by `AppDelegate` for every recording start/stop, wherever it originated, so the icon
+    /// and the popover's toggle stay truthful about a take the window kicked off.
+    func updateRecordingState(_ recording: Bool) {
+        guard isRecording != recording else { return }
+        isRecording = recording
+        updateIcon()
+        settingsViewController.updateRecordingState(recording)
+    }
+
+    @available(macOS 14.2, *)
+    private var recorder: ClipRecorder? {
+        recorderBox as? ClipRecorder
     }
 
     private func performRecordToggle() {
@@ -83,13 +98,16 @@ final class MenuBarController: NSObject {
 
     @available(macOS 14.2, *)
     private func startRecording() {
-        recorder.startRecording { [weak self] result in
+        guard let recorder else { return }
+        // Same source the record page uses — a mic take started from the menu bar shouldn't
+        // silently fall back to system audio.
+        recorder.startRecording(source: preferences.recordingSource) { [weak self] result in
             guard let self else { return }
             switch result {
             case .success:
-                self.isRecording = true
-                self.updateIcon()
-                self.settingsViewController.updateRecordingState(true)
+                // `isRecording`/`updateIcon` are driven by the shared recorder's state callback,
+                // which has already fired by the time this completion runs.
+                break
             case .failure(let error):
                 AppLogger.shared.error("Menu bar record failed to start: \(error.localizedDescription)")
                 self.settingsViewController.updateRecordingState(false)
@@ -99,11 +117,7 @@ final class MenuBarController: NSObject {
 
     @available(macOS 14.2, *)
     private func stopRecording() {
-        isRecording = false
-        updateIcon()
-        settingsViewController.updateRecordingState(false)
-
-        guard let url = recorder.stopRecording() else { return }
+        guard let url = recorder?.stopRecording() else { return }
         importService.importFile(
             at: url,
             onImported: { [weak self] clip in self?.onClipRecorded?(clip) },

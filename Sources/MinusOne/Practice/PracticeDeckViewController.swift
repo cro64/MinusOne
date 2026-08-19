@@ -101,7 +101,19 @@ final class PracticeDeckViewController: NSViewController {
         )
         content.setCustomSpacing(4, after: titleLabel)
         content.setCustomSpacing(4, after: statusLabel)
+
+        // `.leading`-aligned stacks pin their arranged subviews' leading edge and nothing else —
+        // the same trap `WindowUI.section` documents. `tempoRow` got away with it because it *is* an
+        // NSStackView holding a low-hugging NSSlider, so its own arrangement let it fill; each
+        // `MixerRowView` is a plain NSView, which to this stack is an opaque box that gets its
+        // fitting width. Measured before this chain: tempo slider 556.5pt, every stem fader stuck at
+        // 140pt — exactly its `greaterThanOrEqualToConstant` floor, in a 671pt-wide pane.
         waveformView.widthAnchor.constraint(equalTo: content.widthAnchor).isActive = true
+        tempoRow.widthAnchor.constraint(equalTo: content.widthAnchor).isActive = true
+        mixerStack.widthAnchor.constraint(equalTo: content.widthAnchor).isActive = true
+        for row in mixerViews {
+            row.widthAnchor.constraint(equalTo: mixerStack.widthAnchor).isActive = true
+        }
 
         let pad = WindowUI.Metrics.padding
         Layout.pin(content, to: view, edges: [.top, .leading, .trailing], insets: NSEdgeInsets(top: pad, left: pad, bottom: 0, right: pad))

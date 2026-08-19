@@ -15,6 +15,7 @@ final class Preferences {
         static let captureScope = "captureScope"
         static let selectedAppBundleIDs = "selectedAppBundleIDs"
         static let appearance = "appearance"
+        static let recordingSource = "recordingSource"
     }
 
     private let defaults: UserDefaults
@@ -31,7 +32,8 @@ final class Preferences {
             Key.separationModelVariant: SeparationModelVariant.balanced.rawValue,
             Key.captureScope: CaptureScope.allApps.rawValue,
             Key.selectedAppBundleIDs: [String](),
-            Key.appearance: AppAppearance.system.rawValue
+            Key.appearance: AppAppearance.system.rawValue,
+            Key.recordingSource: RecordingSource.systemAudio.storedValue
         ])
     }
 
@@ -69,6 +71,14 @@ final class Preferences {
             return variant
         }
         set { defaults.set(newValue.rawValue, forKey: Key.separationModelVariant) }
+    }
+
+    /// Where Practice recordings are captured from. Deliberately *not* shared with Live's capture
+    /// settings: Live is always a system-audio path, and recording a mic take shouldn't change what
+    /// vocal reduction is listening to.
+    var recordingSource: RecordingSource {
+        get { RecordingSource(storedValue: defaults.string(forKey: Key.recordingSource)) }
+        set { defaults.set(newValue.storedValue, forKey: Key.recordingSource) }
     }
 
     var captureScope: CaptureScope {

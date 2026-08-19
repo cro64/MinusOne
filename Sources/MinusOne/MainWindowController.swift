@@ -13,6 +13,17 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         case practice = 1
     }
 
+    /// What the window is currently showing. `Tab` alone was enough while the two tabs were the
+    /// only content, but onboarding and now the Record page are *takeovers*: they hide the
+    /// Live/Practice switch and own the whole content area. Tracking them here rather than as ad
+    /// hoc booleans is what keeps `updateLiveStatus` — which fires on every engine status change,
+    /// from outside any of this — from re-showing tab chrome on top of a takeover page.
+    private enum Page: Equatable {
+        case tab(Tab)
+        case onboarding
+        case record
+    }
+
     private let preferences: Preferences
     private let audioEngine: AudioEngine
 
@@ -27,6 +38,14 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
     /// traffic lights float over the content rather than sitting in a strip of their own, so this
     /// has to stay tall enough to clear them — they occupy roughly the top 20pt.
     private static let headerHeight: CGFloat = 38
+
+    /// Leading inset for the header's `<`. `headerRow`'s leading edge is not free space — with
+    /// `.fullSizeContentView` the traffic lights float inside it. Measured on a window built with
+    /// this exact style mask: close/miniaturize/zoom are 14×14 at x=9/32/55, so the cluster ends at
+    /// x=69, and vertically they sit 9pt from the top, which a 24pt button centered in a 38pt
+    /// header overlaps. 80 clears the zoom button by 11pt. It does *not* line up with the 24pt
+    /// content padding below — nothing can, on this edge.
+    private static let backButtonLeadingInset: CGFloat = 80
 
     private let contentContainer = ThemedView(fill: .windowBackgroundColor)
     private let contentRootViewController = NSViewController()
@@ -43,11 +62,15 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
     /// of the Live/Practice switch rather than inside a tab, since the theme applies to the whole
     /// app and shouldn't be reachable from only one of the two tabs.
     private let appearanceButton = FlatButton(title: "", kind: .ghost)
+    /// Leading-edge `<`. Only visible on takeover pages, where there's no tab switch to leave by.
+    private let backButton = FlatButton(title: "", kind: .ghost)
+    private var currentPage: Page = .tab(.live)
+    /// The tab to return to when a takeover page is dismissed.
     private var currentTab: Tab = .live
     private var onboardingViewController: OnboardingViewController?
 
-    private var systemAudioRecorderBox: Any?
-    private var recordingPopover: NSPopover?
+    private var clipRecorderBox: Any?
+    private var recordPageViewControllerBox: Any?
 
     var onWindowClosed: (() -> Void)?
 
@@ -135,7 +158,10 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
     func updateLiveStatus(_ status: AudioEngineStatus, isFilterActive: Bool) {
         liveViewController.updateStatusDisplay(status, isFilterActive: isFilterActive)
         liveStatusDot.fillColor = isFilterActive ? .brandAccentDeep : .tertiaryLabelColor
-        liveStatusDot.isHidden = currentTab != .practice
+        // Gated on the whole page, not just the tab. This fires on every engine status change from
+        // outside the navigation, and reading `currentTab` alone would pop the dot back up on top
+        // of a takeover page that had deliberately hidden it.
+        liveStatusDot.isHidden = currentPage != .tab(.practice)
     }
 
     func windowShouldClose(_ sender: NSWindow) -> Bool {
@@ -159,19 +185,28 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
             self?.finishOnboarding()
         }
         onboardingViewController = onboarding
-        segmentedControl.isHidden = true
-        liveStatusDot.isHidden = true
         window?.toolbar = nil
 
+        // No back affordance: onboarding is the one takeover you can't leave without finishing it.
+        currentPage = .onboarding
+        applyHeaderChrome(showsBack: false)
         setContent(onboarding)
         return true
     }
 
     private func finishOnboarding() {
         onboardingViewController = nil
-        segmentedControl.isHidden = false
         liveViewController.reloadFromPreferences()
         showTab(.live)
+    }
+
+    /// Single place that decides which header controls a page gets, so the two takeovers
+    /// (onboarding, Record) can't drift apart on what they hide.
+    private func applyHeaderChrome(showsBack: Bool) {
+        let isTab = !showsBack && currentPage != .onboarding
+        backButton.isHidden = !showsBack
+        segmentedControl.isHidden = !isTab
+        liveStatusDot.isHidden = currentPage != .tab(.practice)
     }
 
     /// Reflects a clip recorded (or still separating) via the menu bar's Record toggle into the
@@ -191,6 +226,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         liveStatusDot.isHidden = true
 
         configureAppearanceButton()
+        configureBackButton()
 
         // Theme switch first, then the dot, then the switch itself. The dot annotates the
         // Live/Practice control (it reports that Live is still running while Practice is showing),
@@ -210,11 +246,14 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         // `NSTitlebarAccessoryViewController`'s clip view required is gone with it.
         let cluster = Layout.horizontalStack([appearanceButton, liveStatusDot, segmentedControl], spacing: 8)
         headerRow.addSubview(cluster)
+        headerRow.addSubview(backButton)
         NSLayoutConstraint.activate([
             // Trailing-aligned, matching the padding the tab content below uses, so the switch
             // lines up with the right edge of the Live tab's card grid.
             cluster.trailingAnchor.constraint(equalTo: headerRow.trailingAnchor, constant: -WindowUI.Metrics.padding),
-            cluster.centerYAnchor.constraint(equalTo: headerRow.centerYAnchor)
+            cluster.centerYAnchor.constraint(equalTo: headerRow.centerYAnchor),
+            backButton.leadingAnchor.constraint(equalTo: headerRow.leadingAnchor, constant: Self.backButtonLeadingInset),
+            backButton.centerYAnchor.constraint(equalTo: headerRow.centerYAnchor)
         ])
 
         Layout.pin(headerRow, to: contentContainer, edges: [.leading, .trailing, .top])
@@ -246,6 +285,36 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         appearanceButton.setAccessibilityValue(appearance.displayName)
     }
 
+    /// Same recipe as `appearanceButton` — capsule ghost, secondary tint, 24×24 — so the `<` reads
+    /// as title bar chrome rather than as an action inside the page it sits above.
+    private func configureBackButton() {
+        backButton.cornerStyle = .capsule
+        backButton.imagePosition = .imageOnly
+        backButton.imageScaling = .scaleProportionallyDown
+        backButton.textColorOverride = .secondaryLabelColor
+        backButton.image = NSImage(systemSymbolName: "chevron.left", accessibilityDescription: nil)?
+            .withSymbolConfiguration(.init(pointSize: 12, weight: .semibold))
+        backButton.setAccessibilityLabel("Back")
+        backButton.toolTip = "Back"
+        backButton.constrainSize(width: 24, height: 24)
+        backButton.isHidden = true
+        backButton.target = self
+        backButton.action = #selector(backButtonClicked)
+    }
+
+    @objc private func backButtonClicked() {
+        showTab(currentTab)
+    }
+
+    /// Escape leaves a takeover page, same as the `<`. Handled here rather than on the page's own
+    /// view controller because the window controller is reliably in the responder chain even when
+    /// the first responder is the window itself (nothing inside the page focused). Recording is
+    /// deliberately not stopped — leaving the page and ending the take are different intentions.
+    override func cancelOperation(_ sender: Any?) {
+        guard !backButton.isHidden else { return }
+        backButtonClicked()
+    }
+
     @objc private func appearanceButtonClicked() {
         let appearance = preferences.appearance.next
         preferences.appearance = appearance
@@ -262,8 +331,9 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
 
     private func showTab(_ tab: Tab) {
         currentTab = tab
+        currentPage = .tab(tab)
         segmentedControl.selectedSegment = tab.rawValue
-        liveStatusDot.isHidden = tab != .practice
+        applyHeaderChrome(showsBack: false)
 
         switch tab {
         case .live:
@@ -313,11 +383,12 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         importActionButton.action = #selector(importButtonClicked)
         recordActionButton.target = self
         recordActionButton.action = #selector(recordButtonClicked(_:))
+        practiceTabViewController.recordElapsedButton.target = self
+        practiceTabViewController.recordElapsedButton.action = #selector(recordElapsedClicked)
         if #unavailable(macOS 14.2) {
             recordActionButton.isEnabled = false
             recordActionButton.toolTip = "Recording system audio requires macOS 14.2 or later"
         }
-
     }
 
     @objc private func importButtonClicked() {
@@ -327,30 +398,89 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         }
     }
 
+    // MARK: - Record page
+
+    /// Injected by `AppDelegate`, which owns the app's one recorder and shares it with the menu bar.
     @available(macOS 14.2, *)
-    private var systemAudioRecorder: SystemAudioRecorder {
-        if let existing = systemAudioRecorderBox as? SystemAudioRecorder { return existing }
-        let recorder = SystemAudioRecorder()
-        systemAudioRecorderBox = recorder
-        return recorder
+    func attachRecorder(_ recorder: ClipRecorder) {
+        clipRecorderBox = recorder
+        // The window can be built while a menu-bar recording is already running, so the toolbar
+        // starts from the recorder's state rather than assuming idle.
+        practiceTabViewController.setRecordingState(recorder.isRecording)
+        if recorder.isRecording {
+            practiceTabViewController.updateRecordingElapsed(recorder.elapsedSeconds())
+        }
+    }
+
+    @available(macOS 14.2, *)
+    private var clipRecorder: ClipRecorder? {
+        clipRecorderBox as? ClipRecorder
+    }
+
+    @available(macOS 14.2, *)
+    private var recordPageViewController: RecordPageViewController? {
+        if let existing = recordPageViewControllerBox as? RecordPageViewController { return existing }
+        guard let clipRecorder else { return nil }
+        let page = RecordPageViewController(recorder: clipRecorder, preferences: preferences) { [weak self] url in
+            guard let self else { return }
+            // Finishing a take — by Stop or by auto-stop — ends the session, so it returns to the
+            // library the clip just landed in. This is what the popover's `performClose` did.
+            self.showTab(.practice)
+            self.handleImport(url: url)
+        }
+        recordPageViewControllerBox = page
+        return page
+    }
+
+    /// Forwarded from `AppDelegate` for every recording start/stop, whichever surface caused it.
+    func updateRecordingState(_ recording: Bool) {
+        practiceTabViewController.setRecordingState(recording)
+        if #available(macOS 14.2, *) {
+            (recordPageViewControllerBox as? RecordPageViewController)?.recordingStateChanged(recording)
+        }
+    }
+
+    /// Forwarded from `AppDelegate` off the recorder's ~10Hz progress callback. Both surfaces are
+    /// fed unconditionally — the Practice toolbar's readout guards on its own visibility, and the
+    /// record page's on being loaded — so navigating between them never leaves one stale.
+    func updateRecordingProgress(peaks: [Float], elapsed: Double) {
+        practiceTabViewController.updateRecordingElapsed(elapsed)
+        if #available(macOS 14.2, *) {
+            (recordPageViewControllerBox as? RecordPageViewController)?.updateProgress(peaks: peaks, elapsed: elapsed)
+        }
     }
 
     @objc private func recordButtonClicked(_ sender: Any) {
         guard #available(macOS 14.2, *) else { return }
-        let anchorView = (sender as? NSView) ?? practiceTabViewController.recordActionButton
-
-        let panel = RecordingPanelController(recorder: systemAudioRecorder) { [weak self] url in
-            self?.handleImport(url: url)
-            self?.recordingPopover?.performClose(nil)
+        guard let clipRecorder else {
+            // Only reachable if `attachRecorder` was never called — a wiring mistake, not a state
+            // the user can get into. Logged rather than silently swallowed, because the symptom is
+            // an inert Record button with nothing else to go on.
+            AppLogger.shared.error("Record button clicked with no recorder attached")
+            return
         }
-        let popover = NSPopover()
-        popover.contentViewController = panel
-        popover.behavior = .transient
-        // Previously pinned to `.darkAqua`. That predated the app having any appearance story at
-        // all; now that it does, a hard-coded dark popover is the one surface that would ignore
-        // both the system setting and the user's own Light/Dark choice. Left unset so it inherits.
-        popover.show(relativeTo: anchorView.bounds, of: anchorView, preferredEdge: .maxY)
-        recordingPopover = popover
+        // Doubles as Stop once a take is running: navigating back here doesn't end the recording,
+        // so this button is the only stop control on the Practice page.
+        if clipRecorder.isRecording {
+            if let url = clipRecorder.stopRecording() {
+                handleImport(url: url)
+            }
+            return
+        }
+        showRecordPage()
+    }
+
+    @objc private func recordElapsedClicked() {
+        guard #available(macOS 14.2, *) else { return }
+        showRecordPage()
+    }
+
+    @available(macOS 14.2, *)
+    private func showRecordPage() {
+        guard let page = recordPageViewController else { return }
+        currentPage = .record
+        applyHeaderChrome(showsBack: true)
+        setContent(page)
     }
 
     private func handleImport(url: URL) {

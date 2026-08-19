@@ -6,7 +6,7 @@ import AppKit
 /// mixed output (what you do hear). The gap between them *is* the vocal being removed.
 ///
 /// Drawing follows `LiveWaveformView`'s approach (bucketed peaks → `NSBezierPath`) but is a separate
-/// view rather than a reuse: that one is bound to `SystemAudioRecorder`'s 0.1s recording buckets and
+/// view rather than a reuse: that one is bound to `ClipRecorder`'s 0.1s recording buckets and
 /// carries an auto-stop marker and recording tint that mean nothing here.
 final class LiveLevelMeterView: NSView {
     private enum Metrics {

@@ -16,6 +16,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private lazy var practicePlaybackEngine = PracticePlaybackEngine()
     private var mainWindowController: MainWindowController?
 
+    /// One recorder for the whole app. The menu bar's Record toggle and the window's Record page
+    /// used to build one each, which was harmless only while the window's copy lived inside a
+    /// transient popover that nothing else observed. Now that the Practice toolbar shows a Stop
+    /// button for whatever recording is in flight, two recorders would mean a menu-bar-started
+    /// take is invisible to the window — and that both could run against the same aggregate device
+    /// at once. `Any?` because a stored property can't carry `@available`.
+    private var clipRecorderBox: Any?
+
     func applicationDidFinishLaunching(_ notification: Notification) {
         // Before any window or the menu bar item is built, so nothing gets one frame of the wrong
         // appearance (and, more importantly, so no layer color is resolved against it).
@@ -31,6 +39,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             audioEngine: audioEngine,
             importService: practiceImportService
         )
+        if #available(macOS 14.2, *) {
+            menuBarController?.attachRecorder(clipRecorder)
+            configureRecorderFanOut()
+        }
         audioEngine.onStatusChanged = { [weak self] status in
             guard let self else { return }
             self.menuBarController?.updateStatus(status)
@@ -104,6 +116,29 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         restoreSessionIfNeeded()
     }
 
+    @available(macOS 14.2, *)
+    private var clipRecorder: ClipRecorder {
+        if let existing = clipRecorderBox as? ClipRecorder { return existing }
+        let recorder = ClipRecorder()
+        clipRecorderBox = recorder
+        return recorder
+    }
+
+    /// Both recorder callbacks are single-assignment closures, so they're claimed once here and
+    /// forwarded, rather than being re-assigned by whichever surface happens to appear last.
+    /// The window is built lazily and torn down on close, so these have to survive it not existing.
+    @available(macOS 14.2, *)
+    private func configureRecorderFanOut() {
+        clipRecorder.onRecordingStateChanged = { [weak self] isRecording in
+            guard let self else { return }
+            self.menuBarController?.updateRecordingState(isRecording)
+            self.mainWindowController?.updateRecordingState(isRecording)
+        }
+        clipRecorder.onProgress = { [weak self] peaks, elapsed in
+            self?.mainWindowController?.updateRecordingProgress(peaks: peaks, elapsed: elapsed)
+        }
+    }
+
     private func openMainWindow(tab: MainWindowController.Tab) {
         if mainWindowController == nil {
             let controller = MainWindowController(
@@ -113,6 +148,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 importService: practiceImportService,
                 playbackEngine: practicePlaybackEngine
             )
+            if #available(macOS 14.2, *) {
+                controller.attachRecorder(clipRecorder)
+            }
             controller.onWindowClosed = { [weak self] in
                 NSApp.setActivationPolicy(.accessory)
                 self?.mainWindowController = nil
