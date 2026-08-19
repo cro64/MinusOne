@@ -134,6 +134,9 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         configurePracticeTab()
 
         sidebar.onSelectClip = { [weak self] clip in self?.deck.show(clip: clip) }
+        // Renaming is available on both sides of the split, so each side has to tell the other.
+        sidebar.onRenameClip = { [weak self] clip in self?.deck.applyRenamedClip(clip) }
+        deck.onClipRenamed = { [weak self] clip in self?.sidebar.upsertClip(clip) }
         sidebar.onDropFiles = { [weak self] urls in
             urls.forEach { self?.handleImport(url: $0) }
         }

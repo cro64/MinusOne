@@ -12,7 +12,7 @@ final class AppCaptureChecklistView: NSView {
 
     private let preferences: Preferences
     private let audioEngine: AudioEngine
-    private let stack = NSStackView()
+    private let stack = FlippedStackView()
     private let scrollView = NSScrollView()
     private let emptyLabel = NSTextField(wrappingLabelWithString: "No audio apps found — open one and play a track.")
 
@@ -61,11 +61,12 @@ final class AppCaptureChecklistView: NSView {
         stack.spacing = 0
         stack.translatesAutoresizingMaskIntoConstraints = false
 
-        // `stack` is the scroll view's documentView directly, not wrapped in a plain NSView.
-        // NSStackView.isFlipped is true, so its (0,0) is the visual top — matching the clip
-        // view's default unscrolled origin, which shows the top of the content. A plain NSView
-        // wrapper is *not* flipped by default, so the clip view's default origin showed the
-        // *bottom* of the list instead, clipping the first row under the row above it.
+        // `stack` is the scroll view's documentView directly, not wrapped in a plain NSView —
+        // and it's flipped, which it has to be explicitly: `NSStackView.isFlipped` is *false*
+        // (measured), so a stock one puts (0,0) at the visual bottom. A clip view's default
+        // unscrolled origin is (0,0), so the list opened showing its **last** row with the rest
+        // scrolled off above — the picker looked stuck at the end of the alphabet. Flipped,
+        // (0,0) is the top and an unscrolled list starts at the first app.
         scrollView.documentView = stack
         scrollView.hasVerticalScroller = true
         scrollView.autohidesScrollers = true
@@ -79,25 +80,32 @@ final class AppCaptureChecklistView: NSView {
         emptyLabel.translatesAutoresizingMaskIntoConstraints = false
         addSubview(emptyLabel)
 
-        // The list never dictates its card's height — it's a scroller, so a short list costs
-        // scrolling, not function. It asks to be as short as one row and stretches into whatever
-        // its card turns out to have. Note this *has* to be a constraint rather than a content
+        // How tall the list asks to be. Note this *has* to be a constraint rather than a content
         // hugging priority: the view has no `intrinsicContentSize`, so hugging on it is inert.
         //
-        // The previous required `>= 4.5 rows` floor is what made the Capture card 203pt tall and
-        // left ~93pt of dead space in Processing beside it (measured). With the two cards' heights
-        // tied together, the card whose content genuinely needs the room should be the one setting
-        // it, and that's Processing.
-        let preferShortest = heightAnchor.constraint(equalToConstant: Layout.rowHeight)
-        preferShortest.priority = .defaultLow
-        preferShortest.isActive = true
+        // Breakable, so the card can still squeeze it, but no longer the single row it used to
+        // ask for. That one-row preference was meant to let the card decide, except nothing else
+        // in the card ever pulled it taller: the picker settled at exactly 26pt in the shipping
+        // window (measured over the running app) — a sliver showing one row of a 16-app list,
+        // which is not a picker. Five rows is what it takes to choose between apps rather than
+        // scroll a keyhole; the Live tab's hero meter, which hugs at priority 1 and had ~436pt,
+        // is what gives up the room.
+        let preferredHeight = heightAnchor.constraint(equalToConstant: Layout.rowHeight * 5)
+        preferredHeight.priority = .defaultLow
+        preferredHeight.isActive = true
 
         NSLayoutConstraint.activate([
             // A row of list is the hard floor: enough that the control still reads as a list.
             heightAnchor.constraint(greaterThanOrEqualToConstant: Layout.rowHeight),
-            stack.leadingAnchor.constraint(equalTo: scrollView.leadingAnchor),
-            stack.trailingAnchor.constraint(equalTo: scrollView.trailingAnchor),
-            stack.widthAnchor.constraint(equalTo: scrollView.widthAnchor),
+            // Tied to the clip view, not to `scrollView` itself. A legacy (always-visible)
+            // vertical scroller takes its 17pt out of the clip view's width while the scroll
+            // view stays the same, so measuring against the scroll view made every row 17pt
+            // wider than the visible area — the list scrolled sideways for no reason
+            // (measured: document 314pt inside a 297pt clip view). The clip view is the width
+            // the rows are actually seen at, so the app names truncate instead.
+            stack.leadingAnchor.constraint(equalTo: scrollView.contentView.leadingAnchor),
+            stack.trailingAnchor.constraint(equalTo: scrollView.contentView.trailingAnchor),
+            stack.widthAnchor.constraint(equalTo: scrollView.contentView.widthAnchor),
             emptyLabel.centerXAnchor.constraint(equalTo: centerXAnchor),
             emptyLabel.centerYAnchor.constraint(equalTo: centerYAnchor),
             emptyLabel.leadingAnchor.constraint(greaterThanOrEqualTo: leadingAnchor, constant: 8),
@@ -129,6 +137,12 @@ final class AppCaptureChecklistView: NSView {
             row.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
         }
     }
+}
+
+/// Vertical stack whose origin is its top, so it can be a scroll view's document view directly
+/// without the content reading upside-down. See `configure()`.
+private final class FlippedStackView: NSStackView {
+    override var isFlipped: Bool { true }
 }
 
 @available(macOS 14.2, *)

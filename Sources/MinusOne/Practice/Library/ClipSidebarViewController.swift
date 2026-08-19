@@ -31,7 +31,7 @@ private final class DropTargetView: AutoLayoutView {
     }
 }
 
-final class ClipSidebarViewController: NSViewController, NSTableViewDataSource, NSTableViewDelegate {
+final class ClipSidebarViewController: NSViewController, NSTableViewDataSource, NSTableViewDelegate, NSMenuDelegate {
     private let libraryStore: ClipLibraryStore
     private let tableView = NSTableView()
     private let searchField = NSSearchField()
@@ -40,6 +40,8 @@ final class ClipSidebarViewController: NSViewController, NSTableViewDataSource, 
 
     var onSelectClip: ((PracticeClip) -> Void)?
     var onDropFiles: (([URL]) -> Void)?
+    /// Fired after a rename has been persisted, so the deck showing the same clip re-titles too.
+    var onRenameClip: ((PracticeClip) -> Void)?
 
     init(libraryStore: ClipLibraryStore) {
         self.libraryStore = libraryStore
@@ -77,13 +79,26 @@ final class ClipSidebarViewController: NSViewController, NSTableViewDataSource, 
         column.width = 240
         tableView.addTableColumn(column)
         tableView.headerView = nil
-        tableView.rowHeight = 56
+        // 62, not 56. `ClipRowView` needs 60pt for its three stacked pieces at their intrinsic
+        // heights (6 + title 15 + 1 + subtitle 13 + 3 + waveform 18 + 4 bottom inset), and the
+        // cell view is exactly one row tall — so at 56 Auto Layout had to take the missing 4pt
+        // out of something, and it took them out of the duration line, which rendered at 9pt of
+        // a 13pt label with its bottom sliced off (measured). The extra 2pt over the minimum is
+        // slack for larger system text, and lands as bottom padding because everything in the
+        // row hangs off its top edge.
+        tableView.rowHeight = 62
         tableView.backgroundColor = .clear
         tableView.style = .sourceList
         tableView.dataSource = self
         tableView.delegate = self
         tableView.target = self
-        tableView.doubleAction = nil
+        // Double-click renames in place, the same edit the right-click menu's Rename opens. Single
+        // click keeps its existing job (select the clip and load it into the deck).
+        tableView.doubleAction = #selector(renameClickedRow)
+
+        let menu = NSMenu()
+        menu.delegate = self
+        tableView.menu = menu
 
         let scrollView = NSScrollView()
         scrollView.documentView = tableView
@@ -136,12 +151,62 @@ final class ClipSidebarViewController: NSViewController, NSTableViewDataSource, 
 
     func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
         guard let clip = filteredClips[safe: row] else { return nil }
-        return ClipRowView(clip: clip)
+        let view = ClipRowView(clip: clip)
+        view.onRenameCommitted = { [weak self] id, newTitle in
+            self?.commitRename(clipID: id, newTitle: newTitle)
+        }
+        return view
     }
 
     func tableViewSelectionDidChange(_ notification: Notification) {
         guard let clip = filteredClips[safe: tableView.selectedRow] else { return }
         onSelectClip?(clip)
+    }
+
+    // MARK: - Rename
+
+    /// Puts a row's title into edit mode. `makeIfNecessary: true`: a row that was scrolled out of
+    /// view has no view yet, and asking for it is what materialises the one the table will use —
+    /// with `false` the rename would silently do nothing there.
+    func beginRenaming(clipID: UUID) {
+        guard let row = filteredClips.firstIndex(where: { $0.id == clipID }) else { return }
+        tableView.scrollRowToVisible(row)
+        guard let rowView = tableView.view(atColumn: 0, row: row, makeIfNecessary: true) as? ClipRowView else { return }
+        rowView.beginEditingTitle()
+    }
+
+    @objc private func renameClickedRow() {
+        guard let clip = filteredClips[safe: tableView.clickedRow] else { return }
+        beginRenaming(clipID: clip.id)
+    }
+
+    @objc private func renameMenuItemSelected(_ sender: NSMenuItem) {
+        guard let id = sender.representedObject as? UUID else { return }
+        beginRenaming(clipID: id)
+    }
+
+    private func commitRename(clipID: UUID, newTitle: String) {
+        guard let updated = libraryStore.rename(id: clipID, to: newTitle) else {
+            // Blank/unchanged title: put the row back the way it was rather than persisting it.
+            applyFilter(preserveSelection: true)
+            return
+        }
+        upsertClip(updated)
+        onRenameClip?(updated)
+    }
+
+    // MARK: - NSMenuDelegate
+
+    /// Built per right-click rather than once up front: the item has to carry the id of the row
+    /// that was actually clicked, and `clickedRow` is only meaningful while the click is being
+    /// handled — not later, when the menu item fires.
+    func menuNeedsUpdate(_ menu: NSMenu) {
+        menu.removeAllItems()
+        guard let clip = filteredClips[safe: tableView.clickedRow] else { return }
+        let item = NSMenuItem(title: "Rename…", action: #selector(renameMenuItemSelected(_:)), keyEquivalent: "")
+        item.target = self
+        item.representedObject = clip.id
+        menu.addItem(item)
     }
 }
 
@@ -152,14 +217,32 @@ private extension Array {
 }
 
 /// Sidebar row: title, duration, processing state, and a small waveform thumbnail.
-private final class ClipRowView: NSView {
+///
+/// The title is a real `NSTextField` that flips between label and editor rather than a static
+/// label, so renaming happens on the row itself (double-click, or Rename… from the row's context
+/// menu) instead of in a separate dialog.
+private final class ClipRowView: NSView, NSTextFieldDelegate {
+    private let clipID: UUID
+    private let titleField: NSTextField
+    private var titleBeforeEditing: String
+    private var isEditingTitle = false
+
+    /// Called with the committed title. The sidebar owns persistence — the row only reports.
+    var onRenameCommitted: ((UUID, String) -> Void)?
+
     init(clip: PracticeClip) {
+        clipID = clip.id
+        titleField = NSTextField(labelWithString: clip.title)
+        titleBeforeEditing = clip.title
         super.init(frame: .zero)
 
-        let titleField = NSTextField(labelWithString: clip.title)
         titleField.font = .systemFont(ofSize: 12, weight: .medium)
         titleField.lineBreakMode = .byTruncatingTail
         titleField.translatesAutoresizingMaskIntoConstraints = false
+        titleField.delegate = self
+        titleField.cell?.usesSingleLineMode = true
+        titleField.cell?.wraps = false
+        titleField.cell?.isScrollable = true
 
         let subtitle = clip.processingFailed
             ? "Processing failed"
@@ -200,4 +283,62 @@ private final class ClipRowView: NSView {
         fatalError("init(coder:) has not been implemented")
     }
 
+    // MARK: - Inline rename
+
+    func beginEditingTitle() {
+        guard !isEditingTitle, let window else { return }
+        isEditingTitle = true
+        titleBeforeEditing = titleField.stringValue
+        titleField.isEditable = true
+        titleField.isSelectable = true
+        // Background + focus ring, deliberately *not* `isBezeled`: a bezel adds ~7pt to the
+        // field's intrinsic height, which in a row this tight pushes the duration line down and
+        // paints over it (seen in an offscreen render of the editing state). Painting the text
+        // background leaves the field exactly as tall as it was.
+        titleField.drawsBackground = true
+        titleField.backgroundColor = .textBackgroundColor
+        titleField.focusRingType = .default
+        window.makeFirstResponder(titleField)
+        // The field editor's automatic completion claims the first Escape and turns it into a
+        // completion request, which is how a rename ends up with no way out. See also the
+        // `complete(_:)` case below.
+        (titleField.currentEditor() as? NSTextView)?.isAutomaticTextCompletionEnabled = false
+        titleField.currentEditor()?.selectAll(nil)
+    }
+
+    /// Restores the label look. Leaving the field editable would let a stray click land a cursor
+    /// in a row the user only meant to select.
+    private func endEditingTitle() {
+        isEditingTitle = false
+        titleField.isEditable = false
+        titleField.isSelectable = false
+        titleField.drawsBackground = false
+        titleField.focusRingType = .none
+        if titleField.currentEditor() != nil {
+            window?.makeFirstResponder(nil)
+        }
+    }
+
+    func controlTextDidEndEditing(_ obj: Notification) {
+        guard isEditingTitle else { return }
+        let newTitle = titleField.stringValue
+        endEditingTitle()
+        guard newTitle != titleBeforeEditing else { return }
+        // Async: the commit reloads the table, which tears this very view down — not something to
+        // do from inside the text field's own end-editing notification.
+        DispatchQueue.main.async { [clipID, onRenameCommitted] in
+            onRenameCommitted?(clipID, newTitle)
+        }
+    }
+
+    func control(_ control: NSControl, textView: NSTextView, doCommandBy commandSelector: Selector) -> Bool {
+        switch commandSelector {
+        case #selector(NSResponder.cancelOperation(_:)), #selector(NSStandardKeyBindingResponding.complete(_:)):
+            titleField.stringValue = titleBeforeEditing
+            endEditingTitle()
+            return true
+        default:
+            return false
+        }
+    }
 }
