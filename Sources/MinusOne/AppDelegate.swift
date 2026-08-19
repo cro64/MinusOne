@@ -29,6 +29,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // appearance (and, more importantly, so no layer color is resolved against it).
         preferences.appearance.apply()
 
+        // Standard editing shortcuts are menu key equivalents, so without this ⌘A/⌘C/⌘V/⌘X/⌘Z do
+        // nothing anywhere in the app — see `AppMenu`.
+        AppMenu.install()
+
         if #available(macOS 14.2, *) {
             ProcessTapSession.destroyStaleAggregates()
         }

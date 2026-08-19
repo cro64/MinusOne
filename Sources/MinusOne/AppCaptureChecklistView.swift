@@ -95,9 +95,15 @@ final class AppCaptureChecklistView: NSView {
         NSLayoutConstraint.activate([
             // A row of list is the hard floor: enough that the control still reads as a list.
             heightAnchor.constraint(greaterThanOrEqualToConstant: Layout.rowHeight),
-            stack.leadingAnchor.constraint(equalTo: scrollView.leadingAnchor),
-            stack.trailingAnchor.constraint(equalTo: scrollView.trailingAnchor),
-            stack.widthAnchor.constraint(equalTo: scrollView.widthAnchor),
+            // Tied to the clip view, not to `scrollView` itself. A legacy (always-visible)
+            // vertical scroller takes its 17pt out of the clip view's width while the scroll
+            // view stays the same, so measuring against the scroll view made every row 17pt
+            // wider than the visible area — the list scrolled sideways for no reason
+            // (measured: document 314pt inside a 297pt clip view). The clip view is the width
+            // the rows are actually seen at, so the app names truncate instead.
+            stack.leadingAnchor.constraint(equalTo: scrollView.contentView.leadingAnchor),
+            stack.trailingAnchor.constraint(equalTo: scrollView.contentView.trailingAnchor),
+            stack.widthAnchor.constraint(equalTo: scrollView.contentView.widthAnchor),
             emptyLabel.centerXAnchor.constraint(equalTo: centerXAnchor),
             emptyLabel.centerYAnchor.constraint(equalTo: centerYAnchor),
             emptyLabel.leadingAnchor.constraint(greaterThanOrEqualTo: leadingAnchor, constant: 8),

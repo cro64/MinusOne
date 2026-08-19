@@ -56,6 +56,22 @@ final class ClipLibraryStore {
         }
     }
 
+    /// Renames a clip in place. Returns the updated clip, or `nil` if the id is unknown or the
+    /// new title is blank — a rename that would leave a clip with no name is treated as a
+    /// cancellation, since the title is the only thing identifying it in the sidebar.
+    @discardableResult
+    func rename(id: UUID, to title: String) -> PracticeClip? {
+        let trimmed = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+        return queue.sync {
+            guard var clip = clipsByID[id], clip.title != trimmed else { return clipsByID[id] }
+            clip.title = trimmed
+            clipsByID[id] = clip
+            persist()
+            return clip
+        }
+    }
+
     func remove(_ id: UUID) {
         queue.sync {
             clipsByID.removeValue(forKey: id)

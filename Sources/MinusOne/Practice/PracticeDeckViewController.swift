@@ -1,7 +1,7 @@
 import AppKit
 
 /// Detail pane: waveform, transport, tempo, and per-stem mixer for the selected clip.
-final class PracticeDeckViewController: NSViewController {
+final class PracticeDeckViewController: NSViewController, NSTextFieldDelegate {
     private let libraryStore: ClipLibraryStore
     private let playbackEngine: PracticePlaybackEngine
 
@@ -10,16 +10,29 @@ final class PracticeDeckViewController: NSViewController {
     private var lastReloadedReadySeconds: Double = 0
 
     private let emptyStateView = PracticeEmptyStateView()
-    private let titleLabel = NSTextField(labelWithString: "")
+    /// Editable in place — clicking the clip's title here is one of the two ways to rename it
+    /// (the other is the sidebar row's double-click / Rename… menu).
+    private let titleLabel = ClickToEditTextField(labelWithString: "")
     private let statusLabel = NSTextField(labelWithString: "")
     private let waveformView = WaveformView(style: .interactive)
-    private let playPauseButton = FlatButton(title: "Play", kind: .secondary)
-    private let loopButton = FlatButton(title: "Loop", kind: .secondary)
+    private let playPauseButton = WindowUI.transportButton(symbolName: "play.fill", label: "Play", target: nil, action: nil)
+    private let loopButton = WindowUI.transportToggleButton(symbolName: "repeat", label: "Loop", target: nil, action: nil)
+    private let skipBackButton = WindowUI.transportButton(symbolName: "backward.fill", label: "Back \(Int(PracticeDeckViewController.skipSeconds)) seconds", target: nil, action: nil)
+    private let skipForwardButton = WindowUI.transportButton(symbolName: "forward.fill", label: "Forward \(Int(PracticeDeckViewController.skipSeconds)) seconds", target: nil, action: nil)
+    /// How far the back/forward glyphs jump per click. Short on purpose: this is a practice
+    /// transport, so it's for nudging back over the bar you just fluffed, not for scanning a track.
+    private static let skipSeconds: Double = 5
     private let timeLabel = SharedUI.valueLabel(initialValue: "0:00 / 0:00")
     private let tempoSlider = NSSlider(value: 100, minValue: 50, maxValue: 100, target: nil, action: nil)
     private let tempoValueLabel = NSTextField(labelWithString: "100%")
     private var mixerRows: [SeparationStem: MixerRowView] = [:]
     private var contentStack: NSStackView?
+    private var titleBeforeEditing = ""
+    private var outsideClickMonitor: Any?
+    private lazy var titleWidthConstraint = titleLabel.widthAnchor.constraint(equalToConstant: 0)
+
+    /// Fired after a rename made here has been persisted, so the sidebar row re-titles too.
+    var onClipRenamed: ((PracticeClip) -> Void)?
 
     init(libraryStore: ClipLibraryStore, playbackEngine: PracticePlaybackEngine) {
         self.libraryStore = libraryStore
@@ -30,6 +43,12 @@ final class PracticeDeckViewController: NSViewController {
     @available(*, unavailable)
     required init?(coder: NSCoder) {
         fatalError("init(coder:) has not been implemented")
+    }
+
+    deinit {
+        if let outsideClickMonitor {
+            NSEvent.removeMonitor(outsideClickMonitor)
+        }
     }
 
     override func loadView() {
@@ -52,6 +71,17 @@ final class PracticeDeckViewController: NSViewController {
     private func buildContent() {
         titleLabel.font = .systemFont(ofSize: 18, weight: .semibold)
         titleLabel.lineBreakMode = .byTruncatingTail
+        // Left non-editable until it is actually clicked (see `ClickToEditTextField`). Leaving it
+        // permanently editable made it the window's first key view, so opening a clip put the
+        // title straight into edit mode — boxed, focused, with an insertion point nobody asked
+        // for (measured: `currentEditor() != nil` before any click).
+        titleLabel.isBordered = false
+        titleLabel.drawsBackground = false
+        titleLabel.delegate = self
+        titleLabel.cell?.usesSingleLineMode = true
+        titleLabel.cell?.wraps = false
+        titleLabel.cell?.isScrollable = true
+        titleLabel.toolTip = "Click to rename"
 
         statusLabel.font = .systemFont(ofSize: 11)
         statusLabel.textColor = .secondaryLabelColor
@@ -63,14 +93,29 @@ final class PracticeDeckViewController: NSViewController {
         playPauseButton.target = self
         playPauseButton.action = #selector(togglePlayPause)
 
-        loopButton.setButtonType(.pushOnPushOff)
+        skipBackButton.target = self
+        skipBackButton.action = #selector(skipBackward)
+        skipForwardButton.target = self
+        skipForwardButton.action = #selector(skipForward)
+
         loopButton.target = self
         loopButton.action = #selector(toggleLoop)
 
         timeLabel.isHidden = false
         timeLabel.stringValue = "0:00 / 0:00"
 
-        let transportStack = Layout.horizontalStack([playPauseButton, loopButton, timeLabel], spacing: WindowUI.Metrics.rowSpacing)
+        // Back/play/forward read as one cluster, then a wider gap before Loop — which is a mode,
+        // not a transport action, and shouldn't look like a fourth button in the same group.
+        let playbackCluster = Layout.horizontalStack([skipBackButton, playPauseButton, skipForwardButton], spacing: 4)
+        // A nested stack hugs its content only if told to: at the default priority this one soaked
+        // up the row's slack and shoved Loop 343pt to the right (measured, and only sometimes —
+        // exactly the ambiguity `Layout.flexibleSpacer` exists to remove). The spacer gives the
+        // slack a defined home at the end of the row instead.
+        playbackCluster.setHuggingPriority(.required, for: .horizontal)
+        let transportStack = Layout.horizontalStack(
+            [playbackCluster, loopButton, timeLabel, Layout.flexibleSpacer()],
+            spacing: WindowUI.Metrics.sectionSpacing
+        )
 
         tempoSlider.isContinuous = true
         tempoSlider.target = self
@@ -108,6 +153,17 @@ final class PracticeDeckViewController: NSViewController {
         // `MixerRowView` is a plain NSView, which to this stack is an opaque box that gets its
         // fitting width. Measured before this chain: tempo slider 556.5pt, every stem fader stuck at
         // 140pt — exactly its `greaterThanOrEqualToConstant` floor, in a 671pt-wide pane.
+        // The title is sized to its own text rather than left to fill the pane. An editable
+        // NSTextField reports no intrinsic width (measured: -1, scrollable cell or not), so
+        // content hugging can't do this job — the width is measured from the string and kept up
+        // to date in `sizeTitleFieldToText`. It matters because the field editor paints its
+        // background across the *whole* field: a full-width field turns into a window-wide white
+        // box the moment the title is clicked.
+        titleWidthConstraint.priority = .defaultHigh
+        titleWidthConstraint.isActive = true
+        // Required, so a long name truncates at the pane edge instead of running off it.
+        titleLabel.widthAnchor.constraint(lessThanOrEqualTo: content.widthAnchor).isActive = true
+        sizeTitleFieldToText(titleLabel.stringValue)
         waveformView.widthAnchor.constraint(equalTo: content.widthAnchor).isActive = true
         tempoRow.widthAnchor.constraint(equalTo: content.widthAnchor).isActive = true
         mixerStack.widthAnchor.constraint(equalTo: content.widthAnchor).isActive = true
@@ -132,13 +188,18 @@ final class PracticeDeckViewController: NSViewController {
             self.playbackEngine.isLoopEnabled = true
             self.loopButton.state = .on
             self.loopButton.refreshStyle()
+            // Jump to the top of the new loop. Without this the playhead stayed wherever it was —
+            // so drawing a loop while the clip was playing kept playing straight through the old
+            // position until it happened to reach the loop's end, which is the first moment
+            // `PracticePlaybackEngine`'s loop check does anything. Unconditional rather than only
+            // while playing: a loop drawn while paused should start from its own beginning too.
+            self.playbackEngine.seek(toSeconds: seconds.lowerBound)
         }
         playbackEngine.onPlayheadUpdate = { [weak self] time in
             self?.updatePlayhead(time)
         }
         playbackEngine.onPlaybackFinished = { [weak self] in
-            self?.playPauseButton.title = "Play"
-            self?.playPauseButton.isOn = false
+            self?.showPlayGlyph(true)
         }
     }
 
@@ -177,6 +238,8 @@ final class PracticeDeckViewController: NSViewController {
             isEngineLoaded = true
             lastReloadedReadySeconds = clip.readyDurationSeconds
             playPauseButton.isEnabled = true
+            skipBackButton.isEnabled = true
+            skipForwardButton.isEnabled = true
         } catch {
             AppLogger.shared.warning("Practice deck load failed: \(error.localizedDescription)")
         }
@@ -184,10 +247,18 @@ final class PracticeDeckViewController: NSViewController {
 
     private func refreshForCurrentClip() {
         guard let clip else { return }
-        titleLabel.stringValue = clip.title
+        // Not while the user is typing in it: background separation ticks call through here every
+        // couple of seconds, and each one would otherwise wipe out a half-finished rename.
+        if titleLabel.currentEditor() == nil {
+            titleLabel.stringValue = clip.title
+            sizeTitleFieldToText(clip.title)
+        }
         waveformView.peaks = clip.waveformPeaks
         waveformView.readyFraction = clip.durationSeconds > 0 ? CGFloat(clip.readyDurationSeconds / clip.durationSeconds) : 1
-        playPauseButton.isEnabled = clip.readyDurationSeconds > 0 && !clip.processingFailed
+        let playable = clip.readyDurationSeconds > 0 && !clip.processingFailed
+        playPauseButton.isEnabled = playable
+        skipBackButton.isEnabled = playable
+        skipForwardButton.isEnabled = playable
 
         if clip.processingFailed {
             statusLabel.stringValue = "Couldn't process this clip — try importing it again."
@@ -214,13 +285,33 @@ final class PracticeDeckViewController: NSViewController {
     @objc private func togglePlayPause() {
         if playbackEngine.isPlaying {
             playbackEngine.pause()
-            playPauseButton.title = "Play"
-            playPauseButton.isOn = false
+            showPlayGlyph(true)
         } else {
             playbackEngine.play()
-            playPauseButton.title = "Pause"
-            playPauseButton.isOn = true
+            showPlayGlyph(false)
         }
+    }
+
+    /// The one place the play/pause glyph is chosen, so the icon can't drift out of step with the
+    /// engine the way two separate assignment sites would let it.
+    private func showPlayGlyph(_ showPlay: Bool) {
+        playPauseButton.setIcon(showPlay ? "play.fill" : "pause.fill", label: showPlay ? "Play" : "Pause")
+        playPauseButton.isOn = !showPlay
+    }
+
+    @objc private func skipBackward() {
+        skip(by: -Self.skipSeconds)
+    }
+
+    @objc private func skipForward() {
+        skip(by: Self.skipSeconds)
+    }
+
+    /// `seek(toSeconds:)` clamps to the clip, and keeps playing if it already was, so a nudge off
+    /// either end lands on the boundary rather than stopping.
+    private func skip(by seconds: Double) {
+        guard clip != nil, isEngineLoaded else { return }
+        playbackEngine.seek(toSeconds: playbackEngine.currentTime() + seconds)
     }
 
     @objc private func toggleLoop() {
@@ -241,12 +332,156 @@ final class PracticeDeckViewController: NSViewController {
         timeLabel.stringValue = "\(time.formattedAsDuration) / \(clip.durationSeconds.formattedAsDuration)"
     }
 
+    // MARK: - Rename
+
+    /// Width of the title's text plus room for the caret, floored so an empty name still leaves
+    /// something to click. Long names hit the required `<= content.width` cap instead.
+    private func sizeTitleFieldToText(_ text: String) {
+        let font = titleLabel.font ?? .systemFont(ofSize: 18, weight: .semibold)
+        let measured = (text as NSString).size(withAttributes: [.font: font]).width
+        titleWidthConstraint.constant = max(80, ceil(measured) + 12)
+    }
+
+    func controlTextDidChange(_ obj: Notification) {
+        // Grows with what's being typed, so the box tracks the name instead of jumping on commit.
+        sizeTitleFieldToText(titleLabel.currentEditor()?.string ?? titleLabel.stringValue)
+    }
+
+    func controlTextDidBeginEditing(_ obj: Notification) {
+        titleBeforeEditing = clip?.title ?? titleLabel.stringValue
+        // See `control(_:textView:doCommandBy:)`: with completion on, the field editor eats Escape.
+        (titleLabel.currentEditor() as? NSTextView)?.isAutomaticTextCompletionEnabled = false
+        startWatchingForClicksOutsideTitle()
+    }
+
+    func controlTextDidEndEditing(_ obj: Notification) {
+        stopWatchingForClicksOutsideTitle()
+        titleLabel.stopEditing()
+        commitTitleEdit()
+    }
+
+    /// Persists whatever is in the field now. Idempotent: it compares against the title the edit
+    /// started from, so the end-editing notification that follows Return (or Escape) is a no-op.
+    private func commitTitleEdit() {
+        guard let clip else { return }
+        let newTitle = titleLabel.stringValue
+        guard newTitle != titleBeforeEditing else { return }
+        guard let updated = libraryStore.rename(id: clip.id, to: newTitle) else {
+            titleLabel.stringValue = titleBeforeEditing
+            return
+        }
+        self.clip = updated
+        titleBeforeEditing = updated.title
+        titleLabel.stringValue = updated.title
+        sizeTitleFieldToText(updated.title)
+        onClipRenamed?(updated)
+    }
+
+    /// Clicking a button, a fader or the waveform doesn't move focus on macOS, so without this the
+    /// title would stay in edit mode — visibly boxed — while the user carried on using the deck.
+    private func startWatchingForClicksOutsideTitle() {
+        stopWatchingForClicksOutsideTitle()
+        outsideClickMonitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown]) { [weak self] event in
+            guard let self, let window = self.view.window, event.window === window else { return event }
+            self.endTitleEditingIfClickIsOutside(event.locationInWindow)
+            return event
+        }
+    }
+
+    /// Split out from the monitor so the rule can be exercised directly.
+    func endTitleEditingIfClickIsOutside(_ locationInWindow: NSPoint) {
+        let point = titleLabel.convert(locationInWindow, from: nil)
+        guard !titleLabel.bounds.contains(point) else { return }
+        endTitleEditing()
+    }
+
+    private func stopWatchingForClicksOutsideTitle() {
+        if let outsideClickMonitor {
+            NSEvent.removeMonitor(outsideClickMonitor)
+        }
+        outsideClickMonitor = nil
+    }
+
+    /// Escape abandons the edit, Return commits it, and both leave editing entirely.
+    ///
+    /// `complete(_:)` is handled alongside `cancelOperation(_:)` on purpose: the field editor's
+    /// automatic text completion claims the first Escape and turns it into a completion request,
+    /// so a handler that only watches for `cancelOperation(_:)` never runs and Escape appears to
+    /// do nothing. (`controlTextDidBeginEditing` also switches completion off, so this is the
+    /// belt to that braces.)
+    func control(_ control: NSControl, textView: NSTextView, doCommandBy commandSelector: Selector) -> Bool {
+        switch commandSelector {
+        case #selector(NSResponder.cancelOperation(_:)), #selector(NSStandardKeyBindingResponding.complete(_:)):
+            titleLabel.stringValue = titleBeforeEditing
+            sizeTitleFieldToText(titleBeforeEditing)
+            endTitleEditing()
+            return true
+        case #selector(NSResponder.insertNewline(_:)):
+            commitTitleEdit()
+            endTitleEditing()
+            return true
+        default:
+            return false
+        }
+    }
+
+    /// Drops focus so the editing background goes away. Plain `makeFirstResponder(nil)` would do
+    /// it, but only when the field still holds focus — calling it otherwise would yank focus from
+    /// whatever the user just clicked on.
+    private func endTitleEditing() {
+        guard let window = view.window, window.firstResponder === titleLabel.currentEditor() else { return }
+        window.makeFirstResponder(nil)
+    }
+
+    /// A rename that happened in the sidebar. Deliberately *not* routed through `updateClip`:
+    /// that one may reload the playback engine, and re-titling a clip has no business
+    /// interrupting playback.
+    func applyRenamedClip(_ updated: PracticeClip) {
+        guard clip?.id == updated.id else { return }
+        clip = updated
+        if titleLabel.currentEditor() == nil {
+            titleLabel.stringValue = updated.title
+            sizeTitleFieldToText(updated.title)
+        }
+    }
+
     private func refreshMixerButtonStates() {
         for (stem, row) in mixerRows {
             row.setSoloed(playbackEngine.mixer.isSoloed(stem))
         }
     }
 
+}
+
+/// A title that reads as a label and becomes a text field when clicked.
+///
+/// The alternative — an always-editable `NSTextField` styled to look like a label — puts the
+/// field in the window's key view loop, so it collects focus the moment the window opens and
+/// paints its editing background before anyone has asked to rename anything. Refusing first
+/// responder until a click arrives is what keeps it a label the rest of the time.
+private final class ClickToEditTextField: NSTextField {
+    override var acceptsFirstResponder: Bool { isEditable }
+
+    override func mouseDown(with event: NSEvent) {
+        if !isEditable {
+            isEditable = true
+            isSelectable = true
+            drawsBackground = true
+            backgroundColor = .textBackgroundColor
+            focusRingType = .default
+            window?.makeFirstResponder(self)
+        }
+        // Forwarded, not swallowed: this is what puts the insertion point where the user clicked.
+        super.mouseDown(with: event)
+    }
+
+    /// Back to label chrome. Called when editing ends, whatever ended it.
+    func stopEditing() {
+        isEditable = false
+        isSelectable = false
+        drawsBackground = false
+        focusRingType = .none
+    }
 }
 
 /// One stem's mixer controls: label, volume fader, mute, solo.

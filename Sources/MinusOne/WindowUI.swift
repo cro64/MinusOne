@@ -169,6 +169,44 @@ enum WindowUI {
         return button
     }
 
+    /// Icon-only transport control (Practice deck's back/play/forward/loop). Same flat
+    /// `.secondary` chrome as `toggleControlButton` — so a toggled Loop still fills solid accent —
+    /// but sized as a square-ish glyph button instead of a text one. The 33pt height is the height
+    /// the row's text buttons measured, so swapping labels for glyphs doesn't reflow the deck.
+    static func transportButton(
+        symbolName: String,
+        label: String,
+        target: AnyObject?,
+        action: Selector?
+    ) -> FlatButton {
+        let button = FlatButton(title: "", kind: .secondary, target: target, action: action)
+        // A momentary action must never paint the engaged fill: `state` gets set on these anyway
+        // (measured — even a stock `NSButton` set to `.momentaryPushIn` comes back from a click
+        // with `state == .on`), and the Forward glyph ended up latched in solid accent as though
+        // it were a mode. `transportToggleButton` is the variant for controls that *are* modes.
+        button.setButtonType(.momentaryPushIn)
+        button.reflectsState = false
+        button.imagePosition = .imageOnly
+        button.imageScaling = .scaleProportionallyDown
+        button.setIcon(symbolName, label: label)
+        button.constrainSize(width: 40, height: 33)
+        return button
+    }
+
+    /// `transportButton` for a control that latches — Practice's Loop. Same glyph chrome, but it
+    /// keeps its state and shows the engaged accent fill while on.
+    static func transportToggleButton(
+        symbolName: String,
+        label: String,
+        target: AnyObject?,
+        action: Selector?
+    ) -> FlatButton {
+        let button = transportButton(symbolName: symbolName, label: label, target: target, action: action)
+        button.setButtonType(.pushOnPushOff)
+        button.reflectsState = true
+        return button
+    }
+
     /// Shared style for compact toggle/transport controls (Practice deck's Play/Loop/Solo/Mute)
     /// in place of stock `NSButton` bezels — flat, divider-bordered, filled solid accent when
     /// engaged (`.seg-opt:checked`-style, though these are independent toggles, not a group).
@@ -189,6 +227,18 @@ extension FlatButton {
         image = NSImage(systemSymbolName: symbolName, accessibilityDescription: accessibilityDescription)?
             .withSymbolConfiguration(.init(pointSize: pointSize, weight: .medium))?
             .withTrailingPadding(WindowUI.Metrics.iconTitleSpacing)
+    }
+}
+
+extension FlatButton {
+    /// Icon for an image-only button, plus the label a glyph can't carry on its own — the
+    /// accessibility name and the tooltip both come from it, so a bare symbol is still
+    /// identifiable. Unlike `setSymbol`, no trailing padding: there is no title to sit beside.
+    func setIcon(_ symbolName: String, pointSize: CGFloat = 13, label: String) {
+        image = NSImage(systemSymbolName: symbolName, accessibilityDescription: label)?
+            .withSymbolConfiguration(.init(pointSize: pointSize, weight: .semibold))
+        setAccessibilityLabel(label)
+        toolTip = label
     }
 }
 
@@ -249,6 +299,13 @@ final class FlatButton: NSButton {
     /// Filled "engaged" look for toggle-style controls (Play/Loop/Solo/Mute) that isn't already
     /// covered by NSButton's own push-on/push-off `state`.
     var isOn = false {
+        didSet { refreshStyle() }
+    }
+
+    /// Whether `state == .on` should paint the engaged fill. True for genuine toggles
+    /// (Loop/Solo/Mute); false for momentary actions, whose `state` is incidental — AppKit leaves
+    /// it set after a click regardless of button type, which is enough to latch the fill on.
+    var reflectsState = true {
         didSet { refreshStyle() }
     }
 
@@ -388,7 +445,7 @@ final class FlatButton: NSButton {
         isApplyingStyle = true
         defer { isApplyingStyle = false }
 
-        let engaged = isOn || state == .on
+        let engaged = isOn || (reflectsState && state == .on)
         let font = NSFont.systemFont(ofSize: pointSize, weight: .black)
         var textColor: NSColor = .labelColor
         resolvingEffectiveAppearance {
