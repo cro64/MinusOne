@@ -5,7 +5,7 @@ import AppKit
 /// auto-stop is set (so the marker's position is meaningful), or 0...elapsed otherwise (so the
 /// whole take so far is always visible).
 final class LiveWaveformView: NSView {
-    /// Matches `SystemAudioRecorder`'s peak-bucket cadence.
+    /// Matches `ClipRecorder`'s peak-bucket cadence.
     static let bucketDurationSeconds: Double = 0.1
 
     var peaks: [Float] = [] { didSet { needsDisplay = true } }
@@ -57,10 +57,16 @@ final class LiveWaveformView: NSView {
         NSColor.windowBackgroundColor.setFill()
         bounds.fill()
 
-        let progressFraction = min(1, elapsedSeconds / windowSeconds)
-        let progressRect = NSRect(x: 0, y: 0, width: bounds.width * progressFraction, height: bounds.height)
-        NSColor.systemRed.withAlphaComponent(0.06).setFill()
-        progressRect.fill()
+        // Only meaningful against an auto-stop target. Without one, `windowSeconds` *is* the elapsed
+        // time, so the fraction is permanently 1 and the wash covers the whole view — a flat pink
+        // field that says nothing. Barely noticeable in a 68pt popover box; at page scale it's the
+        // largest thing on screen.
+        if let autoStopSeconds, autoStopSeconds > 0 {
+            let progressFraction = min(1, elapsedSeconds / windowSeconds)
+            let progressRect = NSRect(x: 0, y: 0, width: bounds.width * progressFraction, height: bounds.height)
+            NSColor.systemRed.withAlphaComponent(0.06).setFill()
+            progressRect.fill()
+        }
 
         drawWaveformLine()
 
@@ -70,29 +76,42 @@ final class LiveWaveformView: NSView {
         }
     }
 
+    /// Two mirrored polylines around the vertical midline.
+    ///
+    /// This used to be one line at `midY - magnitude * midY * 1.4`, which a full-scale peak puts
+    /// *above* the view's top edge, where nothing clips it. At the 68pt popover height it was
+    /// written for, that overspill was ~14pt and read as the line just touching the top; at the
+    /// ~380pt this view now gets as a page hero it's ~76pt of waveform drawn over the card's
+    /// header. The `0.92` factor keeps a full-scale peak inside the bounds with a margin, and
+    /// mirroring gives a tall box something to fill — a single half-height line in a 380pt box
+    /// reads as a stray squiggle in an empty field, not as a level.
     private func drawWaveformLine() {
         guard peaks.count >= 4 else { return }
         let columnCount = peaks.count / 2
         let midY = bounds.height / 2
 
-        let path = NSBezierPath()
+        let top = NSBezierPath()
+        let bottom = NSBezierPath()
         for column in 0..<columnCount {
             let time = Double(column) * Self.bucketDurationSeconds
             let x = bounds.width * CGFloat(time / windowSeconds)
             if x > bounds.width { break }
 
-            let magnitude = max(abs(peaks[column * 2]), abs(peaks[column * 2 + 1]))
-            let y = midY - CGFloat(magnitude) * midY * 1.4
-            let point = NSPoint(x: x, y: y)
+            let magnitude = min(1, max(abs(peaks[column * 2]), abs(peaks[column * 2 + 1])))
+            let offset = CGFloat(magnitude) * midY * 0.92
             if column == 0 {
-                path.move(to: point)
+                top.move(to: NSPoint(x: x, y: midY - offset))
+                bottom.move(to: NSPoint(x: x, y: midY + offset))
             } else {
-                path.line(to: point)
+                top.line(to: NSPoint(x: x, y: midY - offset))
+                bottom.line(to: NSPoint(x: x, y: midY + offset))
             }
         }
-        path.lineWidth = 1.2
         NSColor.secondaryLabelColor.setStroke()
-        path.stroke()
+        for path in [top, bottom] {
+            path.lineWidth = 1.2
+            path.stroke()
+        }
     }
 
     private func drawMarker(atX x: CGFloat) {

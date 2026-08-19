@@ -155,9 +155,7 @@ enum WindowUI {
         action: Selector?
     ) -> FlatButton {
         let button = FlatButton(title: title, kind: .primary, target: target, action: action)
-        button.image = NSImage(systemSymbolName: symbolName, accessibilityDescription: title)?
-            .withSymbolConfiguration(.init(pointSize: symbolPointSize, weight: .medium))?
-            .withTrailingPadding(Metrics.iconTitleSpacing)
+        button.setSymbol(symbolName, pointSize: symbolPointSize, accessibilityDescription: title)
         button.imagePosition = .imageLeading
         button.imageScaling = .scaleProportionallyDown
         // Without this, `NSButtonCell` pins the image to the button's leading edge and then centers
@@ -179,6 +177,18 @@ enum WindowUI {
         button.pointSize = NSFont.smallSystemFontSize
         button.setButtonType(.pushOnPushOff)
         return button
+    }
+}
+
+extension FlatButton {
+    /// Sets an SF Symbol as the button's image with the icon/title gap baked in. The only correct
+    /// way to *change* a `toolbarActionButton`'s icon after construction: a plain `button.image = …`
+    /// loses `withTrailingPadding`, and the button silently reverts to the ~2pt gap `imageHugsTitle`
+    /// leaves on its own. Used by Practice's Record button, which swaps to a Stop glyph mid-session.
+    func setSymbol(_ symbolName: String, pointSize: CGFloat = 14, accessibilityDescription: String? = nil) {
+        image = NSImage(systemSymbolName: symbolName, accessibilityDescription: accessibilityDescription)?
+            .withSymbolConfiguration(.init(pointSize: pointSize, weight: .medium))?
+            .withTrailingPadding(WindowUI.Metrics.iconTitleSpacing)
     }
 }
 

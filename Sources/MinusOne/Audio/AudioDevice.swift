@@ -78,6 +78,13 @@ enum CoreAudioDevices {
         allDevices().filter { $0.isOutputCapable && !$0.isBlackHole }
     }
 
+    /// Input-capable devices, for the Practice recorder's source picker. BlackHole is excluded for
+    /// the same reason it is in `outputDevices()`: it's MinusOne's own loopback plumbing, and
+    /// recording "from" it would capture whatever the app is already routing through it.
+    static func inputDevices() -> [AudioDevice] {
+        allDevices().filter { $0.isInputCapable && !$0.isBlackHole }
+    }
+
     static func blackHoleDevice() -> AudioDevice? {
         allDevices().first { $0.isBlackHole }
     }

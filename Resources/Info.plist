@@ -27,7 +27,7 @@
     <key>LSUIElement</key>
     <true/>
     <key>NSMicrophoneUsageDescription</key>
-    <string>MinusOne needs audio input permission when using the BlackHole fallback capture path.</string>
+    <string>MinusOne needs microphone access to record a Practice take from an input device you choose, and when using the BlackHole fallback capture path.</string>
     <key>NSAudioCaptureUsageDescription</key>
     <string>MinusOne captures system audio to reduce vocals in real time, and — only when you start a Practice Mode recording — to save a take for offline practice.</string>
     <key>NSHighResolutionCapable</key>

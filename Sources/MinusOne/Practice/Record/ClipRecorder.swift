@@ -1,21 +1,77 @@
 import AVFoundation
 import CoreAudio
 
-/// Records system audio straight to a file via an independent, passive (`.unmuted`) Process Tap —
-/// separate from Live Mode's own tap, safe to run alongside it since neither touches the other's
-/// state and this one never changes the default output device.
+/// Records a Practice take straight to a file, from either of two sources:
+///
+/// - **System audio** — an independent, passive (`.unmuted`) Process Tap, separate from Live Mode's
+///   own tap and safe to run alongside it, since neither touches the other's state and this one
+///   never changes the default output device.
+/// - **An input device** — a plain CoreAudio IOProc on the device itself, for recording a mic or
+///   interface rather than what the machine is playing.
+///
+/// Everything downstream of the source is shared: both paths hand the same `AudioBufferList` to
+/// `handleIO`, which extracts stereo float, writes to the same `AVAudioFile`, and accumulates the
+/// same 0.1s peak buckets. Only acquisition and teardown differ, which is what `ActiveSource` holds.
 @available(macOS 14.2, *)
-final class SystemAudioRecorder {
+final class ClipRecorder {
     enum RecorderError: Error, LocalizedError {
         case unavailable
         case noOutputDevice
         case notRecording
+        case inputDeviceUnavailable
+        case inputFormatUnavailable(name: String)
+        case microphonePermissionDenied
 
         var errorDescription: String? {
             switch self {
             case .unavailable: return "System audio recording requires macOS 14.2 or later."
             case .noOutputDevice: return "No audio output device is available to record from."
             case .notRecording: return "Not currently recording."
+            case .inputDeviceUnavailable:
+                // Deliberately unnamed: this case fires precisely because the device could not be
+                // found, so any name here is a placeholder describing itself ("Unavailable device
+                // isn't available").
+                return "The selected input device isn't available. It may have been unplugged."
+            case .inputFormatUnavailable(let name):
+                return "Couldn't read an input format from \(name)."
+            case .microphonePermissionDenied:
+                return "MinusOne needs microphone access to record from an input device."
+            }
+        }
+
+        /// Drives which System Settings pane the record page's button opens.
+        var isMicrophonePermissionIssue: Bool {
+            if case .microphonePermissionDenied = self { return true }
+            return false
+        }
+    }
+
+    /// How the current take is being captured. Both cases resolve to "an `AudioDeviceID` with an
+    /// IOProc on it" — the tap case just has an aggregate device to tear down afterwards.
+    private enum ActiveSource {
+        case systemAudio(TapAggregateSetup)
+        case inputDevice(id: AudioDeviceID, format: AVAudioFormat, sampleRate: Double)
+
+        /// The device the IOProc is attached to.
+        var deviceID: AudioDeviceID {
+            switch self {
+            case .systemAudio(let setup): return setup.aggregateID
+            case .inputDevice(let id, _, _): return id
+            }
+        }
+
+        /// The format of the buffers arriving in the IO callback.
+        var audioFormat: AVAudioFormat {
+            switch self {
+            case .systemAudio(let setup): return setup.audioFormat
+            case .inputDevice(_, let format, _): return format
+            }
+        }
+
+        var sampleRate: Double {
+            switch self {
+            case .systemAudio(let setup): return setup.sampleRate
+            case .inputDevice(_, _, let rate): return rate
             }
         }
     }
@@ -23,12 +79,23 @@ final class SystemAudioRecorder {
     /// Fires on the peaks/elapsed update cadence (~10Hz) — call on main thread already.
     var onProgress: ((_ peaks: [Float], _ elapsedSeconds: Double) -> Void)?
 
-    private(set) var isRecording = false
+    /// Fires on the main thread whenever `isRecording` flips, whichever surface caused it. Several
+    /// places follow recording state now (menu bar icon, the window's Practice toolbar, the record
+    /// page), so they can't each poll a bool they own — `AppDelegate` holds this one closure and
+    /// fans it out, the same shape as `AudioEngine.onStatusChanged`.
+    var onRecordingStateChanged: ((_ isRecording: Bool) -> Void)?
+
+    private(set) var isRecording = false {
+        didSet {
+            guard isRecording != oldValue else { return }
+            onRecordingStateChanged?(isRecording)
+        }
+    }
 
     private let ioQueue = DispatchQueue(label: "com.minusone.app.practice-record", qos: .userInitiated)
     private let stateLock = NSLock()
 
-    private var setup: TapAggregateSetup?
+    private var source: ActiveSource?
     private var procID: AudioDeviceIOProcID?
     private var file: AVAudioFile?
     private var fileFormat: AVAudioFormat?
@@ -51,13 +118,32 @@ final class SystemAudioRecorder {
     private var progressTimer: Timer?
     private var loggedFirstWriteError = false
 
-    func startRecording(completion: @escaping (Result<Void, Error>) -> Void) {
+    /// Starts a take from `source`. Microphone permission is resolved on the main thread *before*
+    /// any CoreAudio work, because the TCC prompt is the one part of this that must not run on the
+    /// IO queue — and because a denial should read as "grant access", not as a device failure.
+    func startRecording(source: RecordingSource, completion: @escaping (Result<Void, Error>) -> Void) {
         guard !isRecording else { return }
 
+        guard source.isMicrophone else {
+            beginCapture(source: source, completion: completion)
+            return
+        }
+
+        AudioPermission.requestMicrophone { [weak self] granted in
+            guard let self else { return }
+            guard granted else {
+                completion(.failure(RecorderError.microphonePermissionDenied))
+                return
+            }
+            self.beginCapture(source: source, completion: completion)
+        }
+    }
+
+    private func beginCapture(source: RecordingSource, completion: @escaping (Result<Void, Error>) -> Void) {
         ioQueue.async { [weak self] in
             guard let self else { return }
             do {
-                try self.setupAndStart()
+                try self.setupAndStart(source: source)
                 DispatchQueue.main.async {
                     self.isRecording = true
                     self.startProgressTimer()
@@ -79,12 +165,16 @@ final class SystemAudioRecorder {
         progressTimer?.invalidate()
         progressTimer = nil
 
-        if let setup {
-            ProcessTapSession.stopIO(setup: setup, procID: procID)
-            ProcessTapSession.destroy(setup)
+        if let source {
+            stopIO(source: source)
+            // Only the tap path leaves an aggregate device behind; an input device is the user's
+            // own hardware and must be left exactly as it was found.
+            if case .systemAudio(let setup) = source {
+                ProcessTapSession.destroy(setup)
+            }
         }
         procID = nil
-        self.setup = nil
+        self.source = nil
 
         let url = recordingURL
         let finalFrames = framesWritten
@@ -118,19 +208,8 @@ final class SystemAudioRecorder {
 
     // MARK: - Setup (runs on ioQueue)
 
-    private func setupAndStart() throws {
-        guard let defaultID = CoreAudioDevices.defaultOutputDeviceID(),
-              let device = CoreAudioDevices.device(for: defaultID)
-        else {
-            throw RecorderError.noOutputDevice
-        }
-
-        let newSetup = try ProcessTapSession.create(
-            outputDeviceUID: device.uid,
-            captureScope: .allApps,
-            selectedBundleIDs: [],
-            muteBehavior: .unmuted
-        )
+    private func setupAndStart(source requested: RecordingSource) throws {
+        let newSource = try makeSource(for: requested)
 
         // PCM files on disk are always interleaved, but AVAudioFile's own `processingFormat` —
         // what `write(from:)` actually requires the buffer to match — is non-interleaved Float32
@@ -138,7 +217,7 @@ final class SystemAudioRecorder {
         // scratch buffer from the file's real processing format (same lesson as OfflineSeparationEngine).
         let interleavedSettingsFormat = AVAudioFormat(
             commonFormat: .pcmFormatFloat32,
-            sampleRate: newSetup.sampleRate,
+            sampleRate: newSource.sampleRate,
             channels: 2,
             interleaved: true
         )!
@@ -149,15 +228,15 @@ final class SystemAudioRecorder {
             throw RecorderError.noOutputDevice
         }
 
-        setup = newSetup
+        source = newSource
         fileFormat = writeFormat
         file = audioFile
         scratchBuffer = scratch
         scratchLeft = [Float](repeating: 0, count: Self.maxFramesPerCallback)
         scratchRight = [Float](repeating: 0, count: Self.maxFramesPerCallback)
         recordingURL = url
-        sampleRate = newSetup.sampleRate
-        bucketSampleCount = max(1, Int(newSetup.sampleRate * 0.1))
+        sampleRate = newSource.sampleRate
+        bucketSampleCount = max(1, Int(newSource.sampleRate * 0.1))
         samplesInBucket = 0
         bucketMin = 0
         bucketMax = 0
@@ -165,17 +244,104 @@ final class SystemAudioRecorder {
         peaks = []
         loggedFirstWriteError = false
 
-        let recorder = self
-        procID = try ProcessTapSession.startIO(setup: newSetup, queue: ioQueue) { _, inInputData, _, _, _ in
-            recorder.handleIO(inInputData: inInputData)
+        try startIO(source: newSource)
+        AppLogger.shared.info("Practice recording started from \(requested.displayName): \(url.lastPathComponent), writeFormat=\(writeFormat)")
+    }
+
+    /// Acquires the capture device for `requested`, without touching any of the recorder's state —
+    /// so a failure here leaves a previous take's teardown untouched and nothing half-configured.
+    private func makeSource(for requested: RecordingSource) throws -> ActiveSource {
+        switch requested {
+        case .systemAudio:
+            guard let defaultID = CoreAudioDevices.defaultOutputDeviceID(),
+                  let device = CoreAudioDevices.device(for: defaultID)
+            else {
+                throw RecorderError.noOutputDevice
+            }
+            let setup = try ProcessTapSession.create(
+                outputDeviceUID: device.uid,
+                captureScope: .allApps,
+                selectedBundleIDs: [],
+                muteBehavior: .unmuted
+            )
+            return .systemAudio(setup)
+
+        case .inputDevice(let uid):
+            guard let device = CoreAudioDevices.device(withUID: uid), device.isInputCapable else {
+                throw RecorderError.inputDeviceUnavailable
+            }
+            guard let format = Self.inputFormat(for: device.id) else {
+                throw RecorderError.inputFormatUnavailable(name: device.name)
+            }
+            return .inputDevice(id: device.id, format: format, sampleRate: format.sampleRate)
         }
-        AppLogger.shared.info("Practice recording started: \(url.lastPathComponent), writeFormat=\(writeFormat)")
+    }
+
+    /// The device's *current* input stream format. Read rather than assumed: mics vary in rate and
+    /// channel count (built-in mics are typically mono), and `handleIO` needs the real layout to
+    /// interpret the buffer list — `extractStereoFloat` already duplicates a mono channel to both
+    /// sides, but only if it's told the format is mono.
+    private static func inputFormat(for deviceID: AudioDeviceID) -> AVAudioFormat? {
+        var address = AudioObjectPropertyAddress(
+            mSelector: kAudioDevicePropertyStreamFormat,
+            mScope: kAudioDevicePropertyScopeInput,
+            mElement: kAudioObjectPropertyElementMain
+        )
+        var description = AudioStreamBasicDescription()
+        var size = UInt32(MemoryLayout<AudioStreamBasicDescription>.size)
+        let status = AudioObjectGetPropertyData(deviceID, &address, 0, nil, &size, &description)
+        guard status == noErr else {
+            AppLogger.shared.error("Unable to read input stream format for device \(deviceID): OSStatus \(status)")
+            return nil
+        }
+        return AVAudioFormat(streamDescription: &description)
+    }
+
+    private func startIO(source: ActiveSource) throws {
+        switch source {
+        case .systemAudio(let setup):
+            let recorder = self
+            procID = try ProcessTapSession.startIO(setup: setup, queue: ioQueue) { _, inInputData, _, _, _ in
+                recorder.handleIO(inInputData: inInputData)
+            }
+
+        case .inputDevice(let id, _, _):
+            let recorder = self
+            var newProcID: AudioDeviceIOProcID?
+            let createStatus = AudioDeviceCreateIOProcIDWithBlock(&newProcID, id, ioQueue) { _, inInputData, _, _, _ in
+                recorder.handleIO(inInputData: inInputData)
+            }
+            guard createStatus == noErr, let newProcID else {
+                throw AudioEngineError.coreAudio("Create input device IO proc", createStatus)
+            }
+            let startStatus = AudioDeviceStart(id, newProcID)
+            guard startStatus == noErr else {
+                AudioDeviceDestroyIOProcID(id, newProcID)
+                throw AudioEngineError.coreAudio("Start input device", startStatus)
+            }
+            procID = newProcID
+        }
+    }
+
+    /// Symmetric teardown for both source kinds. `ProcessTapSession.stopIO` does exactly this for
+    /// the aggregate; the input path can't reuse it because it takes a `TapAggregateSetup`.
+    private func stopIO(source: ActiveSource) {
+        guard let procID else { return }
+        let deviceID = source.deviceID
+        let stopStatus = AudioDeviceStop(deviceID, procID)
+        if stopStatus != noErr {
+            AppLogger.shared.error("AudioDeviceStop failed: OSStatus \(stopStatus)")
+        }
+        let destroyStatus = AudioDeviceDestroyIOProcID(deviceID, procID)
+        if destroyStatus != noErr {
+            AppLogger.shared.error("AudioDeviceDestroyIOProcID failed: OSStatus \(destroyStatus)")
+        }
     }
 
     // MARK: - IO (runs on ioQueue, called by CoreAudio)
 
     private func handleIO(inInputData: UnsafePointer<AudioBufferList>?) {
-        guard let inInputData, let tapFormat = setup?.audioFormat, let file, let scratch = scratchBuffer else { return }
+        guard let inInputData, let tapFormat = source?.audioFormat, let file, let scratch = scratchBuffer else { return }
         guard let inputBuffer = AVAudioPCMBuffer(
             pcmFormat: tapFormat,
             bufferListNoCopy: UnsafeMutablePointer(mutating: inInputData),

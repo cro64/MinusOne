@@ -12,6 +12,9 @@ import AppKit
 final class PracticeTabViewController: NSViewController {
     let importActionButton = WindowUI.toolbarActionButton(title: "Import", symbolName: "square.and.arrow.down", symbolPointSize: 12, target: nil, action: nil)
     let recordActionButton = WindowUI.toolbarActionButton(title: "Record", symbolName: "record.circle", symbolPointSize: 12, target: nil, action: nil)
+    /// Running elapsed readout, shown only while a recording is in flight. Clicking it returns to
+    /// the Record page — going back doesn't stop the take, so there has to be a way forward again.
+    let recordElapsedButton = WindowUI.linkButton(title: "")
 
     private let splitViewController: PracticeSplitViewController
 
@@ -45,7 +48,17 @@ final class PracticeTabViewController: NSViewController {
             button.cornerStyle = .capsule
         }
 
-        let actionRow = Layout.horizontalStack([importActionButton, recordActionButton], spacing: WindowUI.Metrics.rowSpacing)
+        recordElapsedButton.isHidden = true
+        recordElapsedButton.textColorOverride = .brandAccentDeep
+        // A running time reads as a label, so its one affordance is spelled out rather than left to
+        // be discovered by clicking.
+        recordElapsedButton.toolTip = "Back to the recording"
+        recordElapsedButton.setAccessibilityLabel("Back to the recording")
+
+        let actionRow = Layout.horizontalStack(
+            [importActionButton, recordActionButton, recordElapsedButton],
+            spacing: WindowUI.Metrics.rowSpacing
+        )
         // Only pinned by leading+top below, with no height/bottom of its own — nothing stops
         // Auto Layout from stretching it to soak up whatever height `splitView` doesn't claim
         // (confirmed via direct frame logging: actionRow measured 374pt tall, not ~26pt, exactly
@@ -65,5 +78,27 @@ final class PracticeTabViewController: NSViewController {
         // buttons 14pt above the clip search field — the spacing the row had before `FlatButton`'s
         // alignment-rect fix stopped its 33.5pt paint from overlapping the gap.
         splitView.topAnchor.constraint(equalTo: actionRow.bottomAnchor, constant: 4).isActive = true
+    }
+
+    /// Reflects the shared recorder's state in the action row. A recording started from the Record
+    /// page (or the menu bar) keeps running after you navigate back here, so Record has to become
+    /// the way to stop it — otherwise the only stop control is on a page you've left.
+    func setRecordingState(_ recording: Bool) {
+        recordActionButton.title = recording ? "Stop" : "Record"
+        // Via `setSymbol`, not a bare `image =` — see its doc comment.
+        recordActionButton.setSymbol(
+            recording ? "stop.fill" : "record.circle",
+            pointSize: 12,
+            accessibilityDescription: recording ? "Stop" : "Record"
+        )
+        recordElapsedButton.isHidden = !recording
+        // Seeded rather than left blank until the first progress tick ~100ms later, which would
+        // otherwise show an empty button for a frame.
+        recordElapsedButton.title = recording ? "●  0:00" : ""
+    }
+
+    func updateRecordingElapsed(_ seconds: Double) {
+        guard !recordElapsedButton.isHidden else { return }
+        recordElapsedButton.title = "●  \(seconds.formattedAsDuration)"
     }
 }
