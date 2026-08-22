@@ -24,6 +24,9 @@ final class RecordPageViewController: NSViewController {
     private let sourceDot = DotView(color: .secondaryLabelColor)
     private let sourcePopUp = NSPopUpButton(frame: .zero, pullsDown: false)
     private let sourceStatusLabel = NSTextField(labelWithString: "")
+    /// The dot + status line, kept as a property so the whole row can be hidden. It carries only
+    /// problems (a denied mic, a failed start), so most of the time there is nothing to show.
+    private var sourceStatusRow: NSView?
     /// Input devices in the order they were put into `sourcePopUp`, so a selected index maps back
     /// to a device without parsing the menu item's title.
     private var sourceDevices: [AudioDevice] = []
@@ -212,6 +215,7 @@ final class RecordPageViewController: NSViewController {
         settingsButton.isHidden = true
 
         let status = Layout.horizontalStack([sourceDot, sourceStatusLabel, Layout.flexibleSpacer()], spacing: 8)
+        sourceStatusRow = status
         return WindowUI.card(title: "Input source", rows: [sourcePopUp, status, settingsButton])
     }
 
@@ -242,30 +246,27 @@ final class RecordPageViewController: NSViewController {
         updateSourceStatus()
     }
 
-    /// One line describing what the current selection will actually record, plus the dot's color.
+    /// Shows what is *wrong* with the current selection, and nothing at all when nothing is. The
+    /// picker's own item titles already say what each source is; restating "records whatever your
+    /// Mac is playing" under a menu that says "System audio" is a definition nobody asked for.
+    ///
     /// Deliberately not a permission *check* — macOS only reports microphone authorization once
     /// asked, and prompting on mere selection would be a prompt the user didn't ask for. The real
     /// gate is in `ClipRecorder.startRecording`, on the Start button.
     private func updateSourceStatus() {
-        let source = preferences.recordingSource
-        sourceDot.color = .secondaryLabelColor
-        sourceStatusLabel.textColor = .secondaryLabelColor
         sourceStatusLabel.toolTip = nil
         settingsButton.isHidden = true
 
-        switch source {
-        case .systemAudio:
-            sourceStatusLabel.stringValue = "Records whatever your Mac is playing."
-        case .inputDevice:
-            if AudioPermission.isMicrophoneDenied {
-                sourceDot.color = .systemRed
-                sourceStatusLabel.textColor = .systemRed
-                sourceStatusLabel.stringValue = "Microphone access is denied."
-                settingsButton.isHidden = false
-            } else {
-                sourceStatusLabel.stringValue = "Records this input directly, not your Mac's output."
-            }
+        guard case .inputDevice = preferences.recordingSource, AudioPermission.isMicrophoneDenied else {
+            sourceStatusRow?.isHidden = true
+            return
         }
+
+        sourceStatusRow?.isHidden = false
+        sourceDot.color = .systemRed
+        sourceStatusLabel.textColor = .systemRed
+        sourceStatusLabel.stringValue = "Microphone access is denied."
+        settingsButton.isHidden = false
     }
 
     @objc private func sourceChanged() {
@@ -447,6 +448,7 @@ final class RecordPageViewController: NSViewController {
     private func showError(_ error: Error) {
         let isMicDenial = (error as? ClipRecorder.RecorderError)?.isMicrophonePermissionIssue ?? false
         let isTapDenial = (error as? AudioEngineError)?.isLikelyPermissionDenied ?? false
+        sourceStatusRow?.isHidden = false
         sourceDot.color = .systemRed
         sourceStatusLabel.textColor = .systemRed
         // The recorder's own errors already name the device and say what went wrong; only the
