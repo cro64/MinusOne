@@ -10,7 +10,7 @@ final class RollingStereoBuffer {
     private let totalWritten: UnsafeMutablePointer<mo_atomic_uint64_t>
 
     init(capacitySamples: Int) {
-        let powerOfTwo = Self.nextPowerOfTwo(max(capacitySamples, 2))
+        let powerOfTwo = max(capacitySamples, 2).roundedUpToPowerOfTwo
         capacity = powerOfTwo
         mask = powerOfTwo - 1
         left = UnsafeMutablePointer<Float>.allocate(capacity: powerOfTwo)
@@ -131,13 +131,5 @@ final class RollingStereoBuffer {
     func clearSamples() {
         left.update(repeating: 0, count: capacity)
         right.update(repeating: 0, count: capacity)
-    }
-
-    private static func nextPowerOfTwo(_ value: Int) -> Int {
-        var result = 1
-        while result < value {
-            result <<= 1
-        }
-        return result
     }
 }

@@ -120,6 +120,43 @@ final class StatusHeaderView: NSView {
         fatalError("init(coder:) has not been implemented")
     }
 
+    /// Renders `status` directly. The Live tab and the menu bar popover each used to carry their
+    /// own private `statusCopy(for:isFilterActive:)` — same strings, same colors, written twice —
+    /// which is exactly the split this view's `Scale` comment says shouldn't exist: one component,
+    /// one set of semantics, a scale knob for the difference. The copies had already drifted on
+    /// `.passthrough`/`.idle`, and since both ended in a `default` branch, neither would have been
+    /// flagged by the compiler when a new `AudioEngineStatus` case appeared.
+    func update(for status: AudioEngineStatus, isFilterActive: Bool) {
+        let copy = Self.copy(for: status, isFilterActive: isFilterActive)
+        update(title: copy.title, indicatorColor: copy.indicatorColor, errorDetail: copy.errorDetail)
+    }
+
+    /// Deliberately exhaustive — no `default`. A new `AudioEngineStatus` case should stop the
+    /// build here, at the one place that decides what a status *says*, rather than silently
+    /// rendering as "Off" on two surfaces.
+    ///
+    /// `.passthrough`/`.idle` read as "Off" whatever `isFilterActive` claims: both mean the engine
+    /// isn't reducing, so the status is the more trustworthy of the two. (The popover's old copy
+    /// resolved these through its `default` and could briefly say "On" instead, since it tracks
+    /// status and filter state through two separate updates.)
+    static func copy(
+        for status: AudioEngineStatus,
+        isFilterActive: Bool
+    ) -> (title: String, indicatorColor: NSColor, errorDetail: String?) {
+        switch status {
+        case .active:
+            return isFilterActive ? ("On", .brandAccentDeep, nil) : ("Off", .tertiaryLabelColor, nil)
+        case .warmingUp:
+            return ("Warming up", .systemCyan, nil)
+        case .permissionRequired:
+            return ("Permission needed", .systemOrange, nil)
+        case .error(let message):
+            return ("Error", .systemRed, message)
+        case .passthrough, .idle:
+            return ("Off", .tertiaryLabelColor, nil)
+        }
+    }
+
     func update(title: String, indicatorColor: NSColor, errorDetail: String? = nil) {
         infoPopover?.performClose(nil)
         infoPopover = nil

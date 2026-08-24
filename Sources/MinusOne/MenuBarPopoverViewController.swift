@@ -126,30 +126,11 @@ final class MenuBarPopoverViewController: NSViewController {
     }
 
     private func refreshStatusHeader() {
-        let (title, indicatorColor, errorDetail) = statusCopy(for: currentStatus, isFilterActive: isFilterActive)
-
         if statusHeader.superview !== statusHeaderContainer {
             statusHeaderContainer.subviews.forEach { $0.removeFromSuperview() }
             Layout.pin(statusHeader, to: statusHeaderContainer)
         }
-        statusHeader.update(title: title, indicatorColor: indicatorColor, errorDetail: errorDetail)
-    }
-
-    private func statusCopy(for status: AudioEngineStatus, isFilterActive: Bool) -> (String, NSColor, String?) {
-        switch status {
-        case .active where isFilterActive:
-            return ("On", .brandAccentDeep, nil)
-        case .warmingUp:
-            return ("Warming up", .systemCyan, nil)
-        case .permissionRequired:
-            return ("Permission needed", .systemOrange, nil)
-        case .error(let message):
-            return ("Error", .systemRed, message)
-        default:
-            return isFilterActive
-                ? ("On", .brandAccentDeep, nil)
-                : ("Off", .tertiaryLabelColor, nil)
-        }
+        statusHeader.update(for: currentStatus, isFilterActive: isFilterActive)
     }
 
     @objc private func openWindow() {

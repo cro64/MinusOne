@@ -347,7 +347,6 @@ final class LiveTabViewController: NSViewController {
 
     private func refreshStatusHeader(isFilterActive: Bool? = nil) {
         let active = isFilterActive ?? audioEngine.isVocalReductionActive
-        let (title, indicatorColor, errorDetail) = statusCopy(for: currentStatus, isFilterActive: active)
 
         if statusHeaderContainer.subviews.isEmpty {
             let row = statusRow()
@@ -359,26 +358,7 @@ final class LiveTabViewController: NSViewController {
                 row.bottomAnchor.constraint(equalTo: statusHeaderContainer.bottomAnchor)
             ])
         }
-        statusHeader.update(title: title, indicatorColor: indicatorColor, errorDetail: errorDetail)
-    }
-
-    private func statusCopy(for status: AudioEngineStatus, isFilterActive: Bool) -> (String, NSColor, String?) {
-        switch status {
-        case .active where isFilterActive:
-            return ("On", .brandAccentDeep, nil)
-        case .warmingUp:
-            return ("Warming up", .systemCyan, nil)
-        case .permissionRequired:
-            return ("Permission needed", .systemOrange, nil)
-        case .error(let message):
-            return ("Error", .systemRed, message)
-        case .passthrough, .idle:
-            return ("Off", .tertiaryLabelColor, nil)
-        default:
-            return isFilterActive
-                ? ("On", .brandAccentDeep, nil)
-                : ("Off", .tertiaryLabelColor, nil)
-        }
+        statusHeader.update(for: currentStatus, isFilterActive: active)
     }
 
     private func refreshControlStates() {
