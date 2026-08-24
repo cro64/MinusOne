@@ -363,9 +363,9 @@ final class AudioEngine {
             return
         }
 
-        let frameCount = tapFrameCount(for: inputBuffer, format: audioFormat)
+        let frameCount = TapBufferReader.frameCount(for: inputBuffer, format: audioFormat)
         guard frameCount > 0, frameCount <= maxFramesPerCallback else { return }
-        guard extractStereoFloat(
+        guard TapBufferReader.extractStereoFloat(
             from: inputBuffer,
             format: audioFormat,
             left: processedLeft,
@@ -402,50 +402,6 @@ final class AudioEngine {
                 "Process tap IO heartbeat: callbacks=\(processTapCallbackCount) peak=\(String(format: "%.4f", peak))"
             )
         }
-    }
-
-    private func tapFrameCount(for buffer: AVAudioPCMBuffer, format: AVAudioFormat) -> Int {
-        if buffer.frameLength > 0 {
-            return Int(buffer.frameLength)
-        }
-
-        let buffers = UnsafeMutableAudioBufferListPointer(
-            UnsafeMutablePointer(mutating: buffer.audioBufferList)
-        )
-        guard let first = buffers.first, first.mDataByteSize > 0 else { return 0 }
-        let channels = max(Int(format.channelCount), 1)
-        return Int(first.mDataByteSize) / (MemoryLayout<Float>.size * channels)
-    }
-
-    private func extractStereoFloat(
-        from buffer: AVAudioPCMBuffer,
-        format: AVAudioFormat,
-        left: UnsafeMutablePointer<Float>,
-        right: UnsafeMutablePointer<Float>,
-        frameCount: Int
-    ) -> Bool {
-        if format.isInterleaved {
-            guard let data = buffer.audioBufferList.pointee.mBuffers.mData else { return false }
-            let samples = data.assumingMemoryBound(to: Float.self)
-            for frame in 0..<frameCount {
-                left[frame] = samples[frame * 2]
-                right[frame] = samples[frame * 2 + 1]
-            }
-            return true
-        }
-
-        guard let channels = buffer.floatChannelData else { return false }
-        if format.channelCount >= 2 {
-            left.update(from: channels[0], count: frameCount)
-            right.update(from: channels[1], count: frameCount)
-            return true
-        }
-
-        left.update(from: channels[0], count: frameCount)
-        for frame in 0..<frameCount {
-            right[frame] = channels[0][frame]
-        }
-        return true
     }
 
     private func writeInterleavedStereo(
@@ -933,12 +889,12 @@ final class AudioEngine {
             inputProcRefCon: Unmanaged.passUnretained(self).toOpaque()
         )
 
-        try check(AudioUnitSetProperty(unit, kAudioOutputUnitProperty_EnableIO, kAudioUnitScope_Input, 1, &one, UInt32(MemoryLayout<UInt32>.size)), "Enable input IO")
-        try check(AudioUnitSetProperty(unit, kAudioOutputUnitProperty_EnableIO, kAudioUnitScope_Output, 0, &zero, UInt32(MemoryLayout<UInt32>.size)), "Disable input unit output IO")
-        try check(AudioUnitSetProperty(unit, kAudioOutputUnitProperty_CurrentDevice, kAudioUnitScope_Global, 0, &mutableDeviceID, UInt32(MemoryLayout<AudioDeviceID>.size)), "Set capture input device")
-        try check(AudioUnitSetProperty(unit, kAudioOutputUnitProperty_SetInputCallback, kAudioUnitScope_Global, 0, &callback, UInt32(MemoryLayout<AURenderCallbackStruct>.size)), "Set input callback")
-        try check(AudioUnitSetProperty(unit, kAudioUnitProperty_StreamFormat, kAudioUnitScope_Output, 1, &format, UInt32(MemoryLayout<AudioStreamBasicDescription>.size)), "Set input stream format")
-        try check(AudioUnitInitialize(unit), "Initialize input unit")
+        try checkCoreAudio(AudioUnitSetProperty(unit, kAudioOutputUnitProperty_EnableIO, kAudioUnitScope_Input, 1, &one, UInt32(MemoryLayout<UInt32>.size)), "Enable input IO")
+        try checkCoreAudio(AudioUnitSetProperty(unit, kAudioOutputUnitProperty_EnableIO, kAudioUnitScope_Output, 0, &zero, UInt32(MemoryLayout<UInt32>.size)), "Disable input unit output IO")
+        try checkCoreAudio(AudioUnitSetProperty(unit, kAudioOutputUnitProperty_CurrentDevice, kAudioUnitScope_Global, 0, &mutableDeviceID, UInt32(MemoryLayout<AudioDeviceID>.size)), "Set capture input device")
+        try checkCoreAudio(AudioUnitSetProperty(unit, kAudioOutputUnitProperty_SetInputCallback, kAudioUnitScope_Global, 0, &callback, UInt32(MemoryLayout<AURenderCallbackStruct>.size)), "Set input callback")
+        try checkCoreAudio(AudioUnitSetProperty(unit, kAudioUnitProperty_StreamFormat, kAudioUnitScope_Output, 1, &format, UInt32(MemoryLayout<AudioStreamBasicDescription>.size)), "Set input stream format")
+        try checkCoreAudio(AudioUnitInitialize(unit), "Initialize input unit")
     }
 
     private func configureOutputUnit(_ unit: AudioUnit, deviceID: AudioDeviceID, format: inout AudioStreamBasicDescription) throws {
@@ -950,12 +906,12 @@ final class AudioEngine {
             inputProcRefCon: Unmanaged.passUnretained(self).toOpaque()
         )
 
-        try check(AudioUnitSetProperty(unit, kAudioOutputUnitProperty_EnableIO, kAudioUnitScope_Output, 0, &one, UInt32(MemoryLayout<UInt32>.size)), "Enable output IO")
-        try check(AudioUnitSetProperty(unit, kAudioOutputUnitProperty_EnableIO, kAudioUnitScope_Input, 1, &zero, UInt32(MemoryLayout<UInt32>.size)), "Disable output unit input IO")
-        try check(AudioUnitSetProperty(unit, kAudioOutputUnitProperty_CurrentDevice, kAudioUnitScope_Global, 0, &mutableDeviceID, UInt32(MemoryLayout<AudioDeviceID>.size)), "Set physical output device")
-        try check(AudioUnitSetProperty(unit, kAudioUnitProperty_SetRenderCallback, kAudioUnitScope_Input, 0, &callback, UInt32(MemoryLayout<AURenderCallbackStruct>.size)), "Set output callback")
-        try check(AudioUnitSetProperty(unit, kAudioUnitProperty_StreamFormat, kAudioUnitScope_Input, 0, &format, UInt32(MemoryLayout<AudioStreamBasicDescription>.size)), "Set output stream format")
-        try check(AudioUnitInitialize(unit), "Initialize output unit")
+        try checkCoreAudio(AudioUnitSetProperty(unit, kAudioOutputUnitProperty_EnableIO, kAudioUnitScope_Output, 0, &one, UInt32(MemoryLayout<UInt32>.size)), "Enable output IO")
+        try checkCoreAudio(AudioUnitSetProperty(unit, kAudioOutputUnitProperty_EnableIO, kAudioUnitScope_Input, 1, &zero, UInt32(MemoryLayout<UInt32>.size)), "Disable output unit input IO")
+        try checkCoreAudio(AudioUnitSetProperty(unit, kAudioOutputUnitProperty_CurrentDevice, kAudioUnitScope_Global, 0, &mutableDeviceID, UInt32(MemoryLayout<AudioDeviceID>.size)), "Set physical output device")
+        try checkCoreAudio(AudioUnitSetProperty(unit, kAudioUnitProperty_SetRenderCallback, kAudioUnitScope_Input, 0, &callback, UInt32(MemoryLayout<AURenderCallbackStruct>.size)), "Set output callback")
+        try checkCoreAudio(AudioUnitSetProperty(unit, kAudioUnitProperty_StreamFormat, kAudioUnitScope_Input, 0, &format, UInt32(MemoryLayout<AudioStreamBasicDescription>.size)), "Set output stream format")
+        try checkCoreAudio(AudioUnitInitialize(unit), "Initialize output unit")
     }
 
     private func makeHALUnit() throws -> AudioUnit {
@@ -983,7 +939,7 @@ final class AudioEngine {
         guard let unit else {
             throw AudioEngineError.coreAudio("Missing \(label) audio unit", unspecifiedAudioStatus)
         }
-        try check(AudioOutputUnitStart(unit), "Start \(label) unit")
+        try checkCoreAudio(AudioOutputUnitStart(unit), "Start \(label) unit")
     }
 
     private func stopAudioUnitsOnly() {
@@ -1042,12 +998,6 @@ final class AudioEngine {
             mBitsPerChannel: 32,
             mReserved: 0
         )
-    }
-
-    private func check(_ status: OSStatus, _ message: String) throws {
-        guard status == noErr else {
-            throw AudioEngineError.coreAudio(message, status)
-        }
     }
 }
 

@@ -6,7 +6,10 @@ import CoreAudio
 /// and icons; persists through `Preferences.selectedAppBundleIDs` via `AudioEngine`.
 @available(macOS 14.2, *)
 final class AppCaptureChecklistView: NSView {
-    private enum Layout {
+    /// Named `Metrics`, matching `WindowUI.Metrics`/`PopoverUI.Metrics` — and *not* `Layout`, which
+    /// is the module-level Auto Layout helper (`AutoLayout.swift`). A nested `Layout` shadowed it
+    /// inside this file, which is why `pin` had to be called as `MinusOne.Layout.pin` here.
+    private enum Metrics {
         static let rowHeight: CGFloat = 26
     }
 
@@ -72,7 +75,7 @@ final class AppCaptureChecklistView: NSView {
         scrollView.autohidesScrollers = true
         scrollView.drawsBackground = false
         scrollView.borderType = .noBorder
-        MinusOne.Layout.pin(scrollView, to: self)
+        Layout.pin(scrollView, to: self)
 
         emptyLabel.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
         emptyLabel.textColor = .secondaryLabelColor
@@ -90,13 +93,13 @@ final class AppCaptureChecklistView: NSView {
         // which is not a picker. Five rows is what it takes to choose between apps rather than
         // scroll a keyhole; the Live tab's hero meter, which hugs at priority 1 and had ~436pt,
         // is what gives up the room.
-        let preferredHeight = heightAnchor.constraint(equalToConstant: Layout.rowHeight * 5)
+        let preferredHeight = heightAnchor.constraint(equalToConstant: Metrics.rowHeight * 5)
         preferredHeight.priority = .defaultLow
         preferredHeight.isActive = true
 
         NSLayoutConstraint.activate([
             // A row of list is the hard floor: enough that the control still reads as a list.
-            heightAnchor.constraint(greaterThanOrEqualToConstant: Layout.rowHeight),
+            heightAnchor.constraint(greaterThanOrEqualToConstant: Metrics.rowHeight),
             // Tied to the clip view, not to `scrollView` itself. A legacy (always-visible)
             // vertical scroller takes its 17pt out of the clip view's width while the scroll
             // view stays the same, so measuring against the scroll view made every row 17pt
@@ -127,7 +130,7 @@ final class AppCaptureChecklistView: NSView {
             let row = AppChecklistRow(
                 app: app,
                 isSelected: selected.contains(app.bundleID),
-                rowHeight: Layout.rowHeight,
+                rowHeight: Metrics.rowHeight,
                 isEnabled: isEnabled
             ) { [weak self] bundleID in
                 self?.audioEngine.toggleSelectedAppBundleID(bundleID)

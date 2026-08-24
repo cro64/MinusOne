@@ -34,6 +34,17 @@ enum AudioEngineStatus: Equatable {
     }
 }
 
+/// Throws `AudioEngineError.coreAudio(message, status)` unless `status` is `noErr`.
+///
+/// Free function rather than a method on either caller: `AudioEngine` and `ProcessTapSession` each
+/// carried a byte-identical private `check(_:_:)`, and every new CoreAudio call site had to pick
+/// one to live next to.
+func checkCoreAudio(_ status: OSStatus, _ message: String) throws {
+    guard status == noErr else {
+        throw AudioEngineError.coreAudio(message, status)
+    }
+}
+
 enum AudioEngineError: Error, LocalizedError {
     case blackHoleMissing
     case blackHoleDriverInstalledButNotLoaded

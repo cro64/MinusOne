@@ -9,8 +9,8 @@ final class PracticeSplitViewController: NSSplitViewController {
         // built for a pane that runs the full height of the window under the title bar, so with
         // `.fullSizeContentView` it insets its content by the title bar height regardless of where
         // the split view is actually placed — measured at 24pt of dead space under Practice's
-        // Import/Record row, which sits above this split view. `ClipSidebarViewController` now
-        // paints the sidebar material itself, so the look is unchanged.
+        // Import/Record row, which sits above this split view. `ClipSidebarViewController` paints its
+        // own background instead.
         let sidebarItem = NSSplitViewItem(viewController: sidebar)
         sidebarItem.minimumThickness = 220
         sidebarItem.maximumThickness = 360

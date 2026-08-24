@@ -90,7 +90,7 @@ enum ProcessTapSession {
         ]
 
         var aggregateID = AudioObjectID(kAudioObjectUnknown)
-        try check(
+        try checkCoreAudio(
             AudioHardwareCreateAggregateDevice(
                 aggregateDescription as CFDictionary,
                 &aggregateID
@@ -114,14 +114,14 @@ enum ProcessTapSession {
         ioBlock: @escaping AudioDeviceIOBlock
     ) throws -> AudioDeviceIOProcID {
         var procID: AudioDeviceIOProcID?
-        try check(
+        try checkCoreAudio(
             AudioDeviceCreateIOProcIDWithBlock(&procID, setup.aggregateID, queue, ioBlock),
             "Create process tap IO proc"
         )
         guard let procID else {
             throw AudioEngineError.coreAudio("Process tap IO proc was nil", unspecifiedAudioStatus)
         }
-        try check(AudioDeviceStart(setup.aggregateID, procID), "Start process tap aggregate")
+        try checkCoreAudio(AudioDeviceStart(setup.aggregateID, procID), "Start process tap aggregate")
         return procID
     }
 
@@ -245,12 +245,6 @@ enum ProcessTapSession {
             return nil
         }
         return ownProcessObject
-    }
-
-    private static func check(_ status: OSStatus, _ message: String) throws {
-        guard status == noErr else {
-            throw AudioEngineError.coreAudio(message, status)
-        }
     }
 }
 

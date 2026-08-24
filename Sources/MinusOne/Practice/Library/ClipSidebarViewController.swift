@@ -58,18 +58,16 @@ final class ClipSidebarViewController: NSViewController, NSTableViewDataSource, 
         root.onDropFiles = { [weak self] urls in self?.onDropFiles?(urls) }
         view = root
 
-        // The sidebar's translucent background used to come from
-        // `NSSplitViewItem(sidebarWithViewController:)`. That item type assumes the full-height
-        // sidebar pattern — content running up under the title bar — so in a `.fullSizeContentView`
-        // window it reserves title-bar room at its top whether or not it actually sits there.
-        // Measured: 24pt of dead space above the search field, even though `PracticeTabViewController`
-        // places this pane well below the header. `PracticeSplitViewController` now uses a plain
-        // item, and the material moves here, where it can be applied without that assumption.
-        let background = NSVisualEffectView()
-        background.material = .sidebar
-        background.blendingMode = .behindWindow
-        background.state = .followsWindowActiveState
-        Layout.pin(background, to: root)
+        // Solid, not an `NSVisualEffectView` with the `.sidebar` material. That material blends
+        // `.behindWindow`, so the library pane sampled the desktop through the window while every
+        // other surface in the app paints an opaque `windowBackgroundColor` — the sidebar was the
+        // one translucent area on screen. Matching the window fill keeps it continuous with the
+        // deck beside it; the split view's divider is what separates the two panes.
+        //
+        // `ThemedView`, not a bare `layer.backgroundColor` write: `windowBackgroundColor` resolves
+        // per-appearance, and a `cgColor` captured once freezes at whatever appearance was current
+        // (see `Appearance.swift`).
+        Layout.pin(ThemedView(fill: .windowBackgroundColor), to: root)
 
         searchField.placeholderString = "Search clips"
         searchField.target = self
@@ -88,7 +86,14 @@ final class ClipSidebarViewController: NSViewController, NSTableViewDataSource, 
         // row hangs off its top edge.
         tableView.rowHeight = 62
         tableView.backgroundColor = .clear
-        tableView.style = .sourceList
+        // `.inset`, not `.sourceList`. The source-list style is where the pane's translucency
+        // actually came from: AppKit installs its own `NSVisualEffectView` (material `.sidebar`,
+        // blending `.behindWindow` — read back off the live view hierarchy) inside the enclosing
+        // scroll view, so the desktop showed through the clip list while every other surface in
+        // the app is an opaque `windowBackgroundColor`. Nothing painted *behind* the table can fix
+        // that, since behind-window blending samples past the window entirely. `.inset` keeps the
+        // same inset, rounded row selection without the vibrancy.
+        tableView.style = .inset
         tableView.dataSource = self
         tableView.delegate = self
         tableView.target = self

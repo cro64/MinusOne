@@ -12,7 +12,7 @@ final class StereoDelayLine {
 
     init(requiredDelaySamples: Int, headroomSamples: Int = 0) {
         maxDelaySamples = requiredDelaySamples
-        let powerOfTwo = Self.nextPowerOfTwo(max(requiredDelaySamples + headroomSamples + 1, 2))
+        let powerOfTwo = max(requiredDelaySamples + headroomSamples + 1, 2).roundedUpToPowerOfTwo
         capacity = powerOfTwo
         mask = powerOfTwo - 1
         left = UnsafeMutablePointer<Float>.allocate(capacity: capacity)
@@ -72,13 +72,5 @@ final class StereoDelayLine {
             writeIndex += 1
         }
         framesProcessed += UInt64(frameCount)
-    }
-
-    private static func nextPowerOfTwo(_ value: Int) -> Int {
-        var result = 1
-        while result < value {
-            result <<= 1
-        }
-        return result
     }
 }

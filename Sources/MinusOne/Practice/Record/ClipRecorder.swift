@@ -348,12 +348,12 @@ final class ClipRecorder {
             deallocator: nil
         ) else { return }
 
-        let frameCount = Self.frameCount(for: inputBuffer, format: tapFormat)
+        let frameCount = TapBufferReader.frameCount(for: inputBuffer, format: tapFormat)
         guard frameCount > 0, frameCount <= Self.maxFramesPerCallback else { return }
 
         let extracted = scratchLeft.withUnsafeMutableBufferPointer { left -> Bool in
             scratchRight.withUnsafeMutableBufferPointer { right in
-                Self.extractStereoFloat(
+                TapBufferReader.extractStereoFloat(
                     from: inputBuffer,
                     format: tapFormat,
                     left: left.baseAddress!,
@@ -430,47 +430,5 @@ final class ClipRecorder {
         formatter.dateFormat = "yyyy-MM-dd HH.mm.ss"
         let name = "Recording \(formatter.string(from: Date())).caf"
         return FileManager.default.temporaryDirectory.appendingPathComponent(name)
-    }
-
-    private static func frameCount(for buffer: AVAudioPCMBuffer, format: AVAudioFormat) -> Int {
-        if buffer.frameLength > 0 {
-            return Int(buffer.frameLength)
-        }
-        let buffers = UnsafeMutableAudioBufferListPointer(UnsafeMutablePointer(mutating: buffer.audioBufferList))
-        guard let first = buffers.first, first.mDataByteSize > 0 else { return 0 }
-        let channels = max(Int(format.channelCount), 1)
-        return Int(first.mDataByteSize) / (MemoryLayout<Float>.size * channels)
-    }
-
-    /// Same technique as `AudioEngine.extractStereoFloat` — handles both interleaved and planar tap formats.
-    private static func extractStereoFloat(
-        from buffer: AVAudioPCMBuffer,
-        format: AVAudioFormat,
-        left: UnsafeMutablePointer<Float>,
-        right: UnsafeMutablePointer<Float>,
-        frameCount: Int
-    ) -> Bool {
-        if format.isInterleaved {
-            guard let data = buffer.audioBufferList.pointee.mBuffers.mData else { return false }
-            let samples = data.assumingMemoryBound(to: Float.self)
-            for frame in 0..<frameCount {
-                left[frame] = samples[frame * 2]
-                right[frame] = samples[frame * 2 + 1]
-            }
-            return true
-        }
-
-        guard let channels = buffer.floatChannelData else { return false }
-        if format.channelCount >= 2 {
-            left.update(from: channels[0], count: frameCount)
-            right.update(from: channels[1], count: frameCount)
-            return true
-        }
-
-        left.update(from: channels[0], count: frameCount)
-        for frame in 0..<frameCount {
-            right[frame] = channels[0][frame]
-        }
-        return true
     }
 }
