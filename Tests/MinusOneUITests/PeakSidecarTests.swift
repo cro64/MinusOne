@@ -92,3 +92,95 @@ final class PeakSidecarTests: XCTestCase {
         XCTAssertEqual(try PeakSidecarReader(contentsOf: url()).availableDuration, 1.0, accuracy: 0.01)
     }
 }
+
+final class PeakSidecarWriterTests: XCTestCase {
+    private var directory: URL!
+
+    override func setUpWithError() throws {
+        directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("PeakSidecarWriterTests-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    }
+
+    override func tearDownWithError() throws {
+        try? FileManager.default.removeItem(at: directory)
+    }
+
+    private func url(_ name: String) -> URL { directory.appendingPathComponent(name) }
+
+    private func ramp(_ count: Int) -> [Float] {
+        (0..<count).map { sinf(Float($0) * 0.01) }
+    }
+
+    func testTwoWholeColumnsOfSamplesProduceTwoColumns() throws {
+        let writer = try PeakSidecarWriter(url: url("a.peaks"), sampleRate: 44_100)
+        try writer.append(ramp(512))
+        try writer.finish()
+        XCTAssertEqual(try PeakSidecarReader(contentsOf: url("a.peaks")).columnCount, 2)
+    }
+
+    /// Nothing is emitted for a partial column until `finish()`, so a reader mid-separation sees
+    /// only fully-covered columns.
+    func testAPartialColumnIsNotEmittedUntilFinish() throws {
+        let writer = try PeakSidecarWriter(url: url("b.peaks"), sampleRate: 44_100)
+        try writer.append(ramp(300))
+        XCTAssertEqual(try PeakSidecarReader(contentsOf: url("b.peaks")).columnCount, 1)
+        try writer.finish()
+        XCTAssertEqual(try PeakSidecarReader(contentsOf: url("b.peaks")).columnCount, 2)
+    }
+
+    /// The alignment guarantee: how the samples are chopped up across appends must not change
+    /// a single byte of the output.
+    func testRaggedAppendsProduceByteIdenticalOutputToOneBigAppend() throws {
+        let samples = ramp(2_000)
+
+        let single = try PeakSidecarWriter(url: url("single.peaks"), sampleRate: 44_100)
+        try single.append(samples)
+        try single.finish()
+
+        let ragged = try PeakSidecarWriter(url: url("ragged.peaks"), sampleRate: 44_100)
+        var offset = 0
+        for chunk in [7, 100, 1, 300, 512, 80, 1_000] {
+            let end = min(offset + chunk, samples.count)
+            guard offset < end else { break }
+            try ragged.append(samples[offset..<end])
+            offset = end
+        }
+        if offset < samples.count { try ragged.append(samples[offset...]) }
+        try ragged.finish()
+
+        XCTAssertEqual(try Data(contentsOf: url("single.peaks")), try Data(contentsOf: url("ragged.peaks")))
+    }
+
+    func testWrittenExtremesSurviveTheRoundTrip() throws {
+        var samples = [Float](repeating: 0, count: 256)
+        samples[10] = -0.8
+        samples[20] = 0.6
+        let writer = try PeakSidecarWriter(url: url("c.peaks"), sampleRate: 44_100)
+        try writer.append(samples)
+        try writer.finish()
+
+        let column = try PeakSidecarReader(contentsOf: url("c.peaks")).column(at: 0)
+        XCTAssertEqual(column.minimum, -0.8, accuracy: 1e-3)
+        XCTAssertEqual(column.maximum, 0.6, accuracy: 1e-3)
+        XCTAssertGreaterThan(column.rms, 0)
+        XCTAssertLessThan(column.rms, 0.8)
+    }
+
+    func testTheHeaderRecordsTheRateAndColumnSize() throws {
+        let writer = try PeakSidecarWriter(url: url("d.peaks"), sampleRate: 48_000, framesPerColumn: 128)
+        try writer.append(ramp(128))
+        try writer.finish()
+
+        let header = try PeakSidecarReader(contentsOf: url("d.peaks")).header
+        XCTAssertEqual(header.sampleRate, 48_000)
+        XCTAssertEqual(header.framesPerColumn, 128)
+    }
+
+    func testFinishingTwiceIsHarmless() throws {
+        let writer = try PeakSidecarWriter(url: url("e.peaks"), sampleRate: 44_100)
+        try writer.append(ramp(256))
+        try writer.finish()
+        XCTAssertNoThrow(try writer.finish())
+    }
+}
