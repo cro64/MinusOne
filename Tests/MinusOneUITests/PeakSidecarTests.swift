@@ -199,4 +199,18 @@ final class PeakSidecarWriterTests: XCTestCase {
         let column = try PeakSidecarReader(contentsOf: url("rms.peaks")).column(at: 0)
         XCTAssertEqual(column.rms, 0.7071, accuracy: 1e-3)
     }
+
+    /// After `finish()` succeeds, the writer must refuse further appends rather than silently
+    /// resuming — a resumed append would be writing a stray column onto an already-finalized file.
+    func testAppendAfterFinishWritesNothing() throws {
+        let writer = try PeakSidecarWriter(url: url("f.peaks"), sampleRate: 44_100)
+        try writer.append(ramp(256))
+        try writer.finish()
+
+        let sizeAfterFinish = try Data(contentsOf: url("f.peaks")).count
+        try writer.append(ramp(256))
+        let sizeAfterLateAppend = try Data(contentsOf: url("f.peaks")).count
+
+        XCTAssertEqual(sizeAfterFinish, sizeAfterLateAppend)
+    }
 }

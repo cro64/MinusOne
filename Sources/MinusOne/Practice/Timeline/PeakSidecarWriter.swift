@@ -16,6 +16,7 @@ final class PeakSidecarWriter {
     private var pendingSquareSum: Double = 0
     private var pendingCount = 0
     private var isClosed = false
+    private var isFailed = false
 
     init(url: URL, sampleRate: Double, framesPerColumn: Int = PeakSidecar.defaultFramesPerColumn) throws {
         self.framesPerColumn = max(1, framesPerColumn)
@@ -35,7 +36,7 @@ final class PeakSidecarWriter {
     }
 
     func append(_ samples: ArraySlice<Float>) throws {
-        guard !isClosed else { return }
+        guard !isClosed, !isFailed else { return }
         var buffer = Data()
         for sample in samples {
             pendingMinimum = Swift.min(pendingMinimum, sample)
@@ -48,13 +49,22 @@ final class PeakSidecarWriter {
             }
         }
         guard !buffer.isEmpty else { return }
-        try handle.write(contentsOf: buffer)
+        do {
+            try handle.write(contentsOf: buffer)
+        } catch {
+            // Latch: a partial write leaves the file off a 6-byte column boundary. Continuing to
+            // append would put every later column out of phase and compound the drift silently,
+            // whereas refusing further appends leaves a cleanly short file — a state the format
+            // already handles, since the column count comes from file length.
+            isFailed = true
+            throw error
+        }
     }
 
     /// Flushes the trailing partial column and closes the file. Safe to call more than once.
     func finish() throws {
         guard !isClosed else { return }
-        if pendingCount > 0 {
+        if !isFailed, pendingCount > 0 {
             try handle.write(contentsOf: PeakSidecar.encodeColumn(pendingColumn()))
             resetPending()
         }
@@ -76,5 +86,14 @@ final class PeakSidecarWriter {
         pendingMaximum = -.greatestFiniteMagnitude
         pendingSquareSum = 0
         pendingCount = 0
+    }
+
+    /// Backstop for callers that throw before reaching `finish()` — `OfflineSeparationEngine`'s
+    /// finish loop sits after its separation loop, so any error inside skips it for all four
+    /// writers. `FileHandle` closing on deinit is not a documented contract, so this is explicit.
+    deinit {
+        if !isClosed {
+            try? handle.close()
+        }
     }
 }
