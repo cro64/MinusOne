@@ -86,6 +86,10 @@ enum WaveformPeakGenerator {
             sampleRate: format.sampleRate,
             framesPerColumn: framesPerColumn
         )
+        // Closes the file handle if the decode loop throws. `finish()` is idempotent (see
+        // `testFinishingTwiceIsHarmless`), so on the success path this is a no-op and the
+        // explicit call below still surfaces a genuine finish error rather than swallowing it.
+        defer { try? writer.finish() }
 
         let chunkCapacity: AVAudioFrameCount = 65_536
         guard let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: chunkCapacity) else {

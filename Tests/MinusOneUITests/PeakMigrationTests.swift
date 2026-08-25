@@ -76,4 +76,37 @@ final class PeakSidecarGenerationTests: XCTestCase {
         try WaveformPeakGenerator.writeSidecar(from: source, to: destination)
         XCTAssertEqual(try PeakSidecarReader(contentsOf: destination).header.sampleRate, 44_100)
     }
+
+    /// Writes a tone whose two channels differ, so the downmix itself is observable.
+    @discardableResult
+    private func writeAsymmetricTone(named name: String, seconds: Double, left: Float, right: Float) throws -> URL {
+        let url = directory.appendingPathComponent(name)
+        let fileFormat = AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: 44_100, channels: 2, interleaved: true)!
+        let file = try AVAudioFile(forWriting: url, settings: fileFormat.settings)
+        let frameCount = AVAudioFrameCount(seconds * 44_100)
+        let buffer = AVAudioPCMBuffer(pcmFormat: file.processingFormat, frameCapacity: frameCount)!
+        buffer.frameLength = frameCount
+        let channels = buffer.floatChannelData!
+        for frame in 0..<Int(frameCount) {
+            channels[0][frame] = left
+            channels[1][frame] = right
+        }
+        try file.write(from: buffer)
+        return url
+    }
+
+    /// Pins `(L + R) * 0.5` specifically. Every other test in this suite uses identical channels,
+    /// where a downmix that simply copied the left channel would be indistinguishable from the
+    /// correct one — and the convention matters beyond this file: separation writes stem sidecars
+    /// the same way, and stems are normalised against the mix, so a mismatch would draw every
+    /// stem lane at the wrong height.
+    func testTheDownmixAveragesTheTwoChannelsRatherThanTakingOne() throws {
+        let source = try writeAsymmetricTone(named: "asymmetric.wav", seconds: 0.5, left: 1.0, right: 0.0)
+        let destination = directory.appendingPathComponent("asymmetric.peaks")
+        try WaveformPeakGenerator.writeSidecar(from: source, to: destination)
+
+        let reader = try PeakSidecarReader(contentsOf: destination)
+        let loudest = (0..<reader.columnCount).map { reader.column(at: $0).magnitude }.max() ?? 0
+        XCTAssertEqual(loudest, 0.5, accuracy: 0.02, "expected (1.0 + 0.0) * 0.5 — a left-channel-only downmix would give 1.0")
+    }
 }
