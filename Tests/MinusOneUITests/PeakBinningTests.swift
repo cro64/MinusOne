@@ -32,24 +32,27 @@ final class PeakBinningTests: XCTestCase {
         }
     }
 
-    /// The evenly-dividing case above cannot catch a boundary bug, because 600/200 = 3 exactly:
-    /// the clamp never engages and the test's own arithmetic matches the implementation's. Real
-    /// usage is always non-divisor — ~41,343 stored columns binned to whatever pixel width the
-    /// lane happens to have — so the enveloping guarantee is pinned here instead.
-    func testEnvelopingHoldsWhenTheRatioDoesNotDivideEvenly() {
-        let columns = source(600)
-        let result = rebin(columns, to: 7)
-        XCTAssertEqual(result.count, 7)
+    /// Sweeps a single loud column across every source position and asserts it survives binning.
+    ///
+    /// Deliberately contains no group-boundary arithmetic. Two earlier versions of this test tried
+    /// to work out which output column owns a given source column — first by reusing the
+    /// implementation's own formula, then by an "independent" inverse that was wrong at exactly the
+    /// six group boundaries — and both passed against a simulated dropped-column regression. With
+    /// every other column silent, only the output column covering the spike can carry it, so if any
+    /// source column is skipped the spike vanishes from the result entirely and this fails.
+    func testNoSourceColumnsPeakIsEverHidden() {
+        let sourceCount = 600
+        let spike = PeakColumn(minimum: -0.9, maximum: 0.8, rms: 0.5)
 
-        // Every source column must be covered by exactly one output column, and that output
-        // column must envelop it. Walking the source side rather than recomputing the
-        // implementation's group boundaries is what makes this independent of it.
-        for (sourceIndex, sourceColumn) in columns.enumerated() {
-            let owner = result[min(6, sourceIndex * 7 / 600)]
-            XCTAssertLessThanOrEqual(owner.minimum, sourceColumn.minimum + 1e-6,
-                                     "source column \(sourceIndex) has a lower minimum than the column covering it")
-            XCTAssertGreaterThanOrEqual(owner.maximum, sourceColumn.maximum - 1e-6,
-                                        "source column \(sourceIndex) has a higher maximum than the column covering it")
+        for spikeIndex in 0..<sourceCount {
+            var columns = [PeakColumn](repeating: .silent, count: sourceCount)
+            columns[spikeIndex] = spike
+
+            // 7 is deliberately non-divisor against 600, so groups are uneven.
+            let result = PeakBinning.rebin(targetCount: 7, sourceCount: sourceCount) { columns[$0] }
+
+            let carrier = result.first { $0.minimum <= spike.minimum + 1e-6 && $0.maximum >= spike.maximum - 1e-6 }
+            XCTAssertNotNil(carrier, "the peak at source column \(spikeIndex) was lost during binning")
         }
     }
 
