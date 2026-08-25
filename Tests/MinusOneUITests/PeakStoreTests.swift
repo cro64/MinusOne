@@ -116,3 +116,35 @@ final class PeakStoreTests: XCTestCase {
         XCTAssertEqual(store.version, before)
     }
 }
+
+final class SeparationDownmixTests: XCTestCase {
+    func testItAveragesTheTwoChannels() {
+        let left: [Float] = [1.0, 0.5, 0.0, -1.0]
+        let right: [Float] = [0.0, 0.5, 1.0, -1.0]
+        let mono = OfflineSeparationEngine.monoDownmix(left: left, right: right, range: 0..<4)
+        XCTAssertEqual(mono, [0.5, 0.5, 0.5, -1.0])
+    }
+
+    /// The flush loop hands it a window part-way through the buffers, not the whole thing.
+    func testItReadsOnlyTheRequestedRange() {
+        let left: [Float] = [0, 0, 1.0, 1.0, 0, 0]
+        let right: [Float] = [0, 0, 1.0, 1.0, 0, 0]
+        let mono = OfflineSeparationEngine.monoDownmix(left: left, right: right, range: 2..<4)
+        XCTAssertEqual(mono, [1.0, 1.0])
+    }
+
+    func testAnEmptyRangeProducesNoSamples() {
+        let mono = OfflineSeparationEngine.monoDownmix(left: [1, 2], right: [3, 4], range: 1..<1)
+        XCTAssertTrue(mono.isEmpty)
+    }
+
+    /// Matches `WaveformPeakGenerator`'s downmix, so the mix and stem sidecars are comparable and
+    /// the shared normalisation reference means what it says.
+    func testItMatchesTheGeneratorsDownmixConvention() {
+        let left: [Float] = [0.8, -0.4]
+        let right: [Float] = [0.2, -0.6]
+        let mono = OfflineSeparationEngine.monoDownmix(left: left, right: right, range: 0..<2)
+        XCTAssertEqual(mono[0], (0.8 + 0.2) * 0.5, accuracy: 1e-6)
+        XCTAssertEqual(mono[1], (-0.4 + -0.6) * 0.5, accuracy: 1e-6)
+    }
+}
