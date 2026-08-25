@@ -97,7 +97,8 @@ final class OfflineSeparationEngine {
         // stem files this loop is in the middle of writing.
         var peakWriters: [SeparationStem: PeakSidecarWriter] = [:]
         var peakFileNames = clip.peakFileNames        // keeps the mix entry written at import
-        if let peaksFolder = try? libraryStore.ensurePeaksFolder(forClipID: clip.id) {
+        do {
+            let peaksFolder = try libraryStore.ensurePeaksFolder(forClipID: clip.id)
             for stem in SeparationStem.allCases {
                 let track = PeakTrack.stem(stem)
                 do {
@@ -110,6 +111,10 @@ final class OfflineSeparationEngine {
                     AppLogger.shared.warning("Peak sidecar writer failed for \(track.key): \(error.localizedDescription)")
                 }
             }
+        } catch {
+            // Widest-blast-radius peak failure in this function: without the folder, no stem gets a
+            // sidecar at all. Separation still proceeds — `PeakSidecarMigrator` backfills on next open.
+            AppLogger.shared.warning("Peak sidecar folder unavailable, stem peaks deferred to backfill: \(error.localizedDescription)")
         }
 
         var outputs: [SeparationStem: (left: [Float], right: [Float])] = Dictionary(
