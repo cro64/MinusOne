@@ -267,4 +267,55 @@ final class PeakSidecarMigratorTests: XCTestCase {
         XCTAssertEqual(firstSize, secondSize)
         XCTAssertEqual(once.peakFileNames, twice.peakFileNames)
     }
+
+    /// A sidecar left truncated by an interrupted generation still opens fine — "opens" is not
+    /// "complete". It must be reported missing and fully regenerated on the next backfill.
+    func testATruncatedSidecarIsReportedMissingAndIsRegenerated() throws {
+        let clip = try legacyClip(withStems: [.vocals])
+        let full = PeakSidecarMigrator.backfill(clip: clip, libraryStore: store)
+
+        let mixURL = store.peakFileURL(clipID: clip.id, track: .mix)
+        let fullData = try Data(contentsOf: mixURL)
+        // Keep the 20-byte header plus five whole columns: readable, but far short of the 1s of
+        // audio the clip actually has.
+        let truncatedLength = PeakSidecar.headerByteCount + PeakSidecar.bytesPerColumn * 5
+        try fullData.prefix(truncatedLength).write(to: mixURL)
+
+        // Confirm it still opens — the defect this guards against is exactly a file that reads
+        // fine but is short.
+        XCTAssertNoThrow(try PeakSidecarReader(contentsOf: mixURL))
+
+        XCTAssertTrue(PeakSidecarMigrator.missingTracks(for: full, libraryStore: store).contains(.mix))
+
+        let regenerated = PeakSidecarMigrator.backfill(clip: full, libraryStore: store)
+        let reader = try PeakSidecarReader(contentsOf: mixURL)
+        XCTAssertEqual(reader.availableDuration, 1.0, accuracy: 0.05)
+        XCTAssertEqual(regenerated.peakFileNames["mix"], "mix.peaks")
+    }
+
+    /// A sidecar that already covers the audio must not be regenerated just because
+    /// `peakFileNames` doesn't mention it yet — but its name must still end up recorded, so a
+    /// later run doesn't mistake it for missing.
+    func testACompleteSidecarWithNoRecordedNameIsNotRegeneratedButItsNameIsRecorded() throws {
+        let clip = try legacyClip(withStems: [.vocals])
+        XCTAssertTrue(clip.peakFileNames.isEmpty)
+
+        let peaksFolder = try store.ensurePeaksFolder(forClipID: clip.id)
+        let mixSource = store.stemFileURL(clipID: clip.id, fileName: clip.sourceFileName)
+        try WaveformPeakGenerator.writeSidecar(
+            from: mixSource,
+            to: peaksFolder.appendingPathComponent(PeakTrack.mix.fileName)
+        )
+
+        let mixURL = store.peakFileURL(clipID: clip.id, track: .mix)
+        let before = try Data(contentsOf: mixURL)
+
+        XCTAssertFalse(PeakSidecarMigrator.missingTracks(for: clip, libraryStore: store).contains(.mix))
+
+        let updated = PeakSidecarMigrator.backfill(clip: clip, libraryStore: store)
+
+        let after = try Data(contentsOf: mixURL)
+        XCTAssertEqual(before, after, "an already-complete sidecar must not be rewritten")
+        XCTAssertEqual(updated.peakFileNames["mix"], "mix.peaks")
+    }
 }

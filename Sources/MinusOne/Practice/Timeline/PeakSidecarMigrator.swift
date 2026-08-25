@@ -6,13 +6,34 @@ import Foundation
 /// Clips whose separation never finished get a mix sidecar and nothing else, which is enough for
 /// the deck to draw a waveform.
 enum PeakSidecarMigrator {
-    /// Tracks that have audio on disk but no readable sidecar yet.
+    /// How much of a track's audio a sidecar must cover before it counts as present.
+    ///
+    /// "The file opens" is not enough: an interrupted generation leaves a readable but short
+    /// sidecar, and for the mix track — written once at import, never rewritten, and the shared
+    /// normalisation reference for every lane — a short file would scale all five lanes against
+    /// the wrong peak, permanently and undetectably.
+    private static let coverageTolerance: Double = 0.25
+
+    private static func isComplete(
+        track: PeakTrack,
+        clip: PracticeClip,
+        libraryStore: ClipLibraryStore
+    ) -> Bool {
+        let url = libraryStore.peakFileURL(clipID: clip.id, track: track)
+        guard let reader = try? PeakSidecarReader(contentsOf: url) else { return false }
+        let required: Double
+        switch track {
+        case .mix: required = clip.durationSeconds
+        case .stem: required = clip.readyDurationSeconds
+        }
+        return reader.availableDuration >= required - coverageTolerance
+    }
+
+    /// Tracks that have audio on disk but no sidecar covering it yet.
     static func missingTracks(for clip: PracticeClip, libraryStore: ClipLibraryStore) -> [PeakTrack] {
         PeakTrack.all.filter { track in
             guard sourceURL(for: track, clip: clip, libraryStore: libraryStore) != nil else { return false }
-            let url = libraryStore.peakFileURL(clipID: clip.id, track: track)
-            guard FileManager.default.fileExists(atPath: url.path) else { return true }
-            return (try? PeakSidecarReader(contentsOf: url)) == nil
+            return !isComplete(track: track, clip: clip, libraryStore: libraryStore)
         }
     }
 
@@ -30,8 +51,8 @@ enum PeakSidecarMigrator {
             guard let audioURL = sourceURL(for: track, clip: clip, libraryStore: libraryStore) else { continue }
             let destination = peaksFolder.appendingPathComponent(track.fileName)
 
-            if updated.peakFileNames[track.key] != nil,
-               (try? PeakSidecarReader(contentsOf: destination)) != nil {
+            if isComplete(track: track, clip: clip, libraryStore: libraryStore) {
+                updated.peakFileNames[track.key] = track.fileName
                 continue
             }
             do {
