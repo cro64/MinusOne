@@ -65,4 +65,57 @@ enum WaveformPeakGenerator {
 
         return peaks
     }
+
+    /// Streams an audio file into a peak sidecar.
+    ///
+    /// Used for the mix track at import, and to backfill sidecars for clips that predate the
+    /// format. Stems written during separation do not come through here — `OfflineSeparationEngine`
+    /// already holds those samples in memory and feeds `PeakSidecarWriter` directly rather than
+    /// decoding the file it just wrote.
+    static func writeSidecar(
+        from sourceURL: URL,
+        to destinationURL: URL,
+        framesPerColumn: Int = PeakSidecar.defaultFramesPerColumn
+    ) throws {
+        let file = try AVAudioFile(forReading: sourceURL)
+        let format = file.processingFormat
+        guard file.length > 0 else { throw GeneratorError.emptyFile }
+
+        let writer = try PeakSidecarWriter(
+            url: destinationURL,
+            sampleRate: format.sampleRate,
+            framesPerColumn: framesPerColumn
+        )
+
+        let chunkCapacity: AVAudioFrameCount = 65_536
+        guard let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: chunkCapacity) else {
+            throw GeneratorError.emptyFile
+        }
+        let channelCount = Int(format.channelCount)
+        var monoScratch = [Float](repeating: 0, count: Int(chunkCapacity))
+
+        while true {
+            buffer.frameLength = 0
+            try file.read(into: buffer, frameCount: chunkCapacity)
+            let frames = Int(buffer.frameLength)
+            if frames == 0 { break }
+            guard let channelData = buffer.floatChannelData else { break }
+
+            // Same mono downmix the thumbnail generator uses, so the two agree.
+            monoScratch.withUnsafeMutableBufferPointer { dest in
+                if channelCount == 1 {
+                    dest.baseAddress!.update(from: channelData[0], count: frames)
+                } else {
+                    vDSP_vadd(channelData[0], 1, channelData[1], 1, dest.baseAddress!, 1, vDSP_Length(frames))
+                    var scale: Float = 0.5
+                    vDSP_vsmul(dest.baseAddress!, 1, &scale, dest.baseAddress!, 1, vDSP_Length(frames))
+                }
+            }
+
+            try writer.append(monoScratch[0..<frames])
+            if frames < Int(chunkCapacity) { break }
+        }
+
+        try writer.finish()
+    }
 }
