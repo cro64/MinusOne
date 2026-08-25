@@ -110,3 +110,59 @@ final class PeakSidecarGenerationTests: XCTestCase {
         XCTAssertEqual(loudest, 0.5, accuracy: 0.02, "expected (1.0 + 0.0) * 0.5 — a left-channel-only downmix would give 1.0")
     }
 }
+
+final class ClipImportSidecarTests: XCTestCase {
+    private var directory: URL!
+
+    override func setUpWithError() throws {
+        directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("ImportSidecar-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    }
+
+    override func tearDownWithError() throws {
+        try? FileManager.default.removeItem(at: directory)
+    }
+
+    private func writeTone(named name: String, seconds: Double) throws -> URL {
+        let url = directory.appendingPathComponent(name)
+        let fileFormat = AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: 44_100, channels: 2, interleaved: true)!
+        let file = try AVAudioFile(forWriting: url, settings: fileFormat.settings)
+        // The buffer takes the file's *processing* format, which AVAudioFile always reports as
+        // non-interleaved. Allocating it from the interleaved format instead would make
+        // `floatChannelData[1]` an out-of-bounds read rather than a second channel plane.
+        let frameCount = AVAudioFrameCount(seconds * 44_100)
+        let buffer = AVAudioPCMBuffer(pcmFormat: file.processingFormat, frameCapacity: frameCount)!
+        buffer.frameLength = frameCount
+        let channels = buffer.floatChannelData!
+        for frame in 0..<Int(frameCount) {
+            let value = sinf(2 * .pi * 220 * Float(frame) / 44_100)
+            channels[0][frame] = value
+            channels[1][frame] = value
+        }
+        try file.write(from: buffer)
+        return url
+    }
+
+    func testItWritesAReadableMixSidecarAndReportsItsName() throws {
+        let source = try writeTone(named: "source.wav", seconds: 1)
+        let peaksFolder = directory.appendingPathComponent("peaks", isDirectory: true)
+
+        let names = try ClipImportService.writeMixSidecar(sourceURL: source, peaksFolder: peaksFolder)
+
+        XCTAssertEqual(names, ["mix": "mix.peaks"])
+        let reader = try PeakSidecarReader(contentsOf: peaksFolder.appendingPathComponent("mix.peaks"))
+        XCTAssertGreaterThan(reader.columnCount, 100)
+        XCTAssertEqual(reader.availableDuration, 1.0, accuracy: 0.05)
+    }
+
+    func testItCreatesThePeaksFolderIfItIsMissing() throws {
+        let source = try writeTone(named: "source2.wav", seconds: 0.5)
+        let peaksFolder = directory.appendingPathComponent("nested/peaks", isDirectory: true)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: peaksFolder.path))
+
+        _ = try ClipImportService.writeMixSidecar(sourceURL: source, peaksFolder: peaksFolder)
+
+        XCTAssertTrue(FileManager.default.fileExists(atPath: peaksFolder.appendingPathComponent("mix.peaks").path))
+    }
+}

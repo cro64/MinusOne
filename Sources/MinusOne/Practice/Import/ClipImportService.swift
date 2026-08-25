@@ -99,6 +99,18 @@ final class ClipImportService {
         let duration = Double(file.length) / file.fileFormat.sampleRate
         let peaks = try WaveformPeakGenerator.generatePeaks(url: destinationURL, targetColumns: Self.waveformColumns)
 
+        // Peak generation must not be able to fail an import: the audio is the product, and a
+        // missing sidecar is regenerated on demand by `PeakSidecarMigrator`.
+        var peakFileNames: [String: String] = [:]
+        do {
+            peakFileNames = try Self.writeMixSidecar(
+                sourceURL: destinationURL,
+                peaksFolder: libraryStore.peaksFolder(forClipID: id)
+            )
+        } catch {
+            AppLogger.shared.warning("Mix peak sidecar generation failed: \(error.localizedDescription)")
+        }
+
         let title = sourceURL.deletingPathExtension().lastPathComponent
         let clip = PracticeClip(
             id: id,
@@ -106,10 +118,26 @@ final class ClipImportService {
             durationSeconds: duration,
             sourceHash: hash,
             sourceFileName: sourceFileName,
-            waveformPeaks: peaks
+            waveformPeaks: peaks,
+            peakFileNames: peakFileNames
         )
         libraryStore.add(clip)
         return clip
+    }
+
+    /// Writes the mix track's peak sidecar for a clip whose source audio is already in the library.
+    ///
+    /// The mix sidecar exists from import onwards, before separation has produced a single stem,
+    /// so the deck has a full-resolution waveform to draw immediately and `PeakStore` has its
+    /// normalisation reference.
+    static func writeMixSidecar(sourceURL: URL, peaksFolder: URL) throws -> [String: String] {
+        try FileManager.default.createDirectory(at: peaksFolder, withIntermediateDirectories: true)
+        let track = PeakTrack.mix
+        try WaveformPeakGenerator.writeSidecar(
+            from: sourceURL,
+            to: peaksFolder.appendingPathComponent(track.fileName)
+        )
+        return [track.key: track.fileName]
     }
 
     private static func sha256(of url: URL) throws -> String {
