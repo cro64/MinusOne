@@ -135,6 +135,8 @@ final class PracticeDeckViewController: NSViewController, NSTextFieldDelegate {
                 self?.playbackEngine.toggleStemSolo(stem)
                 self?.refreshMixerButtonStates()
             }
+            row.onExportRequested = { [weak self] in self?.exportStem(stem) }
+            row.setExportEnabled(false)
             mixerRows[stem] = row
             mixerViews.append(row)
         }
@@ -270,6 +272,10 @@ final class PracticeDeckViewController: NSViewController, NSTextFieldDelegate {
             statusLabel.isHidden = false
         } else {
             statusLabel.isHidden = true
+        }
+
+        for row in mixerRows.values {
+            row.setExportEnabled(clip.canExportStems)
         }
 
         timeLabel.stringValue = "\(0.0.formattedAsDuration) / \(clip.durationSeconds.formattedAsDuration)"
@@ -445,6 +451,62 @@ final class PracticeDeckViewController: NSViewController, NSTextFieldDelegate {
         }
     }
 
+    // MARK: - Stem export
+
+    /// Exports the stem exactly as separated — fader, mute, solo and tempo are all playback state
+    /// and deliberately don't reach the file. What lands on disk is what the model produced.
+    private func exportStem(_ stem: SeparationStem) {
+        guard let clip, clip.canExportStems,
+              let fileName = clip.stemFileNames[stem.rawValue] else { return }
+        let source = libraryStore.stemFileURL(clipID: clip.id, fileName: fileName)
+
+        let preferences = Preferences()
+        let export = StemExportPanel(
+            clipTitle: clip.title,
+            stem: stem,
+            format: preferences.stemExportFormat
+        )
+
+        let completion: (NSApplication.ModalResponse) -> Void = { response in
+            // Referenced so the closure holds `export` until the sheet closes:
+            // `NSPopUpButton.target` is unowned, and without this the panel's format popup stops
+            // responding the moment `exportStem` returns.
+            let format = export.format
+            guard response == .OK, let destination = export.panel.url else { return }
+            preferences.stemExportFormat = format
+            self.performExport(source: source, destination: destination, format: format)
+        }
+
+        if let window = view.window {
+            export.panel.beginSheetModal(for: window, completionHandler: completion)
+        } else {
+            export.panel.begin(completionHandler: completion)
+        }
+    }
+
+    private func performExport(source: URL, destination: URL, format: StemExportFormat) {
+        DispatchQueue.global(qos: .userInitiated).async {
+            do {
+                try StemExportService.export(source: source, to: destination, format: format)
+            } catch {
+                DispatchQueue.main.async { self.presentExportFailure(error) }
+            }
+        }
+    }
+
+    private func presentExportFailure(_ error: Error) {
+        let alert = NSAlert()
+        alert.messageText = "Couldn't export that stem"
+        alert.informativeText = error.localizedDescription
+        alert.alertStyle = .warning
+        alert.addButton(withTitle: "OK")
+        if let window = view.window {
+            alert.beginSheetModal(for: window)
+        } else {
+            alert.runModal()
+        }
+    }
+
     private func refreshMixerButtonStates() {
         for (stem, row) in mixerRows {
             row.setSoloed(playbackEngine.mixer.isSoloed(stem))
@@ -489,9 +551,11 @@ private final class MixerRowView: NSView {
     var onVolumeChanged: ((Float) -> Void)?
     var onMuteToggled: ((Bool) -> Void)?
     var onSoloToggled: (() -> Void)?
+    var onExportRequested: (() -> Void)?
 
     private let soloButton: FlatButton
     private let muteButton: FlatButton
+    private let exportButton: FlatButton
 
     init(stem: SeparationStem) {
         let color = stem.identityColor
@@ -512,11 +576,24 @@ private final class MixerRowView: NSView {
         soloButton = WindowUI.toggleControlButton(title: "Solo", target: nil, action: nil)
         muteButton = WindowUI.toggleControlButton(title: "Mute", target: nil, action: nil)
         muteButton.engagedFillColorOverride = .systemRed
+        exportButton = WindowUI.rowIconButton(
+            symbolName: "square.and.arrow.up",
+            label: "Export \(stem.displayName)",
+            target: nil,
+            action: nil
+        )
 
         super.init(frame: .zero)
 
-        let row = Layout.horizontalStack([label, slider, soloButton, muteButton], spacing: WindowUI.Metrics.rowSpacing)
+        let row = Layout.horizontalStack(
+            [label, slider, soloButton, muteButton, exportButton],
+            spacing: WindowUI.Metrics.rowSpacing
+        )
         Layout.pin(row, to: self)
+        // Matched to the toggle beside it rather than set to a constant: `toggleControlButton`
+        // takes its height from its title's intrinsic size, so a hardcoded number here would
+        // drift the moment that font or padding changes.
+        exportButton.heightAnchor.constraint(equalTo: muteButton.heightAnchor).isActive = true
 
         slider.target = self
         slider.action = #selector(sliderChanged(_:))
@@ -524,6 +601,8 @@ private final class MixerRowView: NSView {
         soloButton.action = #selector(soloClicked)
         muteButton.target = self
         muteButton.action = #selector(muteClicked)
+        exportButton.target = self
+        exportButton.action = #selector(exportClicked)
     }
 
     @available(*, unavailable)
@@ -534,6 +613,13 @@ private final class MixerRowView: NSView {
     func setSoloed(_ soloed: Bool) {
         soloButton.state = soloed ? .on : .off
         soloButton.refreshStyle()
+    }
+
+    /// Disabled until separation has written the whole stem. No explanatory tooltip: the deck's
+    /// status label right above the mixer already says "Separating in the background…", and all
+    /// four stems finish together, so a per-row message would only repeat it four times.
+    func setExportEnabled(_ enabled: Bool) {
+        exportButton.isEnabled = enabled
     }
 
     @objc private func sliderChanged(_ sender: NSSlider) {
@@ -548,5 +634,9 @@ private final class MixerRowView: NSView {
         let muted = muteButton.state == .on
         muteButton.refreshStyle()
         onMuteToggled?(muted)
+    }
+
+    @objc private func exportClicked() {
+        onExportRequested?()
     }
 }

@@ -27,7 +27,7 @@ let package = Package(
         ),
         .testTarget(
             name: "MinusOneUITests",
-            dependencies: [],
+            dependencies: ["MinusOne"],
             path: "Tests/MinusOneUITests"
         )
     ]

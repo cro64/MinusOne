@@ -1,36 +1,36 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "https://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-    <key>CFBundleDevelopmentRegion</key>
-    <string>en</string>
-    <key>CFBundleExecutable</key>
-    <string>MinusOne</string>
-    <key>CFBundleIdentifier</key>
-    <string>com.minusone.app</string>
-    <key>CFBundleInfoDictionaryVersion</key>
-    <string>6.0</string>
-    <key>CFBundleName</key>
-    <string>MinusOne</string>
-    <key>CFBundleIconFile</key>
-    <string>MinusOne</string>
-    <key>CFBundleIconName</key>
-    <string>MinusOne</string>
-    <key>CFBundlePackageType</key>
-    <string>APPL</string>
-    <key>CFBundleShortVersionString</key>
-    <string>0.4.0</string>
-    <key>CFBundleVersion</key>
-    <string>4</string>
-    <key>LSMinimumSystemVersion</key>
-    <string>14.0</string>
-    <key>LSUIElement</key>
-    <true/>
-    <key>NSMicrophoneUsageDescription</key>
-    <string>MinusOne needs microphone access to record a Practice take from an input device you choose, and when using the BlackHole fallback capture path.</string>
-    <key>NSAudioCaptureUsageDescription</key>
-    <string>MinusOne captures system audio to reduce vocals in real time, and — only when you start a Practice Mode recording — to save a take for offline practice.</string>
-    <key>NSHighResolutionCapable</key>
-    <true/>
+	<key>CFBundleDevelopmentRegion</key>
+	<string>en</string>
+	<key>CFBundleExecutable</key>
+	<string>MinusOne</string>
+	<key>CFBundleIconFile</key>
+	<string>MinusOne</string>
+	<key>CFBundleIconName</key>
+	<string>MinusOne</string>
+	<key>CFBundleIdentifier</key>
+	<string>com.minusone.app</string>
+	<key>CFBundleInfoDictionaryVersion</key>
+	<string>6.0</string>
+	<key>CFBundleName</key>
+	<string>MinusOne</string>
+	<key>CFBundlePackageType</key>
+	<string>APPL</string>
+	<key>CFBundleShortVersionString</key>
+	<string>0.5.0</string>
+	<key>CFBundleVersion</key>
+	<string>5</string>
+	<key>LSMinimumSystemVersion</key>
+	<string>14.0</string>
+	<key>LSUIElement</key>
+	<true/>
+	<key>NSAudioCaptureUsageDescription</key>
+	<string>MinusOne captures system audio to reduce vocals in real time, and — only when you start a Practice Mode recording — to save a take for offline practice.</string>
+	<key>NSHighResolutionCapable</key>
+	<true/>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>MinusOne needs microphone access to record a Practice take from an input device you choose, and when using the BlackHole fallback capture path.</string>
 </dict>
 </plist>

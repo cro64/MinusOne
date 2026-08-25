@@ -45,4 +45,12 @@ struct PracticeClip: Codable, Identifiable, Equatable {
     var isFullyProcessed: Bool {
         readyDurationSeconds >= durationSeconds - 0.05
     }
+
+    /// Whether this clip's stems can be handed to `StemExportService`.
+    ///
+    /// All four stems are written by one window loop in `OfflineSeparationEngine`, so they're
+    /// never at different readiness — there's no per-stem variant of this.
+    var canExportStems: Bool {
+        isFullyProcessed && !processingFailed && !stemFileNames.isEmpty
+    }
 }

@@ -16,6 +16,7 @@ final class Preferences {
         static let selectedAppBundleIDs = "selectedAppBundleIDs"
         static let appearance = "appearance"
         static let recordingSource = "recordingSource"
+        static let stemExportFormat = "stemExportFormat"
     }
 
     private let defaults: UserDefaults
@@ -79,6 +80,18 @@ final class Preferences {
     var recordingSource: RecordingSource {
         get { RecordingSource(storedValue: defaults.string(forKey: Key.recordingSource)) }
         set { defaults.set(newValue.storedValue, forKey: Key.recordingSource) }
+    }
+
+    /// Last container picked in the stem export save panel, so the popup opens where it was left.
+    var stemExportFormat: StemExportFormat {
+        get {
+            guard let raw = defaults.string(forKey: Key.stemExportFormat),
+                  let format = StemExportFormat(rawValue: raw) else {
+                return .default
+            }
+            return format
+        }
+        set { defaults.set(newValue.rawValue, forKey: Key.stemExportFormat) }
     }
 
     var captureScope: CaptureScope {
