@@ -10,7 +10,7 @@ final class PeakStore {
     private var readers: [PeakTrack: PeakSidecarReader] = [:]
     private var columnCounts: [PeakTrack: Int] = [:]
 
-    /// Bumped whenever a track gains columns. Lane views include it in their cache key, so
+    /// Bumped whenever a track's column count changes. Lane views include it in their cache key, so
     /// progressive separation invalidates their bitmaps without any view watching the filesystem.
     private(set) var version = 0
 

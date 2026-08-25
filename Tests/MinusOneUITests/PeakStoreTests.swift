@@ -67,6 +67,29 @@ final class PeakStoreTests: XCTestCase {
         XCTAssertTrue(columns.allSatisfy { $0.magnitude > 0.5 })
     }
 
+    /// The case the whole design turns on: one request covering both written and unwritten audio.
+    ///
+    /// If the source range were clamped to what exists before re-binning, the 2 seconds of real
+    /// audio would be stretched across all 16 columns and every one of them would read loud. The
+    /// unclamped mapping instead puts real data in the first half and silence in the second,
+    /// which is what makes a clip's not-yet-separated tail render as an empty lane rather than a
+    /// smeared copy of its beginning.
+    func testARequestSpanningTheWrittenBoundaryIsLoudThenSilent() throws {
+        try writeTrack(.stem(.drums), seconds: 2, magnitude: 0.8)
+        let store = PeakStore(peaksFolder: folder)
+
+        // Written region is 0..2s; ask for 0..4s so the back half has nothing behind it.
+        let columns = store.columns(for: .stem(.drums), from: 0, to: 4, count: 16)
+        XCTAssertEqual(columns.count, 16)
+
+        for (index, column) in columns.prefix(8).enumerated() {
+            XCTAssertGreaterThan(column.magnitude, 0.5, "column \(index) covers written audio and should be loud")
+        }
+        for (offset, column) in columns.suffix(8).enumerated() {
+            XCTAssertEqual(column, .silent, "column \(offset + 8) covers unwritten audio and should be silent")
+        }
+    }
+
     func testAvailableDurationTracksWhatIsOnDisk() throws {
         try writeTrack(.mix, seconds: 3, magnitude: 0.4)
         let store = PeakStore(peaksFolder: folder)
