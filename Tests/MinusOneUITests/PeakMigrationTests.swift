@@ -166,3 +166,105 @@ final class ClipImportSidecarTests: XCTestCase {
         XCTAssertTrue(FileManager.default.fileExists(atPath: peaksFolder.appendingPathComponent("mix.peaks").path))
     }
 }
+
+final class PeakSidecarMigratorTests: XCTestCase {
+    private var root: URL!
+    private var store: ClipLibraryStore!
+
+    override func setUpWithError() throws {
+        root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("Migrator-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        store = ClipLibraryStore(rootURL: root)
+    }
+
+    override func tearDownWithError() throws {
+        try? FileManager.default.removeItem(at: root)
+    }
+
+    private func writeTone(to url: URL, seconds: Double) throws {
+        let fileFormat = AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: 44_100, channels: 2, interleaved: true)!
+        let file = try AVAudioFile(forWriting: url, settings: fileFormat.settings)
+        // The buffer takes the file's *processing* format, which AVAudioFile always reports as
+        // non-interleaved. Allocating it from the interleaved format instead would make
+        // `floatChannelData[1]` an out-of-bounds read rather than a second channel plane.
+        let frameCount = AVAudioFrameCount(seconds * 44_100)
+        let buffer = AVAudioPCMBuffer(pcmFormat: file.processingFormat, frameCapacity: frameCount)!
+        buffer.frameLength = frameCount
+        let channels = buffer.floatChannelData!
+        for frame in 0..<Int(frameCount) {
+            let value = sinf(2 * .pi * 330 * Float(frame) / 44_100)
+            channels[0][frame] = value
+            channels[1][frame] = value
+        }
+        try file.write(from: buffer)
+    }
+
+    /// A clip exactly as a pre-sidecar build would have left it: source plus one stem, no peaks.
+    private func legacyClip(withStems stems: [SeparationStem]) throws -> PracticeClip {
+        let id = UUID()
+        let folder = try store.ensureFolder(forClipID: id)
+        try writeTone(to: folder.appendingPathComponent("source.wav"), seconds: 1)
+        var stemFileNames: [String: String] = [:]
+        for stem in stems {
+            let name = "\(stem.rawValue).caf"
+            try writeTone(to: folder.appendingPathComponent(name), seconds: 1)
+            stemFileNames[stem.rawValue] = name
+        }
+        return PracticeClip(
+            id: id,
+            title: "Legacy",
+            durationSeconds: 1,
+            sourceHash: "hash",
+            sourceFileName: "source.wav",
+            waveformPeaks: [],
+            stemFileNames: stemFileNames,
+            readyDurationSeconds: 1
+        )
+    }
+
+    func testEveryTrackIsMissingForAClipWithNoSidecars() throws {
+        let clip = try legacyClip(withStems: [.vocals, .drums, .bass, .other])
+        XCTAssertEqual(PeakSidecarMigrator.missingTracks(for: clip, libraryStore: store).count, 5)
+    }
+
+    func testBackfillWritesReadableSidecarsForTheSourceAndEveryStem() throws {
+        let clip = try legacyClip(withStems: [.vocals, .drums, .bass, .other])
+        let updated = PeakSidecarMigrator.backfill(clip: clip, libraryStore: store)
+
+        XCTAssertEqual(updated.peakFileNames.count, 5)
+        for track in PeakTrack.all {
+            let url = store.peakFileURL(clipID: clip.id, track: track)
+            let reader = try PeakSidecarReader(contentsOf: url)
+            XCTAssertGreaterThan(reader.columnCount, 100, "\(track.key) sidecar is empty")
+        }
+    }
+
+    /// A clip whose separation never finished still gets a usable mix waveform.
+    func testAClipWithNoStemsStillGetsAMixSidecar() throws {
+        let clip = try legacyClip(withStems: [])
+        let updated = PeakSidecarMigrator.backfill(clip: clip, libraryStore: store)
+
+        XCTAssertEqual(updated.peakFileNames, ["mix": "mix.peaks"])
+        XCTAssertNoThrow(try PeakSidecarReader(contentsOf: store.peakFileURL(clipID: clip.id, track: .mix)))
+    }
+
+    func testNothingIsMissingAfterAFullBackfill() throws {
+        let clip = try legacyClip(withStems: [.vocals, .drums, .bass, .other])
+        let updated = PeakSidecarMigrator.backfill(clip: clip, libraryStore: store)
+        XCTAssertTrue(PeakSidecarMigrator.missingTracks(for: updated, libraryStore: store).isEmpty)
+    }
+
+    /// Interruption safety: running it twice must not corrupt or duplicate anything.
+    func testBackfillIsIdempotent() throws {
+        let clip = try legacyClip(withStems: [.vocals])
+        let once = PeakSidecarMigrator.backfill(clip: clip, libraryStore: store)
+        let firstSize = try Data(contentsOf: store.peakFileURL(clipID: clip.id, track: .mix)).count
+
+        let twice = PeakSidecarMigrator.backfill(clip: once, libraryStore: store)
+        let secondSize = try Data(contentsOf: store.peakFileURL(clipID: clip.id, track: .mix)).count
+
+        XCTAssertEqual(firstSize, secondSize)
+        XCTAssertEqual(once.peakFileNames, twice.peakFileNames)
+    }
+}
