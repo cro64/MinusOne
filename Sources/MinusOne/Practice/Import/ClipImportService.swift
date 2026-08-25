@@ -100,7 +100,8 @@ final class ClipImportService {
         let peaks = try WaveformPeakGenerator.generatePeaks(url: destinationURL, targetColumns: Self.waveformColumns)
 
         // Peak generation must not be able to fail an import: the audio is the product, and a
-        // missing sidecar is regenerated on demand by `PeakSidecarMigrator`.
+        // missing sidecar is regenerable by `PeakSidecarMigrator.backfill`, which Phase 2 will
+        // invoke when a clip is opened.
         var peakFileNames: [String: String] = [:]
         do {
             peakFileNames = try Self.writeMixSidecar(
