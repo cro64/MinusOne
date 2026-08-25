@@ -210,6 +210,27 @@ enum WindowUI {
     /// Shared style for compact toggle/transport controls (Practice deck's Play/Loop/Solo/Mute)
     /// in place of stock `NSButton` bezels — flat, divider-bordered, filled solid accent when
     /// engaged (`.seg-opt:checked`-style, though these are independent toggles, not a group).
+    /// Icon-only momentary button sized to sit in a row beside `toggleControlButton`s rather than
+    /// in the transport cluster — `transportButton`'s fixed 40x33 towers over Solo/Mute. Callers
+    /// pin the height to the toggle next to it so the two always match.
+    static func rowIconButton(
+        symbolName: String,
+        label: String,
+        target: AnyObject?,
+        action: Selector?
+    ) -> FlatButton {
+        let button = FlatButton(title: "", kind: .secondary, target: target, action: action)
+        // Momentary, so it must never latch into the engaged fill — the same trap
+        // `transportButton` documents.
+        button.setButtonType(.momentaryPushIn)
+        button.reflectsState = false
+        button.imagePosition = .imageOnly
+        button.imageScaling = .scaleProportionallyDown
+        button.setIcon(symbolName, pointSize: 12, label: label)
+        button.widthAnchor.constraint(equalToConstant: 30).isActive = true
+        return button
+    }
+
     static func toggleControlButton(title: String, target: AnyObject?, action: Selector?) -> FlatButton {
         let button = FlatButton(title: title, kind: .secondary, target: target, action: action)
         button.pointSize = NSFont.smallSystemFontSize
