@@ -90,6 +90,27 @@ final class PeakStoreTests: XCTestCase {
         }
     }
 
+    /// The one case the aligned boundary test cannot reach: an output column whose source group
+    /// contains BOTH written and unwritten columns. Its extremes come from the written part, but
+    /// its rms is averaged across the silent zeros too — so the ready edge renders as a
+    /// full-height envelope with a shrunken core. Pinning it here so Phase 2 cannot change that
+    /// silently.
+    ///
+    /// 2s written is ~345 columns; requesting 0..3s spans ~517, and with 7 output columns group 4
+    /// covers roughly 295..<369 — which straddles 345.
+    func testAnOutputColumnStraddlingTheBoundaryKeepsFullExtremesButAReducedRMS() throws {
+        try writeTrack(.stem(.drums), seconds: 2, magnitude: 0.8)
+        let store = PeakStore(peaksFolder: folder)
+
+        let columns = store.columns(for: .stem(.drums), from: 0, to: 3, count: 7)
+        XCTAssertEqual(columns.count, 7)
+
+        let straddling = columns[4]
+        XCTAssertEqual(straddling.magnitude, 0.8, accuracy: 0.01, "extremes must come from the written part at full height")
+        XCTAssertGreaterThan(straddling.rms, 0, "the written part must still contribute rms")
+        XCTAssertLessThan(straddling.rms, 0.8, "the silent part must drag rms below the written magnitude")
+    }
+
     func testAvailableDurationTracksWhatIsOnDisk() throws {
         try writeTrack(.mix, seconds: 3, magnitude: 0.4)
         let store = PeakStore(peaksFolder: folder)

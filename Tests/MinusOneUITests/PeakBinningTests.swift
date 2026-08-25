@@ -88,4 +88,18 @@ final class PeakBinningTests: XCTestCase {
         let result = rebin(columns, to: 60)
         XCTAssertEqual(result[30], .silent)
     }
+
+    /// Pins how re-binning COMBINES rms across a group. Until this existed, rebin's rms was
+    /// asserted at exactly one value — zero — so a mean, a max or a sum would all have passed.
+    /// Two source columns with rms 1.0 and 0.0 combine to sqrt((1 + 0) / 2) ≈ 0.7071; a mean
+    /// would give 0.5, a maximum or a sum would give 1.0.
+    func testRebinCombinesRMSAsTheRootMeanOfSquares() {
+        let columns = [
+            PeakColumn(minimum: -1, maximum: 1, rms: 1.0),
+            PeakColumn(minimum: 0, maximum: 0, rms: 0.0)
+        ]
+        let result = PeakBinning.rebin(targetCount: 1, sourceCount: 2) { columns[$0] }
+        XCTAssertEqual(result.count, 1)
+        XCTAssertEqual(result[0].rms, 0.7071, accuracy: 1e-4)
+    }
 }

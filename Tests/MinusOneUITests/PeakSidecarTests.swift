@@ -183,4 +183,20 @@ final class PeakSidecarWriterTests: XCTestCase {
         try writer.finish()
         XCTAssertNoThrow(try writer.finish())
     }
+
+    /// Pins root-mean-square specifically. 128 samples at 1.0 followed by 128 at 0.0 gives
+    /// RMS = sqrt(0.5) ≈ 0.7071, where a plain mean would give 0.5 and taking the maximum would
+    /// give 1.0 — all three outcomes are distinguishable, which a constant-amplitude block
+    /// could not achieve.
+    func testRMSIsRootMeanSquareNotTheMeanOrTheMaximum() throws {
+        var samples = [Float](repeating: 1.0, count: 128)
+        samples += [Float](repeating: 0.0, count: 128)
+
+        let writer = try PeakSidecarWriter(url: url("rms.peaks"), sampleRate: 44_100)
+        try writer.append(samples)
+        try writer.finish()
+
+        let column = try PeakSidecarReader(contentsOf: url("rms.peaks")).column(at: 0)
+        XCTAssertEqual(column.rms, 0.7071, accuracy: 1e-3)
+    }
 }
