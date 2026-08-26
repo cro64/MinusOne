@@ -144,11 +144,6 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         configureLiveTab()
         configurePracticeTab()
 
-        // AppKit re-fits the window from the installed tab's constraints, so this has to come
-        // after the tabs are built or it is overwritten by whatever they fit to.
-        window.setContentSize(WindowSizing.defaultContent)
-        window.center()
-
         sidebar.onSelectClip = { [weak self] clip in self?.deck.show(clip: clip) }
         // Renaming is available on both sides of the split, so each side has to tell the other.
         sidebar.onRenameClip = { [weak self] clip in self?.deck.applyRenamedClip(clip) }
@@ -161,6 +156,14 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         if !presentOnboardingIfNeeded() {
             showTab(.live)
         }
+
+        // Last, deliberately. AppKit re-fits the window from whatever content is installed, and
+        // `showTab`/`presentOnboardingIfNeeded` both swap the content view controller through
+        // containment — so setting the size before them lets their fit overwrite it, which is the
+        // mechanism that welded `minSize` to the default size in the first place. This is the final
+        // word on the opening size; the floor above is what permits shrinking afterwards.
+        window.setContentSize(WindowSizing.defaultContent)
+        window.center()
     }
 
     @available(*, unavailable)
