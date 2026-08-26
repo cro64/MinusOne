@@ -27,6 +27,7 @@ final class StemLaneView: NSView {
     private struct RenderCacheKey: Equatable {
         let viewport: Viewport
         let size: NSSize
+        let scale: CGFloat
         let peakVersion: Int
         let normalizationReference: Float
         let availableDuration: Double
@@ -53,6 +54,14 @@ final class StemLaneView: NSView {
     /// come and ask.
     override func viewDidChangeEffectiveAppearance() {
         super.viewDidChangeEffectiveAppearance()
+        needsDisplay = true
+    }
+
+    /// The backing scale is baked into the cached bitmap (bars are snapped to whole device
+    /// pixels), so a window moving to a screen with a different scale has to drop it. The scale
+    /// is in the cache key too; this is what tells AppKit to come and ask.
+    override func viewDidChangeBackingProperties() {
+        super.viewDidChangeBackingProperties()
         needsDisplay = true
     }
 
@@ -94,6 +103,7 @@ final class StemLaneView: NSView {
         let key = RenderCacheKey(
             viewport: viewport,
             size: bounds.size,
+            scale: window?.backingScaleFactor ?? 2,
             peakVersion: peakStore.version,
             normalizationReference: peakStore.normalizationReference,
             availableDuration: peakStore.availableDuration(for: track),
@@ -141,7 +151,7 @@ final class StemLaneView: NSView {
             let core = PeakScaling.height(magnitude: column.rms, reference: reference) * midY
             // Whole device pixels, so a bar lands on a pixel boundary instead of being
             // antialiased across two.
-            let x = (bar.x * scale).rounded() / scale
+            let x = TimelineMetrics.devicePixelAligned(bar.x, scale: scale)
 
             let envelope = NSRect(
                 x: x,

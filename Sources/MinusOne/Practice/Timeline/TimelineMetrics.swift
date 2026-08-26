@@ -32,6 +32,16 @@ enum TimelineMetrics {
     static func barCount(forWidth width: CGFloat) -> Int {
         max(0, Int(width / barStep))
     }
+
+    /// Snaps a viewport-derived x onto whole device pixels.
+    ///
+    /// Every timeline view draws on the same grid, so they share one implementation: a divergent
+    /// fallback or rounding rule in any one of them would put its bars a fraction of a point off
+    /// its siblings', which is the drift the `Viewport`-only rule exists to prevent. This is a
+    /// post-hoc snap on an x that already came from the viewport — it is not a second geometry.
+    static func devicePixelAligned(_ x: CGFloat, scale: CGFloat) -> CGFloat {
+        (x * scale).rounded() / scale
+    }
 }
 
 /// One drawn bar: where it goes, what instant it represents, and what it contains.

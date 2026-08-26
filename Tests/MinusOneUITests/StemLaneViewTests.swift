@@ -170,4 +170,57 @@ final class StemLaneViewTests: XCTestCase {
         let store = PeakStore(peaksFolder: folder)
         XCTAssertTrue(lane(.mix, store: store, width: 0, clipDuration: 10).renderedBars().isEmpty)
     }
+
+    /// The backing scale determines the drawn pixels (bars snap to whole device pixels via
+    /// `window?.backingScaleFactor`), so it has to be in the cache key too — otherwise a window
+    /// moving to a screen with a different scale would keep the bitmap rendered on the old pixel
+    /// grid. `FakeScaleWindow` fakes what a real screen move would do to `backingScaleFactor`,
+    /// since a unit test can't actually move a window between screens.
+    func testChangingBackingScaleRerenders() throws {
+        try writeTrack(.mix, seconds: 10, magnitude: 0.9)
+        let store = PeakStore(peaksFolder: folder)
+        let view = lane(.mix, store: store, width: 300, clipDuration: 10)
+
+        let window = FakeScaleWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 300, height: 72),
+            styleMask: [.borderless],
+            backing: .buffered,
+            defer: false
+        )
+        window.fakeScale = 2
+        window.contentView = view
+
+        let rep = try XCTUnwrap(view.bitmapImageRepForCachingDisplay(in: view.bounds))
+        view.cacheDisplay(in: view.bounds, to: rep)
+        XCTAssertEqual(view.renderCount, 1)
+        view.cacheDisplay(in: view.bounds, to: rep)
+        XCTAssertEqual(view.renderCount, 1, "an unchanged backing scale re-rendered its bars")
+
+        window.fakeScale = 1
+        view.viewDidChangeBackingProperties()
+        view.cacheDisplay(in: view.bounds, to: rep)
+        XCTAssertEqual(view.renderCount, 2, "a backing scale change reused the old bitmap")
+    }
+
+    /// `draw(_:)` guards on `bounds.width > 0, bounds.height > 0` before touching the cache or
+    /// rasterising; this exercises that guard through the actual `cacheDisplay` path rather than
+    /// only through `renderedBars()`.
+    func testCachingDisplayOnAZeroHeightLaneDoesNotCrash() throws {
+        try writeTrack(.mix, seconds: 10, magnitude: 0.9)
+        let store = PeakStore(peaksFolder: folder)
+        let view = StemLaneView(track: .mix, peakStore: store)
+        view.frame = NSRect(x: 0, y: 0, width: 300, height: 0)
+        view.viewport = Viewport(clipDuration: 10, widthPoints: 300)
+
+        let rep = try XCTUnwrap(view.bitmapImageRepForCachingDisplay(in: NSRect(x: 0, y: 0, width: 300, height: 1)))
+        view.cacheDisplay(in: view.bounds, to: rep)
+        XCTAssertEqual(view.renderCount, 0, "a zero-height lane should never rasterise")
+    }
+}
+
+/// Fakes what moving a window to a screen with a different scale does to `backingScaleFactor`,
+/// since a unit test has no screen to move the window to.
+private final class FakeScaleWindow: NSWindow {
+    var fakeScale: CGFloat = 2
+    override var backingScaleFactor: CGFloat { fakeScale }
 }
