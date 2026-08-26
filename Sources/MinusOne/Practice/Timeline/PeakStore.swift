@@ -56,9 +56,8 @@ final class PeakStore {
         let last = Int((endTime * columnsPerSecond).rounded(.up))
         let sourceCount = max(1, last - first)
 
-        return PeakBinning.rebin(targetCount: count, sourceCount: sourceCount) { index in
-            reader.column(at: first + index)
-        }
+        let source = reader.columns(from: first, count: sourceCount)
+        return PeakBinning.rebin(targetCount: count, sourceCount: sourceCount) { source[$0] }
     }
 
     // MARK: - Internals
@@ -84,8 +83,8 @@ final class PeakStore {
     private func recomputeNormalization() {
         guard let reader = readers[.mix] else { normalizationReference = 1; return }
         var maximum: Float = 0
-        for index in 0..<reader.columnCount {
-            maximum = max(maximum, reader.column(at: index).magnitude)
+        for column in reader.columns(from: 0, count: reader.columnCount) {
+            maximum = max(maximum, column.magnitude)
         }
         normalizationReference = maximum > 0 ? maximum : 1
     }

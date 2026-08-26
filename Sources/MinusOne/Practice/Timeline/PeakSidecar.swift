@@ -123,4 +123,39 @@ final class PeakSidecarReader {
         }
         return PeakColumn(minimum: value(0), maximum: value(2), rms: value(4))
     }
+
+    /// Reads `count` columns starting at `start`, in one pass over the mapped bytes.
+    ///
+    /// `column(at:)` costs six bounds-checked `Data` subscripts per column. A lane zoomed all the
+    /// way out asks for every stored column — ~41,000 for a four-minute clip — and there are four
+    /// lanes, so the scalar path is the one thing on the render route that scales with clip length.
+    /// This binds the mapped region once and reads straight out of it.
+    ///
+    /// Out-of-range indices read `.silent` rather than trapping: the unseparated tail is read this
+    /// way on every frame while separation runs.
+    func columns(from start: Int, count: Int) -> [PeakColumn] {
+        guard count > 0 else { return [] }
+        var result = [PeakColumn](repeating: .silent, count: count)
+        let available = columnCount
+        guard available > 0 else { return result }
+
+        let scale = PeakSidecar.sampleScale
+        data.withUnsafeBytes { raw in
+            guard let base = raw.baseAddress else { return }
+            let body = base.advanced(by: PeakSidecar.headerByteCount)
+            for offset in 0..<count {
+                let index = start + offset
+                guard index >= 0, index < available else { continue }
+                let byteOffset = index * PeakSidecar.bytesPerColumn
+                // `loadUnaligned`, not `load`: the body starts at byte 20 and strides by 6, so a
+                // column's Int16s are only ever 2-byte aligned. `load` traps on that.
+                func value(_ field: Int) -> Float {
+                    let raw = body.loadUnaligned(fromByteOffset: byteOffset + field * 2, as: Int16.self)
+                    return Float(Int16(littleEndian: raw)) / scale
+                }
+                result[offset] = PeakColumn(minimum: value(0), maximum: value(1), rms: value(2))
+            }
+        }
+        return result
+    }
 }
