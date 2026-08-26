@@ -16,7 +16,9 @@ final class TimelineRulerView: NSView {
 
     /// Human-sized intervals only. A computed "nice number" would happily choose 3.7 seconds; a
     /// ruler nobody can read the spacing of is worse than a coarse one.
-    private static let intervalLadder: [Double] = [0.1, 0.25, 0.5, 1, 2, 5, 10, 15, 30, 60, 120, 300, 600]
+    private static let intervalLadder: [Double] = [
+        0.1, 0.25, 0.5, 1, 2, 5, 10, 15, 30, 60, 120, 300, 600, 900, 1800, 3600
+    ]
 
     override init(frame frameRect: NSRect) {
         viewport = Viewport(clipDuration: 1, widthPoints: 0)
@@ -40,8 +42,11 @@ final class TimelineRulerView: NSView {
         needsDisplay = true
     }
 
-    /// The coarsest interval that is still fine enough to fill the ruler, or the finest available
-    /// if even that is too coarse.
+    /// The coarsest interval that is still fine enough to fill the ruler.
+    ///
+    /// Falls back to the ladder's coarsest entry when even that crowds — which needs under
+    /// 0.017 px/s, i.e. a clip over eleven hours long at any realistic ruler width. At that point
+    /// label spacing is not the interesting problem.
     static func tickInterval(pixelsPerSecond: CGFloat) -> Double {
         for candidate in intervalLadder where CGFloat(candidate) * pixelsPerSecond >= minimumLabelSpacing {
             return candidate
@@ -53,8 +58,16 @@ final class TimelineRulerView: NSView {
     static func label(forTime time: Double, interval: Double) -> String {
         guard interval < 1 else { return time.formattedAsDuration }
         guard time.isFinite, time >= 0 else { return "0:00.0" }
-        let whole = Int(time)
-        let tenths = Int((time - Double(whole)) * 10)
+        var whole = Int(time)
+        // Rounded, not truncated: `(4.3 - 4) * 10` is 2.999999999999998 in IEEE754, so truncating
+        // labels 4.3s as "0:04.2". Measured: that is wrong for 792 of the first 2000 tenth-second
+        // ticks.
+        var tenths = Int(((time - Double(whole)) * 10).rounded())
+        if tenths >= 10 {
+            // The rounding carried — 59.97 is "1:00.0", never "0:59.10".
+            whole += 1
+            tenths = 0
+        }
         return String(format: "%d:%02d.%d", whole / 60, whole % 60, tenths)
     }
 

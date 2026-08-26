@@ -13,7 +13,7 @@ final class TimelineRulerTests: XCTestCase {
     /// The ladder exists so labels never collide: whatever the zoom, adjacent labelled ticks stay
     /// at least 60pt apart.
     func testLabelledTicksNeverCrowd() {
-        for pixelsPerSecond in stride(from: CGFloat(0.2), through: 600, by: 0.7) {
+        for pixelsPerSecond in stride(from: CGFloat(0.02), through: 600, by: 0.7) {
             let interval = TimelineRulerView.tickInterval(pixelsPerSecond: pixelsPerSecond)
             let spacing = CGFloat(interval) * pixelsPerSecond
             XCTAssertGreaterThanOrEqual(
@@ -60,6 +60,21 @@ final class TimelineRulerTests: XCTestCase {
     func testSubSecondIntervalsGetADecimal() {
         XCTAssertEqual(TimelineRulerView.label(forTime: 125.4, interval: 0.25), "2:05.4")
         XCTAssertEqual(TimelineRulerView.label(forTime: 3.0, interval: 0.5), "0:03.0")
+    }
+
+    /// The tenths digit must be the tick's own tenth, not whatever truncating a float lands on.
+    func testEveryTenthTickLabelsItsOwnTenth() {
+        for step in 0...600 {
+            let time = Double(step) / 10
+            let expected = String(format: "%d:%02d.%d", step / 600, (step / 10) % 60, step % 10)
+            XCTAssertEqual(TimelineRulerView.label(forTime: time, interval: 0.1), expected, "step \(step)")
+        }
+    }
+
+    /// Rounding up past .9 has to carry into the seconds rather than printing a tenth of 10.
+    func testARoundedUpTenthCarriesIntoTheSeconds() {
+        XCTAssertEqual(TimelineRulerView.label(forTime: 59.97, interval: 0.1), "1:00.0")
+        XCTAssertEqual(TimelineRulerView.label(forTime: 3.98, interval: 0.1), "0:04.0")
     }
 
     func testItDrawsWithoutCrashingOnAZeroWidthRuler() throws {
