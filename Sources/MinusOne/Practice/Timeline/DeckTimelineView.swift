@@ -148,13 +148,21 @@ final class DeckTimelineView: NSView {
 
     // MARK: - Lanes
 
-    /// Four stem lanes once any stem has peaks; a single mix lane before that. Spec §9: a clip
-    /// whose separation never ran still gets a deck, and four empty lanes would claim stems that
-    /// do not exist.
+    /// Four stem lanes once any stem has peaks; a single mix lane before that.
+    ///
+    /// All four, not just the ones with sidecars: separation writes the four stem *audio* files
+    /// together, and `OfflineSeparationEngine` catches sidecar-writer failures per stem — so a stem
+    /// can be fully playable while missing only its peaks. The lane header is the only place that
+    /// stem's fader, mute, solo and export live, so dropping its lane would make a playable stem
+    /// unreachable. Without peaks it simply draws as the unseparated tail until backfill supplies
+    /// them.
+    ///
+    /// Spec §9: a clip whose separation never ran still gets a deck — one mix lane, because four
+    /// empty lanes would claim stems that genuinely do not exist.
     private func desiredTracks() -> [PeakTrack] {
         guard let peakStore else { return [.mix] }
-        let stems = SeparationStem.allCases.map(PeakTrack.stem).filter { peakStore.hasTrack($0) }
-        return stems.isEmpty ? [.mix] : stems
+        let anyStemHasPeaks = SeparationStem.allCases.contains { peakStore.hasTrack(.stem($0)) }
+        return anyStemHasPeaks ? SeparationStem.allCases.map(PeakTrack.stem) : [.mix]
     }
 
     private func rebuildLanes() {

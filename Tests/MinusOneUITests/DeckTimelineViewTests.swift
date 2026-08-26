@@ -88,8 +88,20 @@ final class DeckTimelineViewTests: XCTestCase {
 
         try writeTrack(.stem(.drums), seconds: 20)
         view.refreshPeaks()
+        view.layoutSubtreeIfNeeded()
         XCTAssertEqual(view.viewport.startTime, before.startTime, accuracy: 1e-9)
         XCTAssertEqual(view.viewport.visibleDuration, before.visibleDuration, accuracy: 1e-9)
+    }
+
+    /// A stem whose sidecar writer failed is still playable — `OfflineSeparationEngine` catches
+    /// that per stem — and its lane header carries the only fader, mute, solo and export it has.
+    /// So one stem's peaks are enough to bring all four lanes back.
+    func testAPartiallySeparatedClipStillGetsAllFourLanes() throws {
+        try writeTrack(.mix, seconds: 60)
+        try writeTrack(.stem(.drums), seconds: 20)
+        let view = timeline()
+        XCTAssertEqual(view.tracks, SeparationStem.allCases.map(PeakTrack.stem))
+        XCTAssertEqual(view.canvasFramesForTesting.count, 4 + 3, "one frame per lane plus ruler, overlay and indicator")
     }
 
     /// …but the lane set does change, because stems now exist where none did.
