@@ -42,6 +42,18 @@ final class PeakStore {
         readers[track]?.availableDuration ?? 0
     }
 
+    /// Columns per second of the sidecars on disk — the resolution the maximum zoom is capped at,
+    /// since there is nothing finer stored to draw.
+    ///
+    /// Read from a header rather than assumed, so a sidecar written at a different
+    /// `framesPerColumn` caps zoom at *its* resolution instead of a constant's.
+    var storedColumnsPerSecond: Double {
+        for track in PeakTrack.all {
+            if let reader = readers[track] { return reader.columnsPerSecond }
+        }
+        return Double(PeakSidecar.defaultSampleRate) / Double(PeakSidecar.defaultFramesPerColumn)
+    }
+
     /// Re-binned columns covering `startTime..<endTime`, exactly `count` of them.
     ///
     /// The requested span is mapped to source indices *before* clamping, and out-of-range indices

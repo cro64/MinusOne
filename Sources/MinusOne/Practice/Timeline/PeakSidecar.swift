@@ -12,6 +12,9 @@ enum PeakSidecar {
     static let headerByteCount = 20
     static let bytesPerColumn = 6
     static let defaultFramesPerColumn = 256
+    /// The separation model's rate (`CoreMLSeparationModel.modelSampleRate`), used only as the
+    /// fallback for a clip with no sidecars open yet.
+    static let defaultSampleRate: UInt32 = 44_100
     /// `Int16.max`, as the scale factor between -1...1 samples and stored integers.
     static let sampleScale: Float = 32_767
 
