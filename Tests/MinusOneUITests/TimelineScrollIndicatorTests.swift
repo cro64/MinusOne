@@ -64,15 +64,24 @@ final class TimelineScrollIndicatorTests: XCTestCase {
         XCTAssertEqual(try XCTUnwrap(reported.first), view.viewport.startTime, accuracy: 0.001)
     }
 
-    func testItPaintsTheThumb() throws {
+    /// The thumb has to be visible *against* the track, which is why a plain "is there ink?"
+    /// threshold cannot express this: the track legitimately spans the full width. Measured on an
+    /// offscreen rep — track alpha 0.40, thumb over track 0.76 — so 0.5 separates them.
+    func testItPaintsTheThumbDistinctlyFromTheTrack() throws {
         let view = indicator(width: 300)
         view.viewport = view.viewport.zoomed(by: 4, around: 0)
         let rep = try XCTUnwrap(view.bitmapImageRepForCachingDisplay(in: view.bounds))
         view.cacheDisplay(in: view.bounds, to: rep)
-        let inked = (0..<rep.pixelsWide).filter { x in
-            (0..<rep.pixelsHigh).contains { (rep.colorAt(x: x, y: $0)?.alphaComponent ?? 0) > 0.2 }
+
+        func columnsAbove(_ alpha: CGFloat) -> Int {
+            (0..<rep.pixelsWide).filter { x in
+                (0..<rep.pixelsHigh).contains { (rep.colorAt(x: x, y: $0)?.alphaComponent ?? 0) > alpha }
+            }.count
         }
-        XCTAssertGreaterThan(inked.count, 0, "the indicator drew nothing")
-        XCTAssertLessThan(inked.count, rep.pixelsWide, "the thumb covers the whole track")
+
+        XCTAssertEqual(columnsAbove(0.2), rep.pixelsWide, "the track should span the full width")
+        let thumbColumns = columnsAbove(0.5)
+        XCTAssertGreaterThan(thumbColumns, 0, "the thumb did not paint")
+        XCTAssertLessThan(thumbColumns, rep.pixelsWide, "the thumb covers the whole track")
     }
 }

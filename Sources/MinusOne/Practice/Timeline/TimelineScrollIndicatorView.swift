@@ -92,6 +92,9 @@ final class TimelineScrollIndicatorView: NSView {
         super.draw(dirtyRect)
         guard let thumb = thumbRect() else { return }
 
+        NSColor.quaternaryLabelColor.withAlphaComponent(0.4).setFill()
+        NSBezierPath(roundedRect: NSRect(x: 0, y: 4, width: bounds.width, height: bounds.height - 8), xRadius: 2, yRadius: 2).fill()
+
         NSColor.secondaryLabelColor.withAlphaComponent(0.6).setFill()
         NSBezierPath(roundedRect: thumb, xRadius: 3, yRadius: 3).fill()
     }
