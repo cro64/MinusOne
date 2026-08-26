@@ -147,13 +147,20 @@ final class PeakSidecarReader {
                 let index = start + offset
                 guard index >= 0, index < available else { continue }
                 let byteOffset = index * PeakSidecar.bytesPerColumn
-                // `loadUnaligned`, not `load`: the body starts at byte 20 and strides by 6, so a
-                // column's Int16s are only ever 2-byte aligned. `load` traps on that.
-                func value(_ field: Int) -> Float {
-                    let raw = body.loadUnaligned(fromByteOffset: byteOffset + field * 2, as: Int16.self)
-                    return Float(Int16(littleEndian: raw)) / scale
-                }
-                result[offset] = PeakColumn(minimum: value(0), maximum: value(1), rms: value(2))
+                // Inlined rather than routed through a nested helper, to avoid a per-call
+                // closure allocation under -Onone. (Measured: this alone was not the dominant
+                // debug-build cost — see PeakBulkReadTests and spec §14 — but it is free to avoid
+                // and it is one less heap allocation on a hot loop.) `loadUnaligned`, not `load`:
+                // the body starts at byte 20 and strides by 6, so a column's Int16s are only ever
+                // 2-byte aligned, and `load` traps on that.
+                let minimum = body.loadUnaligned(fromByteOffset: byteOffset, as: Int16.self)
+                let maximum = body.loadUnaligned(fromByteOffset: byteOffset + 2, as: Int16.self)
+                let rms = body.loadUnaligned(fromByteOffset: byteOffset + 4, as: Int16.self)
+                result[offset] = PeakColumn(
+                    minimum: Float(Int16(littleEndian: minimum)) / scale,
+                    maximum: Float(Int16(littleEndian: maximum)) / scale,
+                    rms: Float(Int16(littleEndian: rms)) / scale
+                )
             }
         }
         return result

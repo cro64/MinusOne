@@ -91,7 +91,18 @@ final class PeakBulkReadTests: XCTestCase {
             _ = PeakBinning.rebin(targetCount: 226, sourceCount: source.count) { source[$0] }
         }
         let perRebin = Date().timeIntervalSince(started) / 10
-        XCTAssertLessThan(perRebin, 0.004, "a full-clip re-bin took \(perRebin * 1000) ms")
+        // Two bounds because the debug build's cost is dominated by -Onone codegen, not by the
+        // algorithm. Both guard the same thing: an order-of-magnitude regression that would
+        // invalidate spec §4's no-pyramid decision. Measured on an Apple M4: ~109 µs release,
+        // ~8.2-8.3 ms debug (repeated runs). The debug bound below is ~3.6x that debug median —
+        // enough headroom that ordinary variance won't trip it, but a 10x algorithmic regression
+        // (~83 ms) still would.
+        #if DEBUG
+        let bound = 0.03
+        #else
+        let bound = 0.004
+        #endif
+        XCTAssertLessThan(perRebin, bound, "a full-clip re-bin took \(perRebin * 1000) ms")
         print("MEASURED full-clip re-bin (41,343 → 226): \(perRebin * 1_000_000) µs")
     }
 }
