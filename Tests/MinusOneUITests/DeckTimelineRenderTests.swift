@@ -42,10 +42,19 @@ final class DeckTimelineRenderTests: XCTestCase {
             view.readyDuration = 10
             view.loopRange = 2...5
             view.setPlayheadTime(3.5)
-            view.layoutSubtreeIfNeeded()
 
-            let rep = try XCTUnwrap(view.bitmapImageRepForCachingDisplay(in: view.bounds))
-            view.cacheDisplay(in: view.bounds, to: rep)
+            // The timeline's views are transparent by design — in the app they sit on the window's
+            // background. Rendered without one, the dark pass resolves its labels and playhead to
+            // their light dark-mode colours and paints them onto a white void, where they vanish;
+            // the first version of this harness produced exactly that and it looked like a bug in
+            // the views. The backdrop has to be part of the capture to judge either appearance.
+            let backdrop = RenderBackdropView(frame: view.bounds)
+            backdrop.appearance = NSAppearance(named: appearance)
+            backdrop.addSubview(view)
+            backdrop.layoutSubtreeIfNeeded()
+
+            let rep = try XCTUnwrap(backdrop.bitmapImageRepForCachingDisplay(in: backdrop.bounds))
+            backdrop.cacheDisplay(in: backdrop.bounds, to: rep)
             let png = try XCTUnwrap(rep.representation(using: .png, properties: [:]))
             let url = output.appendingPathComponent("deck-timeline-\(name).png")
             try png.write(to: url)
@@ -62,5 +71,17 @@ final class DeckTimelineRenderTests: XCTestCase {
             "light and dark renders are byte-identical — the appearance did not reach the view, so "
             + "these images cannot be used to judge dark-mode correctness"
         )
+    }
+}
+
+/// Paints the window background the timeline's transparent views normally sit on, resolved inside
+/// `draw(_:)` so it follows this view's own appearance rather than freezing one.
+private final class RenderBackdropView: NSView {
+    override var isFlipped: Bool { true }
+
+    override func draw(_ dirtyRect: NSRect) {
+        super.draw(dirtyRect)
+        NSColor.windowBackgroundColor.setFill()
+        bounds.fill()
     }
 }
