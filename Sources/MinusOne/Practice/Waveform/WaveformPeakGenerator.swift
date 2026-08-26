@@ -98,9 +98,25 @@ enum WaveformPeakGenerator {
         let channelCount = Int(format.channelCount)
         var monoScratch = [Float](repeating: 0, count: Int(chunkCapacity))
 
-        while true {
+        let totalFrames = file.length
+        var framesRead: AVAudioFramePosition = 0
+
+        while framesRead < totalFrames {
             buffer.frameLength = 0
-            try file.read(into: buffer, frameCount: chunkCapacity)
+            do {
+                try file.read(into: buffer, frameCount: chunkCapacity)
+            } catch {
+                // Measured 2026-08-25 (scratch `swiftc` harness, PCM/AAC/ALAC): the read issued
+                // *after* the final frame throws `nilError` instead of returning zero frames — so
+                // a decoder whose reported `length` overshoots what it will actually hand back
+                // (encoder padding, typically) ends here rather than at the loop condition. A
+                // throw within one chunk of the end is that, and is benign. A throw earlier than
+                // that is a real decode failure and must propagate: this file is the shared
+                // normalisation reference for every lane, and a short one is undetectable
+                // downstream.
+                guard framesRead >= totalFrames - AVAudioFramePosition(chunkCapacity) else { throw error }
+                break
+            }
             let frames = Int(buffer.frameLength)
             if frames == 0 { break }
             guard let channelData = buffer.floatChannelData else { break }
@@ -117,7 +133,7 @@ enum WaveformPeakGenerator {
             }
 
             try writer.append(monoScratch[0..<frames])
-            if frames < Int(chunkCapacity) { break }
+            framesRead += AVAudioFramePosition(frames)
         }
 
         try writer.finish()
