@@ -70,4 +70,31 @@ struct Viewport: Equatable {
         next.startTime = min(max(0, startTime), clipDuration - next.visibleDuration)
         return next
     }
+
+    /// Same visible seconds, different canvas width.
+    ///
+    /// A resize must not move the view. `Viewport(clipDuration:widthPoints:)` resets to the whole
+    /// clip, so a window drag would otherwise yank the user away from whatever they were studying
+    /// — the same rule spec §7 states for progressive separation.
+    ///
+    /// The zoom limit travels with the width because it is derived from it: fewer bars across the
+    /// canvas means 1:1 with the stored peaks is a longer span.
+    func resized(toWidth width: CGFloat, minVisibleDuration newMinimum: Double) -> Viewport {
+        var next = Viewport(
+            clipDuration: clipDuration,
+            widthPoints: width,
+            minVisibleDuration: newMinimum
+        )
+        next.startTime = startTime
+        next.visibleDuration = visibleDuration
+        return next.clamped()
+    }
+
+    /// Moves the view to an absolute start time, keeping the zoom. `panned(byPoints:)` covers
+    /// deltas; the scroll indicator's thumb knows where it wants to be, not how far it moved.
+    func scrolled(toStartTime time: Double) -> Viewport {
+        var next = self
+        next.startTime = time
+        return next.clamped()
+    }
 }
