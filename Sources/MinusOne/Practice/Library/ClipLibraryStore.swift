@@ -96,6 +96,22 @@ final class ClipLibraryStore {
         folder(forClipID: clipID).appendingPathComponent(fileName)
     }
 
+    /// Peak sidecars live in their own subfolder so a clip folder listing stays readable, and so
+    /// the whole set can be deleted and regenerated without touching audio.
+    func peaksFolder(forClipID id: UUID) -> URL {
+        folder(forClipID: id).appendingPathComponent("peaks", isDirectory: true)
+    }
+
+    func ensurePeaksFolder(forClipID id: UUID) throws -> URL {
+        let url = peaksFolder(forClipID: id)
+        try fileManager.createDirectory(at: url, withIntermediateDirectories: true)
+        return url
+    }
+
+    func peakFileURL(clipID: UUID, track: PeakTrack) -> URL {
+        peaksFolder(forClipID: clipID).appendingPathComponent(track.fileName)
+    }
+
     // MARK: - Persistence
 
     private func persist() {

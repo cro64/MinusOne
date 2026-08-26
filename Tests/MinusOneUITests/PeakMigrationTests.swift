@@ -1,0 +1,321 @@
+import AVFoundation
+import XCTest
+@testable import MinusOne
+
+final class PeakSidecarGenerationTests: XCTestCase {
+    private var directory: URL!
+
+    override func setUpWithError() throws {
+        directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("PeakGen-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    }
+
+    override func tearDownWithError() throws {
+        try? FileManager.default.removeItem(at: directory)
+    }
+
+    /// Writes a stereo WAV of a full-scale sine so the generated peaks have a known magnitude.
+    @discardableResult
+    private func writeTone(named name: String, seconds: Double, amplitude: Float = 1.0) throws -> URL {
+        let url = directory.appendingPathComponent(name)
+        let fileFormat = AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: 44_100, channels: 2, interleaved: true)!
+        let file = try AVAudioFile(forWriting: url, settings: fileFormat.settings)
+        // The buffer takes the file's *processing* format, which AVAudioFile always reports as
+        // non-interleaved. Allocating it from the interleaved format instead would make
+        // `floatChannelData[1]` an out-of-bounds read rather than a second channel plane.
+        let frameCount = AVAudioFrameCount(seconds * 44_100)
+        let buffer = AVAudioPCMBuffer(pcmFormat: file.processingFormat, frameCapacity: frameCount)!
+        buffer.frameLength = frameCount
+        let channels = buffer.floatChannelData!
+        for frame in 0..<Int(frameCount) {
+            let value = amplitude * sinf(2 * .pi * 440 * Float(frame) / 44_100)
+            channels[0][frame] = value
+            channels[1][frame] = value
+        }
+        try file.write(from: buffer)
+        return url
+    }
+
+    func testItProducesRoughlyOneColumnPerTwoHundredFiftySixFrames() throws {
+        let source = try writeTone(named: "tone.wav", seconds: 2)
+        let destination = directory.appendingPathComponent("tone.peaks")
+        try WaveformPeakGenerator.writeSidecar(from: source, to: destination)
+
+        let reader = try PeakSidecarReader(contentsOf: destination)
+        let expected = Int((2.0 * 44_100 / 256).rounded())
+        // Within one column either way: the trailing partial column depends on whether the frame
+        // count divides evenly by 256.
+        XCTAssertLessThanOrEqual(abs(reader.columnCount - expected), 1)
+        XCTAssertEqual(reader.availableDuration, 2.0, accuracy: 0.05)
+    }
+
+    func testAFullScaleToneReachesFullMagnitude() throws {
+        let source = try writeTone(named: "loud.wav", seconds: 1)
+        let destination = directory.appendingPathComponent("loud.peaks")
+        try WaveformPeakGenerator.writeSidecar(from: source, to: destination)
+
+        let reader = try PeakSidecarReader(contentsOf: destination)
+        let loudest = (0..<reader.columnCount).map { reader.column(at: $0).magnitude }.max() ?? 0
+        XCTAssertEqual(loudest, 1.0, accuracy: 0.02)
+    }
+
+    func testAQuietToneStaysProportionallyQuiet() throws {
+        let source = try writeTone(named: "quiet.wav", seconds: 1, amplitude: 0.1)
+        let destination = directory.appendingPathComponent("quiet.peaks")
+        try WaveformPeakGenerator.writeSidecar(from: source, to: destination)
+
+        let reader = try PeakSidecarReader(contentsOf: destination)
+        let loudest = (0..<reader.columnCount).map { reader.column(at: $0).magnitude }.max() ?? 0
+        XCTAssertEqual(loudest, 0.1, accuracy: 0.02)
+    }
+
+    func testTheHeaderCarriesTheSourceSampleRate() throws {
+        let source = try writeTone(named: "rate.wav", seconds: 0.5)
+        let destination = directory.appendingPathComponent("rate.peaks")
+        try WaveformPeakGenerator.writeSidecar(from: source, to: destination)
+        XCTAssertEqual(try PeakSidecarReader(contentsOf: destination).header.sampleRate, 44_100)
+    }
+
+    /// Writes a tone whose two channels differ, so the downmix itself is observable.
+    @discardableResult
+    private func writeAsymmetricTone(named name: String, seconds: Double, left: Float, right: Float) throws -> URL {
+        let url = directory.appendingPathComponent(name)
+        let fileFormat = AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: 44_100, channels: 2, interleaved: true)!
+        let file = try AVAudioFile(forWriting: url, settings: fileFormat.settings)
+        let frameCount = AVAudioFrameCount(seconds * 44_100)
+        let buffer = AVAudioPCMBuffer(pcmFormat: file.processingFormat, frameCapacity: frameCount)!
+        buffer.frameLength = frameCount
+        let channels = buffer.floatChannelData!
+        for frame in 0..<Int(frameCount) {
+            channels[0][frame] = left
+            channels[1][frame] = right
+        }
+        try file.write(from: buffer)
+        return url
+    }
+
+    /// Pins `(L + R) * 0.5` specifically. Every other test in this suite uses identical channels,
+    /// where a downmix that simply copied the left channel would be indistinguishable from the
+    /// correct one — and the convention matters beyond this file: separation writes stem sidecars
+    /// the same way, and stems are normalised against the mix, so a mismatch would draw every
+    /// stem lane at the wrong height.
+    func testTheDownmixAveragesTheTwoChannelsRatherThanTakingOne() throws {
+        let source = try writeAsymmetricTone(named: "asymmetric.wav", seconds: 0.5, left: 1.0, right: 0.0)
+        let destination = directory.appendingPathComponent("asymmetric.peaks")
+        try WaveformPeakGenerator.writeSidecar(from: source, to: destination)
+
+        let reader = try PeakSidecarReader(contentsOf: destination)
+        let loudest = (0..<reader.columnCount).map { reader.column(at: $0).magnitude }.max() ?? 0
+        XCTAssertEqual(loudest, 0.5, accuracy: 0.02, "expected (1.0 + 0.0) * 0.5 — a left-channel-only downmix would give 1.0")
+    }
+}
+
+final class ClipImportSidecarTests: XCTestCase {
+    private var directory: URL!
+
+    override func setUpWithError() throws {
+        directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("ImportSidecar-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    }
+
+    override func tearDownWithError() throws {
+        try? FileManager.default.removeItem(at: directory)
+    }
+
+    private func writeTone(named name: String, seconds: Double) throws -> URL {
+        let url = directory.appendingPathComponent(name)
+        let fileFormat = AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: 44_100, channels: 2, interleaved: true)!
+        let file = try AVAudioFile(forWriting: url, settings: fileFormat.settings)
+        // The buffer takes the file's *processing* format, which AVAudioFile always reports as
+        // non-interleaved. Allocating it from the interleaved format instead would make
+        // `floatChannelData[1]` an out-of-bounds read rather than a second channel plane.
+        let frameCount = AVAudioFrameCount(seconds * 44_100)
+        let buffer = AVAudioPCMBuffer(pcmFormat: file.processingFormat, frameCapacity: frameCount)!
+        buffer.frameLength = frameCount
+        let channels = buffer.floatChannelData!
+        for frame in 0..<Int(frameCount) {
+            let value = sinf(2 * .pi * 220 * Float(frame) / 44_100)
+            channels[0][frame] = value
+            channels[1][frame] = value
+        }
+        try file.write(from: buffer)
+        return url
+    }
+
+    func testItWritesAReadableMixSidecarAndReportsItsName() throws {
+        let source = try writeTone(named: "source.wav", seconds: 1)
+        let peaksFolder = directory.appendingPathComponent("peaks", isDirectory: true)
+
+        let names = try ClipImportService.writeMixSidecar(sourceURL: source, peaksFolder: peaksFolder)
+
+        XCTAssertEqual(names, ["mix": "mix.peaks"])
+        let reader = try PeakSidecarReader(contentsOf: peaksFolder.appendingPathComponent("mix.peaks"))
+        XCTAssertGreaterThan(reader.columnCount, 100)
+        XCTAssertEqual(reader.availableDuration, 1.0, accuracy: 0.05)
+    }
+
+    func testItCreatesThePeaksFolderIfItIsMissing() throws {
+        let source = try writeTone(named: "source2.wav", seconds: 0.5)
+        let peaksFolder = directory.appendingPathComponent("nested/peaks", isDirectory: true)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: peaksFolder.path))
+
+        _ = try ClipImportService.writeMixSidecar(sourceURL: source, peaksFolder: peaksFolder)
+
+        XCTAssertTrue(FileManager.default.fileExists(atPath: peaksFolder.appendingPathComponent("mix.peaks").path))
+    }
+}
+
+final class PeakSidecarMigratorTests: XCTestCase {
+    private var root: URL!
+    private var store: ClipLibraryStore!
+
+    override func setUpWithError() throws {
+        root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("Migrator-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        store = ClipLibraryStore(rootURL: root)
+    }
+
+    override func tearDownWithError() throws {
+        try? FileManager.default.removeItem(at: root)
+    }
+
+    private func writeTone(to url: URL, seconds: Double) throws {
+        let fileFormat = AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: 44_100, channels: 2, interleaved: true)!
+        let file = try AVAudioFile(forWriting: url, settings: fileFormat.settings)
+        // The buffer takes the file's *processing* format, which AVAudioFile always reports as
+        // non-interleaved. Allocating it from the interleaved format instead would make
+        // `floatChannelData[1]` an out-of-bounds read rather than a second channel plane.
+        let frameCount = AVAudioFrameCount(seconds * 44_100)
+        let buffer = AVAudioPCMBuffer(pcmFormat: file.processingFormat, frameCapacity: frameCount)!
+        buffer.frameLength = frameCount
+        let channels = buffer.floatChannelData!
+        for frame in 0..<Int(frameCount) {
+            let value = sinf(2 * .pi * 330 * Float(frame) / 44_100)
+            channels[0][frame] = value
+            channels[1][frame] = value
+        }
+        try file.write(from: buffer)
+    }
+
+    /// A clip exactly as a pre-sidecar build would have left it: source plus one stem, no peaks.
+    private func legacyClip(withStems stems: [SeparationStem]) throws -> PracticeClip {
+        let id = UUID()
+        let folder = try store.ensureFolder(forClipID: id)
+        try writeTone(to: folder.appendingPathComponent("source.wav"), seconds: 1)
+        var stemFileNames: [String: String] = [:]
+        for stem in stems {
+            let name = "\(stem.rawValue).caf"
+            try writeTone(to: folder.appendingPathComponent(name), seconds: 1)
+            stemFileNames[stem.rawValue] = name
+        }
+        return PracticeClip(
+            id: id,
+            title: "Legacy",
+            durationSeconds: 1,
+            sourceHash: "hash",
+            sourceFileName: "source.wav",
+            waveformPeaks: [],
+            stemFileNames: stemFileNames,
+            readyDurationSeconds: 1
+        )
+    }
+
+    func testEveryTrackIsMissingForAClipWithNoSidecars() throws {
+        let clip = try legacyClip(withStems: [.vocals, .drums, .bass, .other])
+        XCTAssertEqual(PeakSidecarMigrator.missingTracks(for: clip, libraryStore: store).count, 5)
+    }
+
+    func testBackfillWritesReadableSidecarsForTheSourceAndEveryStem() throws {
+        let clip = try legacyClip(withStems: [.vocals, .drums, .bass, .other])
+        let updated = PeakSidecarMigrator.backfill(clip: clip, libraryStore: store)
+
+        XCTAssertEqual(updated.peakFileNames.count, 5)
+        for track in PeakTrack.all {
+            let url = store.peakFileURL(clipID: clip.id, track: track)
+            let reader = try PeakSidecarReader(contentsOf: url)
+            XCTAssertGreaterThan(reader.columnCount, 100, "\(track.key) sidecar is empty")
+        }
+    }
+
+    /// A clip whose separation never finished still gets a usable mix waveform.
+    func testAClipWithNoStemsStillGetsAMixSidecar() throws {
+        let clip = try legacyClip(withStems: [])
+        let updated = PeakSidecarMigrator.backfill(clip: clip, libraryStore: store)
+
+        XCTAssertEqual(updated.peakFileNames, ["mix": "mix.peaks"])
+        XCTAssertNoThrow(try PeakSidecarReader(contentsOf: store.peakFileURL(clipID: clip.id, track: .mix)))
+    }
+
+    func testNothingIsMissingAfterAFullBackfill() throws {
+        let clip = try legacyClip(withStems: [.vocals, .drums, .bass, .other])
+        let updated = PeakSidecarMigrator.backfill(clip: clip, libraryStore: store)
+        XCTAssertTrue(PeakSidecarMigrator.missingTracks(for: updated, libraryStore: store).isEmpty)
+    }
+
+    /// Interruption safety: running it twice must not corrupt or duplicate anything.
+    func testBackfillIsIdempotent() throws {
+        let clip = try legacyClip(withStems: [.vocals])
+        let once = PeakSidecarMigrator.backfill(clip: clip, libraryStore: store)
+        let firstSize = try Data(contentsOf: store.peakFileURL(clipID: clip.id, track: .mix)).count
+
+        let twice = PeakSidecarMigrator.backfill(clip: once, libraryStore: store)
+        let secondSize = try Data(contentsOf: store.peakFileURL(clipID: clip.id, track: .mix)).count
+
+        XCTAssertEqual(firstSize, secondSize)
+        XCTAssertEqual(once.peakFileNames, twice.peakFileNames)
+    }
+
+    /// A sidecar left truncated by an interrupted generation still opens fine — "opens" is not
+    /// "complete". It must be reported missing and fully regenerated on the next backfill.
+    func testATruncatedSidecarIsReportedMissingAndIsRegenerated() throws {
+        let clip = try legacyClip(withStems: [.vocals])
+        let full = PeakSidecarMigrator.backfill(clip: clip, libraryStore: store)
+
+        let mixURL = store.peakFileURL(clipID: clip.id, track: .mix)
+        let fullData = try Data(contentsOf: mixURL)
+        // Keep the 20-byte header plus five whole columns: readable, but far short of the 1s of
+        // audio the clip actually has.
+        let truncatedLength = PeakSidecar.headerByteCount + PeakSidecar.bytesPerColumn * 5
+        try fullData.prefix(truncatedLength).write(to: mixURL)
+
+        // Confirm it still opens — the defect this guards against is exactly a file that reads
+        // fine but is short.
+        XCTAssertNoThrow(try PeakSidecarReader(contentsOf: mixURL))
+
+        XCTAssertTrue(PeakSidecarMigrator.missingTracks(for: full, libraryStore: store).contains(.mix))
+
+        let regenerated = PeakSidecarMigrator.backfill(clip: full, libraryStore: store)
+        let reader = try PeakSidecarReader(contentsOf: mixURL)
+        XCTAssertEqual(reader.availableDuration, 1.0, accuracy: 0.05)
+        XCTAssertEqual(regenerated.peakFileNames["mix"], "mix.peaks")
+    }
+
+    /// A sidecar that already covers the audio must not be regenerated just because
+    /// `peakFileNames` doesn't mention it yet — but its name must still end up recorded, so a
+    /// later run doesn't mistake it for missing.
+    func testACompleteSidecarWithNoRecordedNameIsNotRegeneratedButItsNameIsRecorded() throws {
+        let clip = try legacyClip(withStems: [.vocals])
+        XCTAssertTrue(clip.peakFileNames.isEmpty)
+
+        let peaksFolder = try store.ensurePeaksFolder(forClipID: clip.id)
+        let mixSource = store.stemFileURL(clipID: clip.id, fileName: clip.sourceFileName)
+        try WaveformPeakGenerator.writeSidecar(
+            from: mixSource,
+            to: peaksFolder.appendingPathComponent(PeakTrack.mix.fileName)
+        )
+
+        let mixURL = store.peakFileURL(clipID: clip.id, track: .mix)
+        let before = try Data(contentsOf: mixURL)
+
+        XCTAssertFalse(PeakSidecarMigrator.missingTracks(for: clip, libraryStore: store).contains(.mix))
+
+        let updated = PeakSidecarMigrator.backfill(clip: clip, libraryStore: store)
+
+        let after = try Data(contentsOf: mixURL)
+        XCTAssertEqual(before, after, "an already-complete sidecar must not be rewritten")
+        XCTAssertEqual(updated.peakFileNames["mix"], "mix.peaks")
+    }
+}

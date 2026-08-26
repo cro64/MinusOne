@@ -21,6 +21,25 @@ final class WaveformView: NSView {
     private let style: Style
     private var dragStartFraction: CGFloat?
 
+    /// Bar geometry, shared with the timeline lanes in Phase 2.
+    static let barWidth: CGFloat = 2
+    static let barGap: CGFloat = 1
+
+    /// The columns actually drawn, binned down from `peaks` to the number of bars that fit.
+    ///
+    /// Split out from `draw(_:)` so the binning can be asserted directly. The old code drew one
+    /// bar per stored column with `barWidth = max(1, bounds.width / columnCount)`: at the sidebar's
+    /// 200–340pt with 600 stored columns that clamps to 1 and each bar overdraws its two
+    /// neighbours, which is why the thumbnail rendered as a solid block.
+    func renderedColumns() -> [PeakColumn] {
+        let sourceCount = peaks.count / 2
+        let targetCount = Int(bounds.width / (Self.barWidth + Self.barGap))
+        guard sourceCount > 0, targetCount > 0 else { return [] }
+        return PeakBinning.rebin(targetCount: targetCount, sourceCount: sourceCount) { index in
+            PeakColumn(minimum: peaks[index * 2], maximum: peaks[index * 2 + 1], rms: 0)
+        }
+    }
+
     init(style: Style) {
         self.style = style
         super.init(frame: .zero)
@@ -47,8 +66,8 @@ final class WaveformView: NSView {
         context.clear(bounds)
 
         guard !peaks.isEmpty else { return }
-        let columnCount = peaks.count / 2
-        guard columnCount > 0 else { return }
+        let columns = renderedColumns()
+        guard !columns.isEmpty else { return }
 
         if let loopRange {
             let loopRect = NSRect(
@@ -62,18 +81,24 @@ final class WaveformView: NSView {
         }
 
         let midY = bounds.height / 2
-        let readyColumns = Int(CGFloat(columnCount) * readyFraction)
-        let barWidth = max(1, bounds.width / CGFloat(columnCount))
+        let step = Self.barWidth + Self.barGap
+        let readyColumns = Int(CGFloat(columns.count) * readyFraction)
+        // Whole device pixels, so bars land on pixel boundaries instead of being antialiased
+        // across two — the other half of why the old thumbnail looked like mush.
+        let scale = window?.backingScaleFactor ?? 2
 
-        for column in 0..<columnCount {
-            let minValue = CGFloat(peaks[column * 2])
-            let maxValue = CGFloat(peaks[column * 2 + 1])
-            let x = bounds.width * CGFloat(column) / CGFloat(columnCount)
-            let topY = midY - maxValue * midY
-            let bottomY = midY - minValue * midY
-            let rect = NSRect(x: x, y: min(topY, bottomY), width: barWidth, height: max(1, abs(bottomY - topY)))
+        for (index, column) in columns.enumerated() {
+            let topY = midY - CGFloat(column.maximum) * midY
+            let bottomY = midY - CGFloat(column.minimum) * midY
+            let x = (CGFloat(index) * step * scale).rounded() / scale
+            let rect = NSRect(
+                x: x,
+                y: min(topY, bottomY),
+                width: Self.barWidth,
+                height: max(1, abs(bottomY - topY))
+            )
 
-            let color: NSColor = column < readyColumns
+            let color: NSColor = index < readyColumns
                 ? (style == .thumbnail ? NSColor.secondaryLabelColor : NSColor.brandAccent)
                 : NSColor.tertiaryLabelColor.withAlphaComponent(0.5)
             color.setFill()
