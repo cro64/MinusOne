@@ -95,6 +95,15 @@ final class LaneHeaderView: NSView {
         soloButton.refreshStyle()
     }
 
+    func setVolume(_ volume: Float) {
+        slider.doubleValue = Double(volume)
+    }
+
+    func setMuted(_ muted: Bool) {
+        muteButton.state = muted ? .on : .off
+        muteButton.refreshStyle()
+    }
+
     /// Disabled until separation has written the whole stem, exactly as the old mixer row was.
     func setExportEnabled(_ enabled: Bool) {
         exportButton.isEnabled = enabled
@@ -125,6 +134,8 @@ final class LaneHeaderView: NSView {
     // calling what the event would call, and costs a window to do it in.
     var nameColorForTesting: NSColor? { nameLabel.textColor }
     var isSoloedForTesting: Bool { soloButton.state == .on }
+    var isMutedForTesting: Bool { muteButton.state == .on }
+    var volumeForTesting: Float { Float(slider.doubleValue) }
     var isExportEnabledForTesting: Bool { exportButton.isEnabled }
 
     func setVolumeForTesting(_ volume: Float) {

@@ -18,6 +18,15 @@ final class DeckTimelineView: NSView {
     var onStemSoloToggled: ((SeparationStem) -> Void)?
     var onStemExportRequested: ((SeparationStem) -> Void)?
 
+    /// Supplies each stem's current mixer state so a rebuilt lane header shows it.
+    ///
+    /// `StemMixerController` outlives any one clip — `PracticePlaybackEngine.tearDown()` does not
+    /// reset it, and `load()` re-applies it — but `rebuildLanes()` builds fresh headers whose
+    /// controls start at their defaults. Without this a stem muted on one clip stays silent on the
+    /// next with nothing in the UI to say so. Set once; every rebuild re-reads it, so no caller has
+    /// to remember to push after a rebuild.
+    var mixerState: ((SeparationStem) -> (volume: Float, muted: Bool, soloed: Bool))?
+
     private(set) var viewport: Viewport
     private(set) var tracks: [PeakTrack] = []
 
@@ -89,6 +98,11 @@ final class DeckTimelineView: NSView {
         rebuildLanes()
         viewport = makeViewport(startingFrom: nil)
         propagateViewport()
+        // Both hold absolute seconds, not a fraction of the clip: without resetting them, a 2:15
+        // playhead or loop from the previous clip can sit on a 0:30 clip while the time label
+        // reads 0:00.
+        overlay.playheadTime = nil
+        overlay.loopRange = nil
         needsLayout = true
     }
 
@@ -195,6 +209,17 @@ final class DeckTimelineView: NSView {
             addSubview(header)
         }
         invalidateIntrinsicContentSize()
+        applyMixerState()
+    }
+
+    private func applyMixerState() {
+        guard let mixerState else { return }
+        for (stem, header) in headers {
+            let state = mixerState(stem)
+            header.setVolume(state.volume)
+            header.setMuted(state.muted)
+            header.setSoloed(state.soloed)
+        }
     }
 
     // MARK: - Layout
@@ -368,4 +393,5 @@ final class DeckTimelineView: NSView {
     var childViewportsForTesting: [Viewport] { [ruler.viewport, overlay.viewport, indicator.viewport] + lanes.map(\.viewport) }
     var laneRenderCountsForTesting: [Int] { lanes.map(\.renderCount) }
     var hoverTimeForTesting: Double? { overlay.hoverTime }
+    var headersForTesting: [SeparationStem: LaneHeaderView] { headers }
 }

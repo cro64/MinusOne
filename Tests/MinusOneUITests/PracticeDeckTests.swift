@@ -120,6 +120,45 @@ final class PracticeDeckTests: XCTestCase {
         XCTAssertTrue(FileManager.default.fileExists(atPath: url.path), "the migrator never wrote the mix sidecar")
     }
 
+    /// The mixer outlives any one clip, but lane headers are rebuilt per clip. Without a re-push a
+    /// stem muted on one clip stays silent on the next with nothing in the UI to say so.
+    func testMixerStateSurvivesAClipSwitch() throws {
+        let first = try makeClip(withStemSidecars: true)
+        let second = try makeClip(withStemSidecars: true)
+        let controller = deck()
+
+        controller.show(clip: first)
+        controller.view.layoutSubtreeIfNeeded()
+        controller.playbackEngineForTesting.setStemMuted(true, for: .drums)
+        controller.playbackEngineForTesting.setStemVolume(0.25, for: .bass)
+        controller.playbackEngineForTesting.toggleStemSolo(.vocals)
+
+        controller.show(clip: second)
+        controller.view.layoutSubtreeIfNeeded()
+
+        func descendants(of view: NSView) -> [NSView] { view.subviews + view.subviews.flatMap(descendants) }
+        let headers = descendants(of: controller.view).compactMap { $0 as? LaneHeaderView }
+        XCTAssertEqual(headers.count, SeparationStem.allCases.count)
+        // Assert against the engine rather than remembered literals.
+        let mixer = controller.playbackEngineForTesting.mixer
+        XCTAssertTrue(mixer.isMuted(.drums))
+        XCTAssertTrue(mixer.isSoloed(.vocals))
+        XCTAssertEqual(mixer.volume(for: .bass), 0.25, accuracy: 0.001)
+
+        // The half that actually fails without the fix: the rebuilt UI must match the mixer, not
+        // just the engine (which was never in doubt — nothing in this test touches it).
+        let headersByStem = controller.timelineForTesting.headersForTesting
+        for stem in SeparationStem.allCases {
+            guard let header = headersByStem[stem] else {
+                XCTFail("no header found for \(stem)")
+                continue
+            }
+            XCTAssertEqual(header.isMutedForTesting, mixer.isMuted(stem), "\(stem) mute UI")
+            XCTAssertEqual(header.isSoloedForTesting, mixer.isSoloed(stem), "\(stem) solo UI")
+            XCTAssertEqual(header.volumeForTesting, mixer.volume(for: stem), accuracy: 0.001, "\(stem) volume UI")
+        }
+    }
+
     private func writeSilentAudio(to url: URL, seconds: Double) throws {
         let settings: [String: Any] = [
             AVFormatIDKey: kAudioFormatLinearPCM,

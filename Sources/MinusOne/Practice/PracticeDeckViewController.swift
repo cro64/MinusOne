@@ -11,6 +11,11 @@ final class PracticeDeckViewController: NSViewController, NSTextFieldDelegate {
     private var clip: PracticeClip?
     private var isEngineLoaded = false
     private var lastReloadedReadySeconds: Double = 0
+    /// Clips whose peak backfill is already running. `show(clip:)` can be called twice in a row
+    /// for the same clip (the import path selects the row *and* shows it), and two concurrent
+    /// `PeakSidecarWriter`s on one path interleave their columns into a file whose length still
+    /// looks complete.
+    private var backfillsInFlight: Set<UUID> = []
 
     private let emptyStateView = PracticeEmptyStateView()
     /// Editable in place — clicking the clip's title here is one of the two ways to rename it
@@ -18,7 +23,6 @@ final class PracticeDeckViewController: NSViewController, NSTextFieldDelegate {
     private let titleLabel = ClickToEditTextField(labelWithString: "")
     private let statusLabel = NSTextField(labelWithString: "")
     private let timeline = DeckTimelineView()
-    private var peakStore: PeakStore?
     private lazy var timelineHeightConstraint = timeline.heightAnchor.constraint(
         equalToConstant: DeckTimelineView.height(forLaneCount: 4)
     )
@@ -198,6 +202,10 @@ final class PracticeDeckViewController: NSViewController, NSTextFieldDelegate {
         timeline.onStemExportRequested = { [weak self] stem in
             self?.exportStem(stem)
         }
+        timeline.mixerState = { [weak self] stem in
+            guard let mixer = self?.playbackEngine.mixer else { return (1, false, false) }
+            return (mixer.volume(for: stem), mixer.isMuted(stem), mixer.isSoloed(stem))
+        }
         playbackEngine.onPlayheadUpdate = { [weak self] time in
             self?.updatePlayhead(time)
         }
@@ -215,7 +223,6 @@ final class PracticeDeckViewController: NSViewController, NSTextFieldDelegate {
         showEmptyState(false)
 
         let store = PeakStore(peaksFolder: libraryStore.peaksFolder(forClipID: clip.id))
-        peakStore = store
         timeline.show(clipDuration: clip.durationSeconds, peakStore: store)
         updateTimelineHeight()
         backfillPeaksIfNeeded(for: clip)
@@ -231,13 +238,23 @@ final class PracticeDeckViewController: NSViewController, NSTextFieldDelegate {
     /// This is the call site the previous phase shipped without.
     private func backfillPeaksIfNeeded(for clip: PracticeClip) {
         guard !PeakSidecarMigrator.missingTracks(for: clip, libraryStore: libraryStore).isEmpty else { return }
+        guard !backfillsInFlight.contains(clip.id) else { return }
+        backfillsInFlight.insert(clip.id)
         let libraryStore = self.libraryStore
         DispatchQueue.global(qos: .utility).async {
             let updated = PeakSidecarMigrator.backfill(clip: clip, libraryStore: libraryStore)
             DispatchQueue.main.async { [weak self] in
-                guard let self, self.clip?.id == updated.id else { return }
-                libraryStore.update(updated)
-                self.clip = updated
+                guard let self else { return }
+                self.backfillsInFlight.remove(updated.id)
+                guard self.clip?.id == updated.id else { return }
+                // Re-read rather than writing back the snapshot this closure captured: the decode
+                // above takes seconds, `ClipLibraryStore.update` is a whole-record replace, and
+                // separation's flush loop may have advanced `readyDurationSeconds` and
+                // `stemFileNames` in the meantime. Only the peak file names are ours to contribute.
+                guard var current = libraryStore.clip(withID: updated.id) else { return }
+                current.peakFileNames = updated.peakFileNames
+                libraryStore.update(current)
+                self.clip = current
                 self.timeline.refreshPeaks()
                 self.updateTimelineHeight()
             }
@@ -438,6 +455,9 @@ final class PracticeDeckViewController: NSViewController, NSTextFieldDelegate {
 
     /// The deck's own views are private; this is the one the timeline tests need to reach.
     var timelineForTesting: DeckTimelineView { timeline }
+
+    /// The deck's playback engine, for tests that need to drive mixer state directly.
+    var playbackEngineForTesting: PracticePlaybackEngine { playbackEngine }
 
     /// Split out from the monitor so the rule can be exercised directly.
     func endTitleEditingIfClickIsOutside(_ locationInWindow: NSPoint) {
