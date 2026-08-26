@@ -85,4 +85,24 @@ final class SidecarDecodeLoopTests: XCTestCase {
         let url = try writeAudio(named: "tiny.caf", seconds: 0.4, channels: 1, formatID: kAudioFormatLinearPCM)
         try assertSidecarCoversWholeFile(url, seconds: 0.4)
     }
+
+    /// Pins the defect the coordinator found in review: a source whose reported frame count is
+    /// far longer than what actually decodes must make `writeSidecar` throw, not silently produce
+    /// a short sidecar. Built by truncating a real PCM file's bytes *after* writing it, so
+    /// `AVAudioFile(forReading:)` still opens successfully and reports the original (1s / 44,100
+    /// frame) length from the header — but only ~10% of the sample data is actually on disk.
+    /// Measured (scratch harness, 2026-08-25): the first `read(into:frameCount:)` still returns
+    /// whatever real audio is on disk without throwing (so `framesRead > 0` afterwards), and the
+    /// *second* read throws `nilError` with `framesRead` far short of `totalFrames`. Because
+    /// `totalFrames` here (44,100) is itself smaller than one chunk (65,536), the old
+    /// `totalFrames - chunkCapacity` bound was negative, so this exact shape used to be swallowed
+    /// as "benign EOF" and would have produced a silently truncated mix sidecar.
+    func testATruncatedSourceFailsRatherThanProducingAShortSidecar() throws {
+        let url = try writeAudio(named: "truncated.caf", seconds: 1.0, channels: 2, formatID: kAudioFormatLinearPCM)
+        let fullData = try Data(contentsOf: url)
+        try fullData.prefix(fullData.count / 10).write(to: url)
+
+        let destination = folder.appendingPathComponent("\(UUID().uuidString).peaks")
+        XCTAssertThrowsError(try WaveformPeakGenerator.writeSidecar(from: url, to: destination))
+    }
 }

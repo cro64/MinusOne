@@ -101,20 +101,26 @@ enum WaveformPeakGenerator {
         let totalFrames = file.length
         var framesRead: AVAudioFramePosition = 0
 
+        // A decoder whose reported `length` overshoots what it hands back (encoder delay and
+        // padding, typically a few thousand frames) ends via the throw below rather than at the
+        // loop condition. Tolerate that much and no more: deliberately tighter than
+        // `PeakSidecarMigrator.coverageTolerance` (0.25s), because a shortfall this loop forgives
+        // but the migrator does not would be flagged missing and regenerated on every open, forever.
+        let endOfFileTolerance = AVAudioFramePosition(0.2 * format.sampleRate)
+
         while framesRead < totalFrames {
             buffer.frameLength = 0
             do {
                 try file.read(into: buffer, frameCount: chunkCapacity)
             } catch {
                 // Measured 2026-08-25 (scratch `swiftc` harness, PCM/AAC/ALAC): the read issued
-                // *after* the final frame throws `nilError` instead of returning zero frames — so
-                // a decoder whose reported `length` overshoots what it will actually hand back
-                // (encoder padding, typically) ends here rather than at the loop condition. A
-                // throw within one chunk of the end is that, and is benign. A throw earlier than
-                // that is a real decode failure and must propagate: this file is the shared
-                // normalisation reference for every lane, and a short one is undetectable
-                // downstream.
-                guard framesRead >= totalFrames - AVAudioFramePosition(chunkCapacity) else { throw error }
+                // *after* the final frame throws `nilError` instead of returning zero frames.
+                // A throw that close to the end, after real progress, is that and is benign.
+                // Anything else is a real decode failure and must propagate: this file is the
+                // shared normalisation reference for every lane, and a short one is undetectable
+                // downstream. `framesRead > 0` is load-bearing — without it a file shorter than
+                // one chunk would treat a failed *first* read as a complete decode.
+                guard framesRead > 0, framesRead >= totalFrames - endOfFileTolerance else { throw error }
                 break
             }
             let frames = Int(buffer.frameLength)
