@@ -12,6 +12,9 @@ enum PeakSidecar {
     static let headerByteCount = 20
     static let bytesPerColumn = 6
     static let defaultFramesPerColumn = 256
+    /// The separation model's rate (`CoreMLSeparationModel.modelSampleRate`), used only as the
+    /// fallback for a clip with no sidecars open yet.
+    static let defaultSampleRate: UInt32 = 44_100
     /// `Int16.max`, as the scale factor between -1...1 samples and stored integers.
     static let sampleScale: Float = 32_767
 
@@ -122,5 +125,47 @@ final class PeakSidecarReader {
             return Float(raw) / PeakSidecar.sampleScale
         }
         return PeakColumn(minimum: value(0), maximum: value(2), rms: value(4))
+    }
+
+    /// Reads `count` columns starting at `start`, in one pass over the mapped bytes.
+    ///
+    /// `column(at:)` costs six bounds-checked `Data` subscripts per column. A lane zoomed all the
+    /// way out asks for every stored column — ~41,000 for a four-minute clip — and there are four
+    /// lanes, so the scalar path is the one thing on the render route that scales with clip length.
+    /// This binds the mapped region once and reads straight out of it.
+    ///
+    /// Out-of-range indices read `.silent` rather than trapping: the unseparated tail is read this
+    /// way on every frame while separation runs.
+    func columns(from start: Int, count: Int) -> [PeakColumn] {
+        guard count > 0 else { return [] }
+        var result = [PeakColumn](repeating: .silent, count: count)
+        let available = columnCount
+        guard available > 0 else { return result }
+
+        let scale = PeakSidecar.sampleScale
+        data.withUnsafeBytes { raw in
+            guard let base = raw.baseAddress else { return }
+            let body = base.advanced(by: PeakSidecar.headerByteCount)
+            for offset in 0..<count {
+                let index = start + offset
+                guard index >= 0, index < available else { continue }
+                let byteOffset = index * PeakSidecar.bytesPerColumn
+                // Inlined rather than routed through a nested helper, to avoid a per-call
+                // closure allocation under -Onone. (Measured: this alone was not the dominant
+                // debug-build cost — see PeakBulkReadTests and spec §14 — but it is free to avoid
+                // and it is one less heap allocation on a hot loop.) `loadUnaligned`, not `load`:
+                // the body starts at byte 20 and strides by 6, so a column's Int16s are only ever
+                // 2-byte aligned, and `load` traps on that.
+                let minimum = body.loadUnaligned(fromByteOffset: byteOffset, as: Int16.self)
+                let maximum = body.loadUnaligned(fromByteOffset: byteOffset + 2, as: Int16.self)
+                let rms = body.loadUnaligned(fromByteOffset: byteOffset + 4, as: Int16.self)
+                result[offset] = PeakColumn(
+                    minimum: Float(Int16(littleEndian: minimum)) / scale,
+                    maximum: Float(Int16(littleEndian: maximum)) / scale,
+                    rms: Float(Int16(littleEndian: rms)) / scale
+                )
+            }
+        }
+        return result
     }
 }

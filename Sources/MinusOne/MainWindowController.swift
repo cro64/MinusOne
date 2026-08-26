@@ -1,5 +1,19 @@
 import AppKit
 
+/// The window's starting size and its true floor, kept apart.
+///
+/// They used to be one value: `minSize` was set to the default because AppKit re-fits the window
+/// from the installed tab's constraints, so lowering the floor shrank Practice rather than merely
+/// permitting a smaller window (measured: at 860×560, Practice opened at 860×560). Phase 2 sets
+/// the content size explicitly after the Practice tab is installed, which is what lets the floor
+/// be a floor.
+enum WindowSizing {
+    /// Spec §8: 1120 wide leaves ~680pt of lane canvas at a 260pt sidebar; 760 tall carries the
+    /// ruler, four 72pt lanes, the scroll indicator, transport and tempo.
+    static let defaultContent = NSSize(width: 1120, height: 760)
+    static let minimum = NSSize(width: 900, height: 600)
+}
+
 /// Owns the desktop window: a Live / Practice segmented switch in a content-area header, and the
 /// two tabs' content. Live embeds `LiveTabViewController`, a full-width window-filling view (REDESIGN.md
 /// §3); Practice embeds the existing sidebar + deck split view, reused as-is per REDESIGN.md §1.
@@ -90,7 +104,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         practiceSplitViewController = PracticeSplitViewController(sidebar: sidebar, detail: deck)
         practiceTabViewController = PracticeTabViewController(splitViewController: practiceSplitViewController)
 
-        let defaultContentSize = NSSize(width: 980, height: 640)
+        let defaultContentSize = WindowSizing.defaultContent
         let window = NSWindow(
             contentRect: NSRect(origin: .zero, size: defaultContentSize),
             // `.fullSizeContentView` so the content view extends up behind the title bar instead of
@@ -108,12 +122,9 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         window.title = "MinusOne"
         window.titleVisibility = .hidden
         window.titlebarAppearsTransparent = true
-        // Matches the window's starting content size rather than a smaller arbitrary floor. Live's
-        // card grid does now reflow, so *it* could take a lower floor — but this value is also what
-        // the Practice tab lands on when its view is installed (AppKit re-fits the window from the
-        // installed tab's constraints), so lowering it shrinks Practice's window rather than merely
-        // permitting a smaller one. Measured: at 860×560 here, Practice opens at 860×560.
-        window.minSize = defaultContentSize
+        // A real floor, not the default size. Four lanes plus chrome need 574pt, so nothing has
+        // to compress at 600 — see `TimelineMetrics.laneHeight` for why §8's lane floor is not built.
+        window.minSize = WindowSizing.minimum
         // Explicit, not just relying on NSWindow's defaults: an ambiguous/false isOpaque or clear
         // backgroundColor is exactly what makes the Dock show through the window at the edges.
         window.isOpaque = true
@@ -145,6 +156,14 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         if !presentOnboardingIfNeeded() {
             showTab(.live)
         }
+
+        // Last, deliberately. AppKit re-fits the window from whatever content is installed, and
+        // `showTab`/`presentOnboardingIfNeeded` both swap the content view controller through
+        // containment — so setting the size before them lets their fit overwrite it, which is the
+        // mechanism that welded `minSize` to the default size in the first place. This is the final
+        // word on the opening size; the floor above is what permits shrinking afterwards.
+        window.setContentSize(WindowSizing.defaultContent)
+        window.center()
     }
 
     @available(*, unavailable)

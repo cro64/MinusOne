@@ -1,6 +1,9 @@
 import AppKit
 
-/// Detail pane: waveform, transport, tempo, and per-stem mixer for the selected clip.
+/// Detail pane: the multi-lane timeline, transport and tempo for the selected clip.
+///
+/// The stems mixer is no longer a section of its own — each lane's header carries that stem's
+/// fader, mute, solo and export, because a lane *is* a mixer row (spec §3).
 final class PracticeDeckViewController: NSViewController, NSTextFieldDelegate {
     private let libraryStore: ClipLibraryStore
     private let playbackEngine: PracticePlaybackEngine
@@ -8,13 +11,21 @@ final class PracticeDeckViewController: NSViewController, NSTextFieldDelegate {
     private var clip: PracticeClip?
     private var isEngineLoaded = false
     private var lastReloadedReadySeconds: Double = 0
+    /// Clips whose peak backfill is already running. `show(clip:)` can be called twice in a row
+    /// for the same clip (the import path selects the row *and* shows it), and two concurrent
+    /// `PeakSidecarWriter`s on one path interleave their columns into a file whose length still
+    /// looks complete.
+    private var backfillsInFlight: Set<UUID> = []
 
     private let emptyStateView = PracticeEmptyStateView()
     /// Editable in place — clicking the clip's title here is one of the two ways to rename it
     /// (the other is the sidebar row's double-click / Rename… menu).
     private let titleLabel = ClickToEditTextField(labelWithString: "")
     private let statusLabel = NSTextField(labelWithString: "")
-    private let waveformView = WaveformView(style: .interactive)
+    private let timeline = DeckTimelineView()
+    private lazy var timelineHeightConstraint = timeline.heightAnchor.constraint(
+        equalToConstant: DeckTimelineView.height(forLaneCount: 4)
+    )
     private let playPauseButton = WindowUI.transportButton(symbolName: "play.fill", label: "Play", target: nil, action: nil)
     private let loopButton = WindowUI.transportToggleButton(symbolName: "repeat", label: "Loop", target: nil, action: nil)
     private let skipBackButton = WindowUI.transportButton(symbolName: "backward.fill", label: "Back \(Int(PracticeDeckViewController.skipSeconds)) seconds", target: nil, action: nil)
@@ -25,7 +36,6 @@ final class PracticeDeckViewController: NSViewController, NSTextFieldDelegate {
     private let timeLabel = SharedUI.valueLabel(initialValue: "0:00 / 0:00")
     private let tempoSlider = NSSlider(value: 100, minValue: 50, maxValue: 100, target: nil, action: nil)
     private let tempoValueLabel = NSTextField(labelWithString: "100%")
-    private var mixerRows: [SeparationStem: MixerRowView] = [:]
     private var contentStack: NSStackView?
     private var titleBeforeEditing = ""
     private var outsideClickMonitor: Any?
@@ -87,8 +97,8 @@ final class PracticeDeckViewController: NSViewController, NSTextFieldDelegate {
         statusLabel.textColor = .secondaryLabelColor
         statusLabel.isHidden = true
 
-        waveformView.translatesAutoresizingMaskIntoConstraints = false
-        waveformView.heightAnchor.constraint(equalToConstant: 140).isActive = true
+        timeline.translatesAutoresizingMaskIntoConstraints = false
+        timelineHeightConstraint.isActive = true
 
         playPauseButton.target = self
         playPauseButton.action = #selector(togglePlayPause)
@@ -125,25 +135,8 @@ final class PracticeDeckViewController: NSViewController, NSTextFieldDelegate {
         let tempoRow = Layout.horizontalStack([tempoLabel, tempoSlider, tempoValueLabel], spacing: WindowUI.Metrics.rowSpacing)
         tempoSlider.widthAnchor.constraint(greaterThanOrEqualToConstant: 160).isActive = true
 
-        let mixerHeader = SharedUI.sectionHeader("Stems")
-        var mixerViews: [NSView] = [mixerHeader]
-        for stem in SeparationStem.allCases {
-            let row = MixerRowView(stem: stem)
-            row.onVolumeChanged = { [weak self] value in self?.playbackEngine.setStemVolume(value, for: stem) }
-            row.onMuteToggled = { [weak self] muted in self?.playbackEngine.setStemMuted(muted, for: stem) }
-            row.onSoloToggled = { [weak self] in
-                self?.playbackEngine.toggleStemSolo(stem)
-                self?.refreshMixerButtonStates()
-            }
-            row.onExportRequested = { [weak self] in self?.exportStem(stem) }
-            row.setExportEnabled(false)
-            mixerRows[stem] = row
-            mixerViews.append(row)
-        }
-        let mixerStack = Layout.verticalStack(mixerViews, spacing: WindowUI.Metrics.rowSpacing)
-
         let content = Layout.verticalStack(
-            [titleLabel, statusLabel, waveformView, transportStack, tempoRow, mixerStack],
+            [titleLabel, statusLabel, timeline, transportStack, tempoRow],
             spacing: WindowUI.Metrics.sectionSpacing
         )
         content.setCustomSpacing(4, after: titleLabel)
@@ -151,10 +144,13 @@ final class PracticeDeckViewController: NSViewController, NSTextFieldDelegate {
 
         // `.leading`-aligned stacks pin their arranged subviews' leading edge and nothing else —
         // the same trap `WindowUI.section` documents. `tempoRow` got away with it because it *is* an
-        // NSStackView holding a low-hugging NSSlider, so its own arrangement let it fill; each
-        // `MixerRowView` is a plain NSView, which to this stack is an opaque box that gets its
-        // fitting width. Measured before this chain: tempo slider 556.5pt, every stem fader stuck at
-        // 140pt — exactly its `greaterThanOrEqualToConstant` floor, in a 671pt-wide pane.
+        // NSStackView holding a low-hugging NSSlider, so its own arrangement let it fill;
+        // `DeckTimelineView` is a plain NSView, which to this stack is an opaque box that gets its
+        // fitting width. Measured before this chain (with the old mixer rows, which had the same
+        // shape): tempo slider 556.5pt, every stem fader stuck at 140pt — exactly its
+        // `greaterThanOrEqualToConstant` floor, in a 671pt-wide pane. The timeline needs the same
+        // treatment: its lane canvas is `bounds.width - headerWidth`, so a fitting-width timeline
+        // would draw every waveform into a sliver.
         // The title is sized to its own text rather than left to fill the pane. An editable
         // NSTextField reports no intrinsic width (measured: -1, scrollable cell or not), so
         // content hugging can't do this job — the width is measured from the string and kept up
@@ -166,12 +162,8 @@ final class PracticeDeckViewController: NSViewController, NSTextFieldDelegate {
         // Required, so a long name truncates at the pane edge instead of running off it.
         titleLabel.widthAnchor.constraint(lessThanOrEqualTo: content.widthAnchor).isActive = true
         sizeTitleFieldToText(titleLabel.stringValue)
-        waveformView.widthAnchor.constraint(equalTo: content.widthAnchor).isActive = true
+        timeline.widthAnchor.constraint(equalTo: content.widthAnchor).isActive = true
         tempoRow.widthAnchor.constraint(equalTo: content.widthAnchor).isActive = true
-        mixerStack.widthAnchor.constraint(equalTo: content.widthAnchor).isActive = true
-        for row in mixerViews {
-            row.widthAnchor.constraint(equalTo: mixerStack.widthAnchor).isActive = true
-        }
 
         let pad = WindowUI.Metrics.padding
         Layout.pin(content, to: view, edges: [.top, .leading, .trailing], insets: NSEdgeInsets(top: pad, left: pad, bottom: 0, right: pad))
@@ -179,14 +171,14 @@ final class PracticeDeckViewController: NSViewController, NSTextFieldDelegate {
     }
 
     private func setupBindings() {
-        waveformView.onSeek = { [weak self] fraction in
-            guard let self, let clip = self.clip else { return }
-            self.playbackEngine.seek(toSeconds: Double(fraction) * clip.durationSeconds)
+        timeline.onSeek = { [weak self] time in
+            self?.playbackEngine.seek(toSeconds: time)
         }
-        waveformView.onLoopRangeChanged = { [weak self] range in
-            guard let self, let clip = self.clip else { return }
-            let seconds = (Double(range.lowerBound) * clip.durationSeconds)...(Double(range.upperBound) * clip.durationSeconds)
-            self.playbackEngine.setLoopRange(seconds)
+        timeline.onLoopRangeChanged = { [weak self] range in
+            guard let self else { return }
+            // Trusted to be inside the clip: `DeckTimelineView` clamps a drag's x to the canvas
+            // before it becomes a time, and `setLoopRange` stores whatever it is handed.
+            self.playbackEngine.setLoopRange(range)
             self.playbackEngine.isLoopEnabled = true
             self.loopButton.state = .on
             self.loopButton.refreshStyle()
@@ -195,7 +187,24 @@ final class PracticeDeckViewController: NSViewController, NSTextFieldDelegate {
             // position until it happened to reach the loop's end, which is the first moment
             // `PracticePlaybackEngine`'s loop check does anything. Unconditional rather than only
             // while playing: a loop drawn while paused should start from its own beginning too.
-            self.playbackEngine.seek(toSeconds: seconds.lowerBound)
+            self.playbackEngine.seek(toSeconds: range.lowerBound)
+        }
+        timeline.onStemVolumeChanged = { [weak self] stem, value in
+            self?.playbackEngine.setStemVolume(value, for: stem)
+        }
+        timeline.onStemMuteToggled = { [weak self] stem, muted in
+            self?.playbackEngine.setStemMuted(muted, for: stem)
+        }
+        timeline.onStemSoloToggled = { [weak self] stem in
+            self?.playbackEngine.toggleStemSolo(stem)
+            self?.refreshMixerButtonStates()
+        }
+        timeline.onStemExportRequested = { [weak self] stem in
+            self?.exportStem(stem)
+        }
+        timeline.mixerState = { [weak self] stem in
+            guard let mixer = self?.playbackEngine.mixer else { return (1, false, false) }
+            return (mixer.volume(for: stem), mixer.isMuted(stem), mixer.isSoloed(stem))
         }
         playbackEngine.onPlayheadUpdate = { [weak self] time in
             self?.updatePlayhead(time)
@@ -212,14 +221,65 @@ final class PracticeDeckViewController: NSViewController, NSTextFieldDelegate {
         isEngineLoaded = false
         lastReloadedReadySeconds = 0
         showEmptyState(false)
+
+        let store = PeakStore(peaksFolder: libraryStore.peaksFolder(forClipID: clip.id))
+        timeline.show(clipDuration: clip.durationSeconds, peakStore: store)
+        updateTimelineHeight()
+        backfillPeaksIfNeeded(for: clip)
+
         refreshForCurrentClip()
         loadPlaybackIfPossible()
+    }
+
+    /// Spec §9: clips that predate the sidecar format get theirs generated from the audio already
+    /// on disk, on first open, in the background — never eagerly for the whole library, so the cost
+    /// is spread and never blocks.
+    ///
+    /// This is the call site the previous phase shipped without.
+    private func backfillPeaksIfNeeded(for clip: PracticeClip) {
+        guard !PeakSidecarMigrator.missingTracks(for: clip, libraryStore: libraryStore).isEmpty else { return }
+        guard !backfillsInFlight.contains(clip.id) else { return }
+        backfillsInFlight.insert(clip.id)
+        let libraryStore = self.libraryStore
+        DispatchQueue.global(qos: .utility).async {
+            let updated = PeakSidecarMigrator.backfill(clip: clip, libraryStore: libraryStore)
+            DispatchQueue.main.async { [weak self] in
+                guard let self else { return }
+                self.backfillsInFlight.remove(updated.id)
+                guard self.clip?.id == updated.id else { return }
+                // Re-read rather than writing back the snapshot this closure captured: the decode
+                // above takes seconds, `ClipLibraryStore.update` is a whole-record replace, and
+                // separation's flush loop may have advanced `readyDurationSeconds` and
+                // `stemFileNames` in the meantime. Only the peak file names are ours to contribute.
+                guard var current = libraryStore.clip(withID: updated.id) else { return }
+                current.peakFileNames = updated.peakFileNames
+                libraryStore.update(current)
+                self.clip = current
+                self.timeline.refreshPeaks()
+                self.updateTimelineHeight()
+            }
+        }
+    }
+
+    /// One lane before separation has produced a stem, four after — see `DeckTimelineView.tracks`.
+    ///
+    /// Called from exactly the three places that can change the track set, each time immediately
+    /// after the call that changes it: `show(clip:)`'s `timeline.show`, the backfill's
+    /// `refreshPeaks`, and `updateClip`'s `refreshPeaks`. Deliberately *not* called from
+    /// `refreshForCurrentClip()`, which also runs on every separation tick before the peaks have
+    /// been reloaded — it would measure a stale track count and then be corrected a line later.
+    private func updateTimelineHeight() {
+        timelineHeightConstraint.constant = DeckTimelineView.height(forLaneCount: max(1, timeline.tracks.count))
     }
 
     func updateClip(_ updated: PracticeClip) {
         guard clip?.id == updated.id else { return }
         clip = updated
         refreshForCurrentClip()
+        // Separation has appended to the sidecars. The lane set may grow; the viewport must not
+        // move — spec §7.
+        timeline.refreshPeaks()
+        updateTimelineHeight()
 
         if !isEngineLoaded {
             loadPlaybackIfPossible()
@@ -255,8 +315,9 @@ final class PracticeDeckViewController: NSViewController, NSTextFieldDelegate {
             titleLabel.stringValue = clip.title
             sizeTitleFieldToText(clip.title)
         }
-        waveformView.peaks = clip.waveformPeaks
-        waveformView.readyFraction = clip.durationSeconds > 0 ? CGFloat(clip.readyDurationSeconds / clip.durationSeconds) : 1
+        // How much is *playable*, which gates seeking — deliberately not the same as how much has
+        // peak data, since peaks can exist for audio the engine has not reloaded yet.
+        timeline.readyDuration = clip.readyDurationSeconds
         let playable = clip.readyDurationSeconds > 0 && !clip.processingFailed
         playPauseButton.isEnabled = playable
         skipBackButton.isEnabled = playable
@@ -274,9 +335,7 @@ final class PracticeDeckViewController: NSViewController, NSTextFieldDelegate {
             statusLabel.isHidden = true
         }
 
-        for row in mixerRows.values {
-            row.setExportEnabled(clip.canExportStems)
-        }
+        timeline.setExportEnabled(clip.canExportStems)
 
         timeLabel.stringValue = "\(0.0.formattedAsDuration) / \(clip.durationSeconds.formattedAsDuration)"
     }
@@ -334,7 +393,7 @@ final class PracticeDeckViewController: NSViewController, NSTextFieldDelegate {
 
     private func updatePlayhead(_ time: Double) {
         guard let clip else { return }
-        waveformView.playheadFraction = clip.durationSeconds > 0 ? CGFloat(time / clip.durationSeconds) : 0
+        timeline.setPlayheadTime(time)
         timeLabel.stringValue = "\(time.formattedAsDuration) / \(clip.durationSeconds.formattedAsDuration)"
     }
 
@@ -393,6 +452,12 @@ final class PracticeDeckViewController: NSViewController, NSTextFieldDelegate {
             return event
         }
     }
+
+    /// The deck's own views are private; this is the one the timeline tests need to reach.
+    var timelineForTesting: DeckTimelineView { timeline }
+
+    /// The deck's playback engine, for tests that need to drive mixer state directly.
+    var playbackEngineForTesting: PracticePlaybackEngine { playbackEngine }
 
     /// Split out from the monitor so the rule can be exercised directly.
     func endTitleEditingIfClickIsOutside(_ locationInWindow: NSPoint) {
@@ -508,9 +573,7 @@ final class PracticeDeckViewController: NSViewController, NSTextFieldDelegate {
     }
 
     private func refreshMixerButtonStates() {
-        for (stem, row) in mixerRows {
-            row.setSoloed(playbackEngine.mixer.isSoloed(stem))
-        }
+        timeline.setSoloedStem(playbackEngine.mixer.soloedStem)
     }
 
 }
@@ -543,100 +606,5 @@ private final class ClickToEditTextField: NSTextField {
         isSelectable = false
         drawsBackground = false
         focusRingType = .none
-    }
-}
-
-/// One stem's mixer controls: label, volume fader, mute, solo.
-private final class MixerRowView: NSView {
-    var onVolumeChanged: ((Float) -> Void)?
-    var onMuteToggled: ((Bool) -> Void)?
-    var onSoloToggled: (() -> Void)?
-    var onExportRequested: (() -> Void)?
-
-    private let soloButton: FlatButton
-    private let muteButton: FlatButton
-    private let exportButton: FlatButton
-
-    init(stem: SeparationStem) {
-        let color = stem.identityColor
-
-        let label = SharedUI.fieldLabel(stem.displayName)
-        // The text variant, not the fill color: as a 13pt label the raw stem hues measure 2.7:1
-        // (Drums), 3.7:1 (Bass) and 4.2:1 (Other) against a light card. The slider below still
-        // takes the canonical `identityColor` — as an area of fill it has no such problem.
-        label.textColor = stem.identityTextColor
-        label.font = .systemFont(ofSize: NSFont.systemFontSize, weight: .semibold)
-        label.widthAnchor.constraint(equalToConstant: WindowUI.Metrics.labelWidth).isActive = true
-
-        let slider = NSSlider(value: 1, minValue: 0, maxValue: 1, target: nil, action: nil)
-        slider.isContinuous = true
-        slider.trackFillColor = color
-        slider.widthAnchor.constraint(greaterThanOrEqualToConstant: 140).isActive = true
-
-        soloButton = WindowUI.toggleControlButton(title: "Solo", target: nil, action: nil)
-        muteButton = WindowUI.toggleControlButton(title: "Mute", target: nil, action: nil)
-        muteButton.engagedFillColorOverride = .systemRed
-        exportButton = WindowUI.rowIconButton(
-            symbolName: "square.and.arrow.up",
-            label: "Export \(stem.displayName)",
-            target: nil,
-            action: nil
-        )
-
-        super.init(frame: .zero)
-
-        let row = Layout.horizontalStack(
-            [label, slider, soloButton, muteButton, exportButton],
-            spacing: WindowUI.Metrics.rowSpacing
-        )
-        Layout.pin(row, to: self)
-        // Matched to the toggle beside it rather than set to a constant: `toggleControlButton`
-        // takes its height from its title's intrinsic size, so a hardcoded number here would
-        // drift the moment that font or padding changes.
-        exportButton.heightAnchor.constraint(equalTo: muteButton.heightAnchor).isActive = true
-
-        slider.target = self
-        slider.action = #selector(sliderChanged(_:))
-        soloButton.target = self
-        soloButton.action = #selector(soloClicked)
-        muteButton.target = self
-        muteButton.action = #selector(muteClicked)
-        exportButton.target = self
-        exportButton.action = #selector(exportClicked)
-    }
-
-    @available(*, unavailable)
-    required init?(coder: NSCoder) {
-        fatalError("init(coder:) has not been implemented")
-    }
-
-    func setSoloed(_ soloed: Bool) {
-        soloButton.state = soloed ? .on : .off
-        soloButton.refreshStyle()
-    }
-
-    /// Disabled until separation has written the whole stem. No explanatory tooltip: the deck's
-    /// status label right above the mixer already says "Separating in the background…", and all
-    /// four stems finish together, so a per-row message would only repeat it four times.
-    func setExportEnabled(_ enabled: Bool) {
-        exportButton.isEnabled = enabled
-    }
-
-    @objc private func sliderChanged(_ sender: NSSlider) {
-        onVolumeChanged?(Float(sender.doubleValue))
-    }
-
-    @objc private func soloClicked() {
-        onSoloToggled?()
-    }
-
-    @objc private func muteClicked() {
-        let muted = muteButton.state == .on
-        muteButton.refreshStyle()
-        onMuteToggled?(muted)
-    }
-
-    @objc private func exportClicked() {
-        onExportRequested?()
     }
 }

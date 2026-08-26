@@ -42,6 +42,18 @@ final class PeakStore {
         readers[track]?.availableDuration ?? 0
     }
 
+    /// Columns per second of the sidecars on disk — the resolution the maximum zoom is capped at,
+    /// since there is nothing finer stored to draw.
+    ///
+    /// Read from a header rather than assumed, so a sidecar written at a different
+    /// `framesPerColumn` caps zoom at *its* resolution instead of a constant's.
+    var storedColumnsPerSecond: Double {
+        for track in PeakTrack.all {
+            if let reader = readers[track] { return reader.columnsPerSecond }
+        }
+        return Double(PeakSidecar.defaultSampleRate) / Double(PeakSidecar.defaultFramesPerColumn)
+    }
+
     /// Re-binned columns covering `startTime..<endTime`, exactly `count` of them.
     ///
     /// The requested span is mapped to source indices *before* clamping, and out-of-range indices
@@ -56,9 +68,8 @@ final class PeakStore {
         let last = Int((endTime * columnsPerSecond).rounded(.up))
         let sourceCount = max(1, last - first)
 
-        return PeakBinning.rebin(targetCount: count, sourceCount: sourceCount) { index in
-            reader.column(at: first + index)
-        }
+        let source = reader.columns(from: first, count: sourceCount)
+        return PeakBinning.rebin(targetCount: count, sourceCount: sourceCount) { source[$0] }
     }
 
     // MARK: - Internals
@@ -84,8 +95,8 @@ final class PeakStore {
     private func recomputeNormalization() {
         guard let reader = readers[.mix] else { normalizationReference = 1; return }
         var maximum: Float = 0
-        for index in 0..<reader.columnCount {
-            maximum = max(maximum, reader.column(at: index).magnitude)
+        for column in reader.columns(from: 0, count: reader.columnCount) {
+            maximum = max(maximum, column.magnitude)
         }
         normalizationReference = maximum > 0 ? maximum : 1
     }

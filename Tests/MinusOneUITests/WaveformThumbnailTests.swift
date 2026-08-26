@@ -16,7 +16,7 @@ final class WaveformThumbnailTests: XCTestCase {
     }
 
     private func thumbnail(width: CGFloat, peaks: [Float]) -> WaveformView {
-        let view = WaveformView(style: .thumbnail)
+        let view = WaveformView()
         view.frame = NSRect(x: 0, y: 0, width: width, height: 18)
         view.peaks = peaks
         return view
@@ -27,7 +27,7 @@ final class WaveformThumbnailTests: XCTestCase {
     func testItBinsToTheNumberOfBarsThatFitTheWidth() {
         let view = thumbnail(width: 200, peaks: peaksWithASilentMiddle())
         let columns = view.renderedColumns()
-        let expected = Int(200 / (WaveformView.barWidth + WaveformView.barGap))
+        let expected = Int(200 / (TimelineMetrics.barWidth + TimelineMetrics.barGap))
         XCTAssertEqual(columns.count, expected)
         XCTAssertLessThan(columns.count, 300, "600 columns must not survive into a 200pt row")
     }
@@ -80,5 +80,12 @@ final class WaveformThumbnailTests: XCTestCase {
             Double(paintedColumns) / Double(rep.pixelsWide), 0.9,
             "every pixel column has ink — the thumbnail is still a solid smear"
         )
+    }
+
+    /// Spec §14: the view used to compute x two ways — bars by index and everything else by
+    /// fraction of the width. There is one way now, and it is the one the timeline uses.
+    func testItUsesTheSharedBarGeometry() {
+        let columns = thumbnail(width: 300, peaks: peaksWithASilentMiddle()).renderedColumns()
+        XCTAssertEqual(columns.count, TimelineMetrics.barCount(forWidth: 300))
     }
 }
