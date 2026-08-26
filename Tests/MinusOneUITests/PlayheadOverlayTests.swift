@@ -72,4 +72,32 @@ final class PlayheadOverlayTests: XCTestCase {
         XCTAssertTrue(columnHasInk(playheadX), "the playhead did not paint")
         XCTAssertFalse(columnHasInk(rep.pixelsWide - 2), "the overlay painted where nothing should be")
     }
+
+    /// The snap is the whole point: a 1pt fill at a fractional x smears across two device pixels.
+    func testTheHoverCursorLandsOnAWholeDevicePixel() throws {
+        let view = overlay(width: 680, clipDuration: 240)
+        view.hoverTime = 1.0
+
+        let raw = view.viewport.x(forTime: 1.0)
+        let snapped = try XCTUnwrap(view.hoverX())
+        XCTAssertNotEqual(snapped, raw, accuracy: 0.0001, "the hover x was not snapped at all")
+        // No window in a test, so the fallback scale of 2 applies.
+        XCTAssertEqual((snapped * 2).rounded(), snapped * 2, accuracy: 0.0001)
+        XCTAssertEqual(snapped, raw, accuracy: 0.5, "the snap moved the cursor more than half a point")
+    }
+
+    func testThereIsNoHoverCursorUntilOneIsSet() {
+        XCTAssertNil(overlay().hoverX())
+    }
+
+    /// Two 1pt lines a fraction apart read as one smudge, so the hover yields to the playhead.
+    func testTheHoverCursorIsSuppressedUnderThePlayhead() {
+        let view = overlay()
+        view.playheadTime = 60
+        view.hoverTime = 60
+        XCTAssertNil(view.hoverX())
+
+        view.hoverTime = 61
+        XCTAssertNotNil(view.hoverX())
+    }
 }

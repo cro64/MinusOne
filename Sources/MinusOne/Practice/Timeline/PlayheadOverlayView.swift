@@ -74,6 +74,22 @@ final class PlayheadOverlayView: NSView {
         return NSRect(x: start, y: 0, width: max(1, end - start), height: bounds.height)
     }
 
+    /// Where the hover cursor is drawn, snapped to the device pixel grid.
+    ///
+    /// Exposed like `playheadX()` and `loopRect()` rather than computed inline in `draw(_:)`, so
+    /// the snap is testable without rendering a bitmap.
+    func hoverX() -> CGFloat? {
+        // Suppressed under the playhead: two 1pt lines a fraction of a point apart read as one
+        // thick smudge rather than two cursors. Exact equality is deliberate — these come from
+        // independent sources (mouse position and the playback clock), so this fires only when the
+        // container has genuinely set them to the same instant.
+        guard let hoverTime, hoverTime != playheadTime else { return nil }
+        return TimelineMetrics.devicePixelAligned(
+            viewport.x(forTime: hoverTime),
+            scale: window?.backingScaleFactor ?? 2
+        )
+    }
+
     /// The strip a marker at `time` occupies, with a point of slack either side for the line's
     /// own width and for antialiasing.
     func invalidationRect(forTime time: Double) -> NSRect {
@@ -90,15 +106,9 @@ final class PlayheadOverlayView: NSView {
             loopRect.fill()
         }
 
-        if let hoverTime, hoverTime != playheadTime {
-            let scale = window?.backingScaleFactor ?? 2
+        if let hoverX = hoverX() {
             NSColor.tertiaryLabelColor.setFill()
-            NSRect(
-                x: TimelineMetrics.devicePixelAligned(viewport.x(forTime: hoverTime), scale: scale),
-                y: 0,
-                width: 1,
-                height: bounds.height
-            ).fill()
+            NSRect(x: hoverX, y: 0, width: 1, height: bounds.height).fill()
         }
 
         if let x = playheadX() {
