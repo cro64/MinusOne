@@ -217,6 +217,7 @@ final class PracticeDeckViewController: NSViewController, NSTextFieldDelegate {
         let store = PeakStore(peaksFolder: libraryStore.peaksFolder(forClipID: clip.id))
         peakStore = store
         timeline.show(clipDuration: clip.durationSeconds, peakStore: store)
+        updateTimelineHeight()
         backfillPeaksIfNeeded(for: clip)
 
         refreshForCurrentClip()
@@ -244,6 +245,12 @@ final class PracticeDeckViewController: NSViewController, NSTextFieldDelegate {
     }
 
     /// One lane before separation has produced a stem, four after — see `DeckTimelineView.tracks`.
+    ///
+    /// Called from exactly the three places that can change the track set, each time immediately
+    /// after the call that changes it: `show(clip:)`'s `timeline.show`, the backfill's
+    /// `refreshPeaks`, and `updateClip`'s `refreshPeaks`. Deliberately *not* called from
+    /// `refreshForCurrentClip()`, which also runs on every separation tick before the peaks have
+    /// been reloaded — it would measure a stale track count and then be corrected a line later.
     private func updateTimelineHeight() {
         timelineHeightConstraint.constant = DeckTimelineView.height(forLaneCount: max(1, timeline.tracks.count))
     }
@@ -294,7 +301,6 @@ final class PracticeDeckViewController: NSViewController, NSTextFieldDelegate {
         // How much is *playable*, which gates seeking — deliberately not the same as how much has
         // peak data, since peaks can exist for audio the engine has not reloaded yet.
         timeline.readyDuration = clip.readyDurationSeconds
-        updateTimelineHeight()
         let playable = clip.readyDurationSeconds > 0 && !clip.processingFailed
         playPauseButton.isEnabled = playable
         skipBackButton.isEnabled = playable
