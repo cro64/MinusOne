@@ -159,6 +159,67 @@ final class PracticeDeckTests: XCTestCase {
         }
     }
 
+    /// A loop belongs to the clip it was drawn on. The engine's teardown deliberately keeps
+    /// `loopRangeSeconds`/`isLoopEnabled` (it also runs on every separation tick, where wiping a
+    /// loop mid-practice would be worse), so the deck has to drop it when the clip changes —
+    /// otherwise playback keeps wrapping at a time the new clip never shows.
+    func testTheLoopIsDroppedWhenTheClipChanges() throws {
+        let first = try makeClip(withStemSidecars: true)
+        let second = try makeClip(withStemSidecars: true)
+        let controller = deck()
+
+        controller.show(clip: first)
+        controller.view.layoutSubtreeIfNeeded()
+
+        // Drawn the way the user draws one: the real drag seams, which set the band *and* fire the
+        // callback. Invoking `onLoopRangeChanged` alone only notifies the deck — it leaves the
+        // timeline's own band unset, which is not the state a clip switch has to clean up.
+        drawLoop(on: controller)
+        XCTAssertTrue(controller.playbackEngineForTesting.isLoopEnabled, "the loop never engaged")
+        XCTAssertTrue(controller.isLoopButtonOnForTesting)
+        XCTAssertNotNil(controller.timelineForTesting.loopRange)
+
+        controller.show(clip: second)
+        controller.view.layoutSubtreeIfNeeded()
+
+        XCTAssertFalse(controller.playbackEngineForTesting.isLoopEnabled,
+                       "the engine still loops a range belonging to the previous clip")
+        XCTAssertFalse(controller.isLoopButtonOnForTesting, "the Loop button still reads on")
+        XCTAssertNil(controller.timelineForTesting.loopRange, "the loop band survived the switch")
+    }
+
+    /// The counterpart: a separation tick must *not* drop a loop the user just drew. `updateClip`
+    /// routes through `reload`, which tears the engine down — so a reset placed there instead of at
+    /// the clip switch would wipe the loop every couple of seconds while a clip separates.
+    func testASeparationTickDoesNotDropTheLoop() throws {
+        var clip = try makeClip(withStemSidecars: true)
+        let controller = deck()
+        controller.show(clip: clip)
+        controller.view.layoutSubtreeIfNeeded()
+
+        drawLoop(on: controller)
+        XCTAssertTrue(controller.playbackEngineForTesting.isLoopEnabled)
+        XCTAssertNotNil(controller.timelineForTesting.loopRange, "the drag never drew a band")
+
+        // What a separation flush looks like to the deck: same clip, more audio ready.
+        clip.readyDurationSeconds = 30
+        controller.updateClip(clip)
+        controller.view.layoutSubtreeIfNeeded()
+
+        XCTAssertTrue(controller.playbackEngineForTesting.isLoopEnabled,
+                      "a separation tick dropped the user's loop")
+        XCTAssertNotNil(controller.timelineForTesting.loopRange)
+    }
+
+    /// Draws a loop through the timeline's real drag seams, so the band and the engine end up in
+    /// the same state a user's drag leaves them in.
+    private func drawLoop(on controller: PracticeDeckViewController) {
+        let timeline = controller.timelineForTesting
+        timeline.beginCanvasDrag(atX: 100)
+        timeline.continueCanvasDrag(toX: 400)
+        timeline.endCanvasDrag(atX: 400)
+    }
+
     private func writeSilentAudio(to url: URL, seconds: Double) throws {
         let settings: [String: Any] = [
             AVFormatIDKey: kAudioFormatLinearPCM,

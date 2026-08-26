@@ -221,6 +221,7 @@ final class PracticeDeckViewController: NSViewController, NSTextFieldDelegate {
         isEngineLoaded = false
         lastReloadedReadySeconds = 0
         showEmptyState(false)
+        clearLoop()
 
         let store = PeakStore(peaksFolder: libraryStore.peaksFolder(forClipID: clip.id))
         timeline.show(clipDuration: clip.durationSeconds, peakStore: store)
@@ -259,6 +260,25 @@ final class PracticeDeckViewController: NSViewController, NSTextFieldDelegate {
                 self.updateTimelineHeight()
             }
         }
+    }
+
+    /// Drops the loop when the deck moves to a different clip.
+    ///
+    /// A loop belongs to the clip it was drawn on. `PracticePlaybackEngine.tearDown()` resets the
+    /// players, the playhead and `isPlaying`, but deliberately not `loopRangeSeconds` or
+    /// `isLoopEnabled` — and `DeckTimelineView.show(clipDuration:peakStore:)` clears the drawn band.
+    /// Without this the engine would keep wrapping at a time the new clip does not show: draw a loop
+    /// at 2:00 on a long clip, switch to a 30-second one, and playback still jumps with nothing on
+    /// screen to explain it.
+    ///
+    /// Deliberately here rather than in the engine's own teardown: `reload(clip:libraryStore:)` also
+    /// tears down, and it runs on *every* separation tick, so clearing there would wipe a loop the
+    /// user drew moments earlier while their clip was still separating.
+    private func clearLoop() {
+        playbackEngine.setLoopRange(nil)
+        playbackEngine.isLoopEnabled = false
+        loopButton.state = .off
+        loopButton.refreshStyle()
     }
 
     /// One lane before separation has produced a stem, four after — see `DeckTimelineView.tracks`.
@@ -458,6 +478,9 @@ final class PracticeDeckViewController: NSViewController, NSTextFieldDelegate {
 
     /// The deck's playback engine, for tests that need to drive mixer state directly.
     var playbackEngineForTesting: PracticePlaybackEngine { playbackEngine }
+
+    /// The Loop toggle's visible state — the half of the loop that the user actually sees.
+    var isLoopButtonOnForTesting: Bool { loopButton.state == .on }
 
     /// Split out from the monitor so the rule can be exercised directly.
     func endTitleEditingIfClickIsOutside(_ locationInWindow: NSPoint) {
