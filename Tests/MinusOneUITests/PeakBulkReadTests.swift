@@ -91,14 +91,20 @@ final class PeakBulkReadTests: XCTestCase {
             _ = PeakBinning.rebin(targetCount: 226, sourceCount: source.count) { source[$0] }
         }
         let perRebin = Date().timeIntervalSince(started) / 10
-        // Two bounds because the debug build's cost is dominated by -Onone codegen, not by the
-        // algorithm. Both guard the same thing: an order-of-magnitude regression that would
-        // invalidate spec §4's no-pyramid decision. Measured on an Apple M4: ~109 µs release,
-        // ~8.2-8.3 ms debug (repeated runs). The debug bound below is ~3.6x that debug median —
-        // enough headroom that ordinary variance won't trip it, but a 10x algorithmic regression
-        // (~83 ms) still would.
+        // Two bounds, because they guard different things. This repo has no CI — the mandated
+        // `swift test --filter ...` command runs on a developer Mac, in a debug (-Onone) build,
+        // whose per-operation cost varies widely machine to machine. Measured on an Apple M4:
+        // ~109 µs release, ~8.2-8.3 ms debug (repeated runs).
+        //   - Release (0.004s): this is the bound that demonstrates spec §4's re-binning claim,
+        //     since the shipped render path runs optimized code.
+        //   - Debug (0.1s, ~12x the observed M4 median): this does NOT demonstrate anything about
+        //     production performance, and it is not tight enough to catch an ordinary constant-
+        //     factor regression. It exists only to catch a catastrophic complexity regression —
+        //     e.g. an accidentally quadratic re-bin over 41,343 columns would take seconds, not
+        //     tens of milliseconds — while staying unflakeable on any Mac that can plausibly run
+        //     this app.
         #if DEBUG
-        let bound = 0.03
+        let bound = 0.1
         #else
         let bound = 0.004
         #endif
