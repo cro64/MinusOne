@@ -257,7 +257,7 @@ private final class ClipRowView: NSView, NSTextFieldDelegate {
         subtitleField.textColor = clip.processingFailed ? .systemRed : .secondaryLabelColor
         subtitleField.translatesAutoresizingMaskIntoConstraints = false
 
-        let waveform = WaveformView(style: .thumbnail)
+        let waveform = WaveformView()
         waveform.peaks = clip.waveformPeaks
         waveform.readyFraction = clip.durationSeconds > 0 ? CGFloat(clip.readyDurationSeconds / clip.durationSeconds) : 1
         waveform.translatesAutoresizingMaskIntoConstraints = false
