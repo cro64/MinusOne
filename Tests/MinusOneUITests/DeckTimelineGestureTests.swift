@@ -163,4 +163,51 @@ final class DeckTimelineGestureTests: XCTestCase {
         view.setHover(atX: nil)
         XCTAssertNil(view.hoverTimeForTesting)
     }
+
+    // MARK: - Edge clamping
+
+    /// A drag off the left edge must not commit a loop that starts before the clip.
+    func testADragOffTheLeftEdgeStaysInsideTheClip() throws {
+        let view = timeline()
+        view.zoom(by: 4, aroundX: 300)
+        var reported: [ClosedRange<Double>] = []
+        view.onLoopRangeChanged = { reported.append($0) }
+
+        view.beginCanvasDrag(atX: 200)
+        view.continueCanvasDrag(toX: -500)
+        view.endCanvasDrag(atX: -500)
+
+        let range = try XCTUnwrap(reported.first)
+        XCTAssertGreaterThanOrEqual(range.lowerBound, 0)
+        XCTAssertLessThanOrEqual(range.upperBound, view.viewport.clipDuration)
+    }
+
+    /// And a drag off the right edge must not commit one that ends past it.
+    func testADragOffTheRightEdgeStaysInsideTheClip() throws {
+        let view = timeline()
+        view.zoom(by: 4, aroundX: 300)
+        var reported: [ClosedRange<Double>] = []
+        view.onLoopRangeChanged = { reported.append($0) }
+
+        view.beginCanvasDrag(atX: 100)
+        view.endCanvasDrag(atX: 50_000)
+
+        let range = try XCTUnwrap(reported.first)
+        XCTAssertGreaterThanOrEqual(range.lowerBound, 0)
+        XCTAssertLessThanOrEqual(range.upperBound, view.viewport.clipDuration)
+    }
+
+    /// `PracticePlaybackEngine.seek` happens to clamp, but this interface must not hand it a
+    /// negative time in the first place.
+    func testATapAtTheLeftEdgeNeverSeeksBeforeZero() {
+        let view = timeline()
+        var sought: [Double] = []
+        view.onSeek = { sought.append($0) }
+
+        view.beginCanvasDrag(atX: -2)
+        view.endCanvasDrag(atX: -2)
+
+        XCTAssertEqual(sought.count, 1)
+        XCTAssertGreaterThanOrEqual(sought[0], 0)
+    }
 }

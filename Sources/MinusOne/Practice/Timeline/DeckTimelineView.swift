@@ -230,11 +230,15 @@ final class DeckTimelineView: NSView {
 
     // MARK: - Gestures
 
+    /// The raw, unclamped canvas offset of a window point. Negative over the lane headers.
+    private func rawCanvasX(forWindowPoint point: NSPoint) -> CGFloat {
+        convert(point, from: nil).x - TimelineMetrics.headerWidth
+    }
+
     /// Where a window point falls on the canvas, or `nil` if it is over the lane headers. The
     /// headers hold live controls; a scroll or a click there is theirs, not the timeline's.
     func canvasX(forWindowPoint point: NSPoint) -> CGFloat? {
-        let local = convert(point, from: nil)
-        let x = local.x - TimelineMetrics.headerWidth
+        let x = rawCanvasX(forWindowPoint: point)
         return x >= 0 ? x : nil
     }
 
@@ -275,7 +279,7 @@ final class DeckTimelineView: NSView {
         guard abs(x - start) >= Self.dragThreshold else {
             // A tap. Roll the preview back — a click must not destroy the loop the user drew.
             overlay.loopRange = loopBeforeDrag
-            let time = viewport.time(forX: x)
+            let time = canvasTime(forX: x)
             if time <= readyDuration { onSeek?(time) }
             return
         }
@@ -284,9 +288,21 @@ final class DeckTimelineView: NSView {
         onLoopRangeChanged?(loop)
     }
 
+    /// A canvas x turned into a clip time, with the x clamped to the canvas first.
+    ///
+    /// `mouseDragged` and `mouseUp` are deliberately not gated on the canvas column — a drag that
+    /// starts on a lane and wanders over the headers is still that drag — so x legitimately arrives
+    /// negative or past the right edge. `Viewport.time(forX:)` extrapolates linearly and does not
+    /// clamp, so without this a drag off the left edge commits a loop starting before the clip, and
+    /// a tap near the edge seeks to a negative time. `PracticePlaybackEngine.setLoopRange` stores
+    /// whatever it is given, so this is the only place that can be fixed.
+    private func canvasTime(forX x: CGFloat) -> Double {
+        viewport.time(forX: min(max(0, x), max(0, canvasWidth)))
+    }
+
     private func range(from startX: CGFloat, to endX: CGFloat) -> ClosedRange<Double> {
-        let a = viewport.time(forX: min(startX, endX))
-        let b = viewport.time(forX: max(startX, endX))
+        let a = canvasTime(forX: min(startX, endX))
+        let b = canvasTime(forX: max(startX, endX))
         return min(a, b)...max(a, b)
     }
 
@@ -320,11 +336,11 @@ final class DeckTimelineView: NSView {
     override func mouseDragged(with event: NSEvent) {
         // Not gated on the canvas column: a drag that starts on a lane and wanders over the
         // headers is still that drag.
-        continueCanvasDrag(toX: convert(event.locationInWindow, from: nil).x - TimelineMetrics.headerWidth)
+        continueCanvasDrag(toX: rawCanvasX(forWindowPoint: event.locationInWindow))
     }
 
     override func mouseUp(with event: NSEvent) {
-        endCanvasDrag(atX: convert(event.locationInWindow, from: nil).x - TimelineMetrics.headerWidth)
+        endCanvasDrag(atX: rawCanvasX(forWindowPoint: event.locationInWindow))
     }
 
     override func mouseMoved(with event: NSEvent) {
