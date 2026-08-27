@@ -100,7 +100,13 @@ final class LoopSnappingTests: XCTestCase {
     }
 
     /// Snapping must never collapse a loop to zero length or invert it, however short the drag.
-    func testAVeryShortDragStillYieldsAnOrderedRange() throws {
+    /// This drag (x=200→205, above the 3pt threshold) straddles a beat boundary — its raw span
+    /// covers part of two adjacent beats — so the two edges snap to *different* beats and this
+    /// path never needs the zero-length fallback below. Kept alongside
+    /// `testADragEntirelyInsideOneBeatExtendsToAFullBeatInsteadOfCollapsing`, which does exercise
+    /// it, because a straddling short drag takes a different path through `range(from:to:)` and
+    /// both are worth pinning.
+    func testAVeryShortDragThatStraddlesABeatStillYieldsAnOrderedRange() throws {
         let view = timeline(grid: grid)
         var reported: [ClosedRange<Double>] = []
         view.onLoopRangeChanged = { reported.append($0) }
@@ -111,6 +117,35 @@ final class LoopSnappingTests: XCTestCase {
         if let range = reported.first {
             XCTAssertLessThanOrEqual(range.lowerBound, range.upperBound)
         }
+    }
+
+    /// A drag that starts and ends inside a single beat snaps both edges to the same instant
+    /// before the zero-length guard runs. At this fixture's zoom (724pt canvas / 60s clip =
+    /// ~12.07 px/s) one beat is ~6.03pt wide, so a 4pt drag from x=4 to x=8 lands entirely inside
+    /// the beat centered at t=0.5s (that beat's nearest-beat catchment is x ∈ [3.02, 9.05)) while
+    /// still clearing the 3pt drag threshold. Measured with `view.viewport.time(forX:)` and
+    /// `grid.nearestBeat(to:)` directly against this fixture rather than assumed:
+    /// `time(forX: 4) == 0.3315s` and `time(forX: 8) == 0.6630s` both round to the beat at 0.5s.
+    /// A zero-length loop makes `PracticePlaybackEngine.tick()` re-seek every timer tick and
+    /// stall playback, so the reported loop must extend to a full, non-empty beat instead of
+    /// collapsing — and both edges must still land on the grid.
+    func testADragEntirelyInsideOneBeatExtendsToAFullBeatInsteadOfCollapsing() throws {
+        let view = timeline(grid: grid)
+        var reported: [ClosedRange<Double>] = []
+        view.onLoopRangeChanged = { reported.append($0) }
+
+        // Confirm the premise against this fixture's actual viewport rather than assuming it.
+        XCTAssertEqual(grid.nearestBeat(to: view.viewport.time(forX: 4)), 0.5, accuracy: 1e-6)
+        XCTAssertEqual(grid.nearestBeat(to: view.viewport.time(forX: 8)), 0.5, accuracy: 1e-6)
+
+        view.beginCanvasDrag(atX: 4)
+        view.endCanvasDrag(atX: 8)
+
+        let range = try XCTUnwrap(reported.first)
+        XCTAssertLessThan(range.lowerBound, range.upperBound)
+        XCTAssertEqual(range.upperBound - range.lowerBound, grid.beatDuration, accuracy: 1e-6)
+        XCTAssertEqual(grid.nearestBeat(to: range.lowerBound), range.lowerBound, accuracy: 1e-6)
+        XCTAssertEqual(grid.nearestBeat(to: range.upperBound), range.upperBound, accuracy: 1e-6)
     }
 
     /// Snapping happens after clamping, so an off-canvas drag still cannot leave the clip.

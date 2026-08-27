@@ -342,6 +342,25 @@ final class DeckTimelineView: NSView {
         // inside the clip, and a beat just outside it would undo that.
         let lower = min(max(0, beatGrid.nearestBeat(to: a)), viewport.clipDuration)
         let upper = min(max(0, beatGrid.nearestBeat(to: b)), viewport.clipDuration)
+        guard lower != upper else {
+            // A drag entirely inside one beat snaps both edges to the same instant. Snapping must
+            // never produce that: `PracticePlaybackEngine.tick()` seeks back to `lowerBound` the
+            // moment `time >= upperBound`, so a zero-length loop re-seeks — and reschedules every
+            // player — on every timer tick, stalling playback with no way out but clearing the
+            // loop. Extend to a one-beat loop instead of falling back to an off-grid sliver: the
+            // whole point of snapping is that both edges land on beats.
+            let beatDuration = beatGrid.beatDuration
+            if lower + beatDuration <= viewport.clipDuration {
+                return lower...(lower + beatDuration)
+            } else if upper - beatDuration >= 0 {
+                return (upper - beatDuration)...upper
+            } else {
+                // The clip itself is shorter than one beat, so neither direction fits. A
+                // degenerate clip should not produce a degenerate loop: fall back to the
+                // unsnapped, already-clamped range.
+                return min(a, b)...max(a, b)
+            }
+        }
         return min(lower, upper)...max(lower, upper)
     }
 
