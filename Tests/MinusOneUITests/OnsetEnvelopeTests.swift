@@ -54,16 +54,20 @@ final class OnsetEnvelopeTests: XCTestCase {
     /// Half-wave rectification is what makes it an *onset* envelope: energy appearing counts,
     /// energy disappearing does not. Without it a note ending reads as loudly as a note starting.
     func testOnlyRisingEnergyCounts() {
-        // One burst then silence: the attack must produce a far larger response than the release.
+        // The lead-in silence is load-bearing. A tone that starts at sample 0 puts its attack
+        // before the first STFT frame — which the algorithm forces to zero — so the measurement
+        // lands on steady state and the test proves nothing.
+        let toneStart = 0.05
+        let toneEnd = 0.55
         var samples = [Float](repeating: 0, count: Int(sampleRate))
-        for index in 0..<Int(sampleRate / 2) {
+        for index in Int(toneStart * sampleRate)..<Int(toneEnd * sampleRate) {
             samples[index] = 0.8 * sinf(Float(index) * 0.05)
         }
         let envelope = OnsetEnvelope.compute(samples: samples, sampleRate: sampleRate)
         let fps = OnsetEnvelope.framesPerSecond(sampleRate: sampleRate)
 
-        let attackFrame = Int(0.02 * fps)
-        let releaseFrame = Int(0.52 * fps)
+        let attackFrame = Int(toneStart * fps)
+        let releaseFrame = Int(toneEnd * fps)
         let attack = envelope[max(0, attackFrame - 2)...min(envelope.count - 1, attackFrame + 4)].max() ?? 0
         let release = envelope[max(0, releaseFrame - 2)...min(envelope.count - 1, releaseFrame + 4)].max() ?? 0
         XCTAssertGreaterThan(attack, release * 4, "the release rivals the attack — not rectified")
