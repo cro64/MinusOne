@@ -95,4 +95,19 @@ final class BeatRulerTests: XCTestCase {
         }
         XCTAssertTrue(inked, "the ruler drew nothing with a grid set")
     }
+
+    /// The marker is the affordance — without it the downbeat is draggable but invisible.
+    func testTheDownbeatMarkerPaints() throws {
+        let grid = BeatGrid(bpm: 120, downbeatOffsetSeconds: 2.0)
+        let view = ruler(clipDuration: 20, grid: grid)
+        let rep = try XCTUnwrap(view.bitmapImageRepForCachingDisplay(in: view.bounds))
+        view.cacheDisplay(in: view.bounds, to: rep)
+
+        let scale = CGFloat(rep.pixelsWide) / view.bounds.width
+        let markerColumn = Int(view.viewport.x(forTime: 2.0) * scale)
+        let inkAtMarker = (0..<rep.pixelsHigh).contains {
+            (rep.colorAt(x: markerColumn, y: $0)?.alphaComponent ?? 0) > 0.05
+        }
+        XCTAssertTrue(inkAtMarker, "no marker drawn at the downbeat")
+    }
 }

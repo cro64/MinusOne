@@ -18,6 +18,10 @@ final class DeckTimelineView: NSView {
     var onStemSoloToggled: ((SeparationStem) -> Void)?
     var onStemExportRequested: ((SeparationStem) -> Void)?
 
+    /// Fired when the user sets the grid by hand — an edited tempo or a dragged downbeat. The deck
+    /// persists it and sets `isBeatGridUserSet`, which stops detection ever overwriting it.
+    var onBeatGridEdited: ((BeatGrid) -> Void)?
+
     /// Supplies each stem's current mixer state so a rebuilt lane header shows it.
     ///
     /// `StemMixerController` outlives any one clip — `PracticePlaybackEngine.tearDown()` does not
@@ -46,6 +50,7 @@ final class DeckTimelineView: NSView {
         didSet {
             guard beatGrid != oldValue else { return }
             ruler.beatGrid = beatGrid
+            toolbar.setBPM(beatGrid?.bpm)
         }
     }
 
@@ -55,18 +60,23 @@ final class DeckTimelineView: NSView {
     private let ruler = TimelineRulerView()
     private let overlay = PlayheadOverlayView()
     private let indicator = TimelineScrollIndicatorView()
+    private let toolbar = TimelineToolbarView()
     private var lanes: [StemLaneView] = []
     private var headers: [SeparationStem: LaneHeaderView] = [:]
     private var headerViews: [NSView] = []
 
     private var dragStartX: CGFloat?
     private var loopBeforeDrag: ClosedRange<Double>?
+    private var downbeatDragOffset: Double?
+    private var tapTempo = TapTempo()
 
     init() {
         viewport = Viewport(clipDuration: 1, widthPoints: 0)
         super.init(frame: .zero)
         wantsLayer = true
         addSubview(ruler)
+        addSubview(toolbar)
+        toolbar.translatesAutoresizingMaskIntoConstraints = true
         addSubview(indicator)
         // Last, so it composites over the lanes. It returns `nil` from `hitTest`, so being on top
         // costs nothing in events.
@@ -75,6 +85,20 @@ final class DeckTimelineView: NSView {
         indicator.onScrubToStartTime = { [weak self] time in
             guard let self else { return }
             self.apply(self.viewport.scrolled(toStartTime: time))
+        }
+
+        toolbar.onBPMEdited = { [weak self] bpm in
+            guard let self else { return }
+            let grid = BeatGrid(bpm: bpm, downbeatOffsetSeconds: self.beatGrid?.downbeatOffsetSeconds ?? 0)
+            self.beatGrid = grid
+            self.onBeatGridEdited?(grid)
+        }
+        toolbar.onTapped = { [weak self] in
+            guard let self, let bpm = self.tapTempo.tap(at: Date().timeIntervalSinceReferenceDate) else { return }
+            let grid = BeatGrid(bpm: bpm, downbeatOffsetSeconds: self.beatGrid?.downbeatOffsetSeconds ?? 0)
+            self.beatGrid = grid
+            self.toolbar.setBPM(bpm)
+            self.onBeatGridEdited?(grid)
         }
     }
 
@@ -85,10 +109,12 @@ final class DeckTimelineView: NSView {
 
     override var isFlipped: Bool { true }
 
-    /// Ruler + lanes + indicator, with `laneSpacing` between every block.
+    /// Toolbar + ruler + lanes + indicator, with `laneSpacing` between every block.
     static func height(forLaneCount count: Int) -> CGFloat {
         let lanes = CGFloat(count) * TimelineMetrics.laneHeight + CGFloat(max(0, count - 1)) * TimelineMetrics.laneSpacing
-        return TimelineMetrics.rulerHeight
+        return TimelineMetrics.toolbarHeight
+            + TimelineMetrics.laneSpacing
+            + TimelineMetrics.rulerHeight
             + TimelineMetrics.laneSpacing
             + lanes
             + TimelineMetrics.laneSpacing
@@ -242,9 +268,11 @@ final class DeckTimelineView: NSView {
         let canvasX = TimelineMetrics.headerWidth
         let width = canvasWidth
 
-        ruler.frame = NSRect(x: canvasX, y: 0, width: width, height: TimelineMetrics.rulerHeight)
+        toolbar.frame = NSRect(x: canvasX, y: 0, width: width, height: TimelineMetrics.toolbarHeight)
+        let rulerY = TimelineMetrics.toolbarHeight + TimelineMetrics.laneSpacing
+        ruler.frame = NSRect(x: canvasX, y: rulerY, width: width, height: TimelineMetrics.rulerHeight)
 
-        var y = TimelineMetrics.rulerHeight + TimelineMetrics.laneSpacing
+        var y = rulerY + TimelineMetrics.rulerHeight + TimelineMetrics.laneSpacing
         for (index, lane) in lanes.enumerated() {
             lane.frame = NSRect(x: canvasX, y: y, width: width, height: TimelineMetrics.laneHeight)
             if index < headerViews.count {
@@ -254,8 +282,9 @@ final class DeckTimelineView: NSView {
         }
 
         // From the top of the ruler to the bottom of the last lane: one band, all four lanes, so
-        // the loop cannot read as lane-local state.
-        overlay.frame = NSRect(x: canvasX, y: 0, width: width, height: max(0, y - TimelineMetrics.laneSpacing))
+        // the loop cannot read as lane-local state. The toolbar is not included — it is not part
+        // of the loop gesture's surface.
+        overlay.frame = NSRect(x: canvasX, y: rulerY, width: width, height: max(0, y - TimelineMetrics.laneSpacing - rulerY))
         indicator.frame = NSRect(x: canvasX, y: y, width: width, height: TimelineMetrics.scrollIndicatorHeight)
 
         // A resize changes pixels per second, never the visible seconds.
@@ -364,6 +393,33 @@ final class DeckTimelineView: NSView {
         return min(lower, upper)...max(lower, upper)
     }
 
+    // MARK: - Downbeat drag
+
+    /// Grabs the downbeat marker if the pointer is on it. Returns false when there is no grid or
+    /// the pointer is elsewhere, so the caller can fall through to the loop gesture.
+    func beginDownbeatDrag(atX x: CGFloat) -> Bool {
+        guard let beatGrid else { return false }
+        let markerX = viewport.x(forTime: beatGrid.downbeatOffsetSeconds)
+        guard abs(x - markerX) <= TimelineRulerView.downbeatGrabRadius else { return false }
+        downbeatDragOffset = beatGrid.downbeatOffsetSeconds - canvasTime(forX: x)
+        return true
+    }
+
+    func continueDownbeatDrag(toX x: CGFloat) {
+        guard let downbeatDragOffset, let current = beatGrid else { return }
+        beatGrid = BeatGrid(
+            bpm: current.bpm,
+            downbeatOffsetSeconds: max(0, canvasTime(forX: x) + downbeatDragOffset),
+            beatsPerBar: current.beatsPerBar
+        )
+    }
+
+    func endDownbeatDrag() {
+        guard downbeatDragOffset != nil else { return }
+        downbeatDragOffset = nil
+        if let beatGrid { onBeatGridEdited?(beatGrid) }
+    }
+
     // MARK: - Events
 
     override func scrollWheel(with event: NSEvent) {
@@ -388,10 +444,21 @@ final class DeckTimelineView: NSView {
 
     override func mouseDown(with event: NSEvent) {
         guard let x = canvasX(forWindowPoint: event.locationInWindow) else { return }
+        // The marker wins over the loop gesture when the pointer is on it — it is a much smaller
+        // target, so a grab that lands on it was almost certainly meant for it.
+        if isPointInRuler(event.locationInWindow), beginDownbeatDrag(atX: x) { return }
         beginCanvasDrag(atX: x)
     }
 
+    private func isPointInRuler(_ windowPoint: NSPoint) -> Bool {
+        ruler.frame.contains(convert(windowPoint, from: nil))
+    }
+
     override func mouseDragged(with event: NSEvent) {
+        if downbeatDragOffset != nil {
+            continueDownbeatDrag(toX: rawCanvasX(forWindowPoint: event.locationInWindow))
+            return
+        }
         // Not gated on the canvas column: a drag that starts on a lane and wanders over the
         // headers is still that drag. The modifier is read live, not latched at drag start, so
         // pressing or releasing ⌥ mid-drag takes effect immediately.
@@ -402,6 +469,10 @@ final class DeckTimelineView: NSView {
     }
 
     override func mouseUp(with event: NSEvent) {
+        if downbeatDragOffset != nil {
+            endDownbeatDrag()
+            return
+        }
         endCanvasDrag(
             atX: rawCanvasX(forWindowPoint: event.locationInWindow),
             bypassSnapping: event.modifierFlags.contains(.option)
@@ -434,4 +505,5 @@ final class DeckTimelineView: NSView {
     var laneRenderCountsForTesting: [Int] { lanes.map(\.renderCount) }
     var hoverTimeForTesting: Double? { overlay.hoverTime }
     var headersForTesting: [SeparationStem: LaneHeaderView] { headers }
+    var toolbarForTesting: TimelineToolbarView { toolbar }
 }

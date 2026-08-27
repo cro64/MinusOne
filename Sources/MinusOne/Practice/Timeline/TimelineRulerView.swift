@@ -29,6 +29,9 @@ final class TimelineRulerView: NSView {
     /// Below this, beat ticks are a smear and only bars are drawn.
     private static let minimumBeatTickSpacing: CGFloat = 6
 
+    /// How close a pointer must be to the marker to grab it.
+    static let downbeatGrabRadius: CGFloat = 8
+
     /// Human-sized intervals only. A computed "nice number" would happily choose 3.7 seconds; a
     /// ruler nobody can read the spacing of is worse than a coarse one.
     private static let intervalLadder: [Double] = [
@@ -168,6 +171,14 @@ final class TimelineRulerView: NSView {
             let x = TimelineMetrics.devicePixelAligned(viewport.x(forTime: label.time), scale: scale)
             NSRect(x: x, y: bounds.height - 8, width: 1, height: 8).fill()
             "\(label.bar)".draw(at: NSPoint(x: x + 3, y: 1), withAttributes: attributes)
+        }
+
+        // The downbeat marker: a full-height accent tick, so it reads as draggable rather than as
+        // another bar line.
+        if let beatGrid {
+            let x = TimelineMetrics.devicePixelAligned(viewport.x(forTime: beatGrid.downbeatOffsetSeconds), scale: scale)
+            NSColor.brandAccent.setFill()
+            NSRect(x: x - 1, y: 0, width: 3, height: bounds.height).fill()
         }
     }
 }
