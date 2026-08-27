@@ -89,16 +89,24 @@ final class BeatDetectionWiringTests: XCTestCase {
     }
 
     /// A clip with no drums stem — separation failed, or it was never separated — must come back
-    /// untouched rather than throwing into the separation flow.
+    /// fully unchanged, with nothing thrown into the separation flow.
     ///
     /// Gives the clip a distinguishable pre-existing grid (as if an earlier detection had already
-    /// run) rather than leaving `bpm` at its default `nil`, so the assertion actually requires the
-    /// "no drums" guard to fire. With the original `XCTAssertNil(updated.bpm)` on a clip whose
-    /// `bpm` started `nil`, the test would still pass even if the guard were deleted, as long as
-    /// detection failed for any other reason (e.g. the file-exists check below it) — it never
-    /// proved the guard mattered. Asserting equality against a non-nil, non-default value means the
-    /// test fails if *anything* in the no-drums path mutates the clip, not just if bpm happens to
-    /// end up nil.
+    /// run) rather than leaving `bpm` at its default `nil`, so the assertion is not vacuous: the
+    /// original `XCTAssertNil(updated.bpm)` on a clip whose `bpm` started `nil` would hold before
+    /// `detectBeatGrid` even runs, so it never proved anything.
+    ///
+    /// What this pins is the *composite* behaviour — no mutation without a readable drums file —
+    /// not any single guard in isolation. `detectBeatGrid` reaches the same "return clip unchanged"
+    /// outcome for a missing-stem clip via three independent, deliberately redundant layers: the
+    /// `stemFileNames` lookup, the `fileExists` check, and the `catch` around `AVAudioFile`. Any one
+    /// of them suffices, so deleting just one does not fail this test — e.g. dropping the
+    /// `stemFileNames` guard alone still passes, because an empty filename's `stemFileURL` resolves
+    /// back to the clip's stem *directory* (which the fixture created), so `fileExists` reports
+    /// true, and it is the subsequent `AVAudioFile(forReading:)` throwing on a directory, caught
+    /// below, that actually returns the clip unchanged. That redundancy is the intended design —
+    /// detection must never be able to fail separation — so this test is deliberately written
+    /// against the chain's net effect rather than contrived to isolate one link of it.
     func testAClipWithNoDrumsStemIsLeftAlone() throws {
         var clip = try clipWithDrums(bpm: 120)
         clip.bpm = 87
