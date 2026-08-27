@@ -54,14 +54,21 @@ final class OnsetEnvelopeTests: XCTestCase {
     /// Half-wave rectification is what makes it an *onset* envelope: energy appearing counts,
     /// energy disappearing does not. Without it a note ending reads as loudly as a note starting.
     func testOnlyRisingEnergyCounts() {
-        // The lead-in silence is load-bearing. A tone that starts at sample 0 puts its attack
+        // The lead-in silence is load-bearing: a tone that starts at sample 0 puts its attack
         // before the first STFT frame — which the algorithm forces to zero — so the measurement
         // lands on steady state and the test proves nothing.
+        //
+        // So is the fade-out. A hard cut is not "energy disappearing", it is a discontinuity, and
+        // a discontinuity injects broadband energy that any spectral-flux detector correctly reads
+        // as an onset. A note *ending* is a decay, and that is the case this test is about.
         let toneStart = 0.05
         let toneEnd = 0.55
+        let releaseSeconds = 0.05
         var samples = [Float](repeating: 0, count: Int(sampleRate))
-        for index in Int(toneStart * sampleRate)..<Int(toneEnd * sampleRate) {
-            samples[index] = 0.8 * sinf(Float(index) * 0.05)
+        for index in Int(toneStart * sampleRate)..<Int((toneEnd + releaseSeconds) * sampleRate) {
+            let time = Double(index) / sampleRate
+            let amplitude = time <= toneEnd ? 1 : max(0, 1 - (time - toneEnd) / releaseSeconds)
+            samples[index] = 0.8 * Float(amplitude) * sinf(Float(index) * 0.05)
         }
         let envelope = OnsetEnvelope.compute(samples: samples, sampleRate: sampleRate)
         let fps = OnsetEnvelope.framesPerSecond(sampleRate: sampleRate)
