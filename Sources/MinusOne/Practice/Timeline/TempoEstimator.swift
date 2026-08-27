@@ -36,7 +36,7 @@ enum TempoEstimator {
         return result
     }
 
-    /// Returns the best tempo plus the raw peak and mean of the weighted correlation, which
+    /// Returns the best tempo plus the raw peak and mean *absolute* weighted correlation, which
     /// `BeatDetector` turns into a confidence.
     static func estimate(envelope: [Float], framesPerSecond: Double) -> (bpm: Double, peak: Double, mean: Double)? {
         guard framesPerSecond > 0 else { return nil }
@@ -49,13 +49,18 @@ enum TempoEstimator {
 
         var bestLag = shortestLag
         var bestScore = -Double.greatestFiniteMagnitude
-        var scoreSum = 0.0
+        var magnitudeSum = 0.0
         var scoreCount = 0
 
         for lag in shortestLag...longestLag {
             let bpm = 60 * framesPerSecond / Double(lag)
             let score = Double(correlation[lag]) * octaveWeight(bpm: bpm)
-            scoreSum += score
+            // The magnitude, not the signed score. A correlation is as likely to be negative as
+            // positive at an unrelated lag, so a signed average is a near-zero quantity whose sign
+            // flips between noise draws — and dividing a peak by it handed white noise a
+            // confidence in the millions, which is backwards for a gate whose whole job is to
+            // reject noise.
+            magnitudeSum += abs(score)
             scoreCount += 1
             if score > bestScore {
                 bestScore = score
@@ -64,7 +69,7 @@ enum TempoEstimator {
         }
         guard scoreCount > 0, bestScore > 0 else { return nil }
 
-        let mean = scoreSum / Double(scoreCount)
+        let mean = magnitudeSum / Double(scoreCount)
         return (bpm: 60 * framesPerSecond / Double(bestLag), peak: bestScore, mean: max(mean, 1e-9))
     }
 }

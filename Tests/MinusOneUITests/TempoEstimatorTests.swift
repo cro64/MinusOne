@@ -5,17 +5,26 @@ final class TempoEstimatorTests: XCTestCase {
     private let fps = OnsetEnvelope.framesPerSecond(sampleRate: 44_100)
 
     /// A synthetic envelope with a spike every beat — what a clean drum track reduces to.
+    ///
+    /// The jitter is a fixed repeating pattern rather than a random draw: at these tempos one
+    /// integer lag step is several BPM, so a random jitter puts the recovered tempo on the wrong
+    /// side of the tolerance a few percent of the time, and a test that only usually passes cannot
+    /// tell a regression from a bad roll.
     private func pulsedEnvelope(bpm: Double, seconds: Double, jitterFrames: Int = 0) -> [Float] {
         let frameCount = Int(seconds * fps)
         var envelope = [Float](repeating: 0.01, count: frameCount)
         let period = 60 / bpm * fps
+        let jitterPattern = [0, 1, -1, 2, -2, 1, 0, -1]
         var beat = 0.0
-        var rng = SystemRandomNumberGenerator()
+        var index = 0
         while beat < Double(frameCount) {
             var frame = Int(beat.rounded())
-            if jitterFrames > 0 { frame += Int.random(in: -jitterFrames...jitterFrames, using: &rng) }
+            if jitterFrames > 0 {
+                frame += max(-jitterFrames, min(jitterFrames, jitterPattern[index % jitterPattern.count]))
+            }
             if frame >= 0 && frame < frameCount { envelope[frame] = 1 }
             beat += period
+            index += 1
         }
         return envelope
     }
@@ -27,15 +36,19 @@ final class TempoEstimatorTests: XCTestCase {
         }
     }
 
-    /// Spec §6's stated purpose for the preference window: a 75 BPM pulse also correlates at 150,
-    /// and a 160 BPM pulse at 80. The weighting must pick the musically likely one rather than
-    /// whichever lag happens to peak.
+    /// Spec §6's stated purpose for the preference window. Autocorrelation peaks at integer
+    /// multiples of the true period and never at sub-multiples, so the octave error that can
+    /// actually occur is always "too slow": a 128 BPM pulse correlates at its own lag *and* at its
+    /// 64 BPM half-time lag, and lag quantisation splits the former across two adjacent lags while
+    /// the latter lands cleanly — so the raw peak is the half-time, and only the weighting picks
+    /// the musical answer. The 180 BPM case is the same mechanism seen from the other side: the
+    /// weighting pulls a too-fast reading down into the preferred band rather than up out of it.
     func testTheOctavePreferenceResolvesHalfAndDoubleTime() throws {
-        let slow = try XCTUnwrap(TempoEstimator.estimate(envelope: pulsedEnvelope(bpm: 75, seconds: 20), framesPerSecond: fps))
-        XCTAssertEqual(slow.bpm, 150, accuracy: 3, "75 BPM should read as its 150 BPM octave")
+        let fast = try XCTUnwrap(TempoEstimator.estimate(envelope: pulsedEnvelope(bpm: 128, seconds: 20), framesPerSecond: fps))
+        XCTAssertEqual(fast.bpm, 128, accuracy: 3, "128 BPM collapsed to its 64 BPM half-time")
 
-        let fast = try XCTUnwrap(TempoEstimator.estimate(envelope: pulsedEnvelope(bpm: 180, seconds: 20), framesPerSecond: fps))
-        XCTAssertEqual(fast.bpm, 90, accuracy: 3, "180 BPM should read as its 90 BPM octave")
+        let veryFast = try XCTUnwrap(TempoEstimator.estimate(envelope: pulsedEnvelope(bpm: 180, seconds: 20), framesPerSecond: fps))
+        XCTAssertEqual(veryFast.bpm, 90, accuracy: 3, "180 BPM should read as its 90 BPM octave")
     }
 
     /// The weight is what does that, so pin its shape independently of the estimator.
