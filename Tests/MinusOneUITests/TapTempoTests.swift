@@ -44,13 +44,27 @@ final class TapTempoTests: XCTestCase {
     }
 
     /// Only the recent taps count, so a drifting tempo follows the hand rather than its history.
-    func testItKeepsOnlyTheRecentTaps() {
+    ///
+    /// Asserted through the tempo rather than through `tapCount`: a count alone cannot tell which
+    /// taps survived the trim, so it would pass just as happily if the *oldest* taps were the ones
+    /// kept — the exact inversion of what this test is named for.
+    func testItKeepsOnlyTheRecentTaps() throws {
         var tap = TapTempo(maximumTaps: 4)
+        // Six taps at 120 BPM...
         var time = 0.0
-        for _ in 0..<10 {
+        for _ in 0..<6 {
             _ = tap.tap(at: time)
             time += 0.5
         }
+        // ...then four at 240, which is all the window should be able to see by the end.
+        time = 2.75
+        var bpm: Double?
+        for _ in 0..<4 {
+            bpm = tap.tap(at: time)
+            time += 0.25
+        }
+        XCTAssertEqual(try XCTUnwrap(bpm), 240, accuracy: 0.001,
+                       "the tempo still reflects the older, slower taps")
         XCTAssertLessThanOrEqual(tap.tapCount, 4)
     }
 
