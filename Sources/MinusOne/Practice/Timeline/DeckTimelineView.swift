@@ -40,6 +40,15 @@ final class DeckTimelineView: NSView {
         set { overlay.loopRange = newValue }
     }
 
+    /// The musical grid, or `nil` when none was detected confidently. Propagated to the ruler and
+    /// used to snap loop edges.
+    var beatGrid: BeatGrid? {
+        didSet {
+            guard beatGrid != oldValue else { return }
+            ruler.beatGrid = beatGrid
+        }
+    }
+
     private var peakStore: PeakStore?
     private var clipDuration: Double = 1
 
@@ -291,13 +300,13 @@ final class DeckTimelineView: NSView {
         loopBeforeDrag = overlay.loopRange
     }
 
-    func continueCanvasDrag(toX x: CGFloat) {
+    func continueCanvasDrag(toX x: CGFloat, bypassSnapping: Bool = false) {
         guard let dragStartX, abs(x - dragStartX) >= Self.dragThreshold else { return }
-        // Previewed, not committed: the engine hears about it once, on mouse up.
-        overlay.loopRange = range(from: dragStartX, to: x)
+        // Previewed already snapped, so the band does not jump on mouse-up.
+        overlay.loopRange = range(from: dragStartX, to: x, bypassSnapping: bypassSnapping)
     }
 
-    func endCanvasDrag(atX x: CGFloat) {
+    func endCanvasDrag(atX x: CGFloat, bypassSnapping: Bool = false) {
         guard let start = dragStartX else { return }
         dragStartX = nil
 
@@ -308,7 +317,7 @@ final class DeckTimelineView: NSView {
             if time <= readyDuration { onSeek?(time) }
             return
         }
-        let loop = range(from: start, to: x)
+        let loop = range(from: start, to: x, bypassSnapping: bypassSnapping)
         overlay.loopRange = loop
         onLoopRangeChanged?(loop)
     }
@@ -325,10 +334,15 @@ final class DeckTimelineView: NSView {
         viewport.time(forX: min(max(0, x), max(0, canvasWidth)))
     }
 
-    private func range(from startX: CGFloat, to endX: CGFloat) -> ClosedRange<Double> {
+    private func range(from startX: CGFloat, to endX: CGFloat, bypassSnapping: Bool) -> ClosedRange<Double> {
         let a = canvasTime(forX: min(startX, endX))
         let b = canvasTime(forX: max(startX, endX))
-        return min(a, b)...max(a, b)
+        guard let beatGrid, !bypassSnapping else { return min(a, b)...max(a, b) }
+        // Snapped after clamping, never before: `canvasTime` is what guarantees both ends are
+        // inside the clip, and a beat just outside it would undo that.
+        let lower = min(max(0, beatGrid.nearestBeat(to: a)), viewport.clipDuration)
+        let upper = min(max(0, beatGrid.nearestBeat(to: b)), viewport.clipDuration)
+        return min(lower, upper)...max(lower, upper)
     }
 
     // MARK: - Events
@@ -360,12 +374,19 @@ final class DeckTimelineView: NSView {
 
     override func mouseDragged(with event: NSEvent) {
         // Not gated on the canvas column: a drag that starts on a lane and wanders over the
-        // headers is still that drag.
-        continueCanvasDrag(toX: rawCanvasX(forWindowPoint: event.locationInWindow))
+        // headers is still that drag. The modifier is read live, not latched at drag start, so
+        // pressing or releasing ⌥ mid-drag takes effect immediately.
+        continueCanvasDrag(
+            toX: rawCanvasX(forWindowPoint: event.locationInWindow),
+            bypassSnapping: event.modifierFlags.contains(.option)
+        )
     }
 
     override func mouseUp(with event: NSEvent) {
-        endCanvasDrag(atX: rawCanvasX(forWindowPoint: event.locationInWindow))
+        endCanvasDrag(
+            atX: rawCanvasX(forWindowPoint: event.locationInWindow),
+            bypassSnapping: event.modifierFlags.contains(.option)
+        )
     }
 
     override func mouseMoved(with event: NSEvent) {
