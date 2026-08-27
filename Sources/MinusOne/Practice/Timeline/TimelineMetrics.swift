@@ -23,6 +23,10 @@ enum TimelineMetrics {
     /// built on this number.
     static let headerWidth: CGFloat = 132
     static let rulerHeight: CGFloat = 22
+
+    /// The tempo row above the ruler. Spec §8 budgeted 38pt for it; Phase 2 left the space unused
+    /// because there was no grid to control yet.
+    static let toolbarHeight: CGFloat = 38
     static let scrollIndicatorHeight: CGFloat = 12
 
     /// The peak envelope is drawn at this alpha with a solid RMS core inside it — Audacity's
