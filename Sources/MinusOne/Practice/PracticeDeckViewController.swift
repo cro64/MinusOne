@@ -212,6 +212,16 @@ final class PracticeDeckViewController: NSViewController, NSTextFieldDelegate {
         playbackEngine.onPlaybackFinished = { [weak self] in
             self?.showPlayGlyph(true)
         }
+        timeline.onBeatGridEdited = { [weak self] grid in
+            guard let self, var clip = self.clip else { return }
+            clip.bpm = grid.bpm
+            clip.downbeatOffsetSeconds = grid.downbeatOffsetSeconds
+            // Spec §6: an explicit flag, never a magic confidence value. Detection reads this and
+            // will not run on, nor overwrite, a grid the user set.
+            clip.isBeatGridUserSet = true
+            self.clip = clip
+            self.libraryStore.update(clip)
+        }
     }
 
     // MARK: - Clip lifecycle
@@ -225,6 +235,7 @@ final class PracticeDeckViewController: NSViewController, NSTextFieldDelegate {
 
         let store = PeakStore(peaksFolder: libraryStore.peaksFolder(forClipID: clip.id))
         timeline.show(clipDuration: clip.durationSeconds, peakStore: store)
+        applyBeatGrid(from: clip)
         updateTimelineHeight()
         backfillPeaksIfNeeded(for: clip)
 
@@ -260,6 +271,18 @@ final class PracticeDeckViewController: NSViewController, NSTextFieldDelegate {
                 self.updateTimelineHeight()
             }
         }
+    }
+
+    /// Builds the timeline's grid from what the clip stores, or clears it when there is none.
+    ///
+    /// A clip carries `bpm` only when detection cleared the confidence threshold or the user set it
+    /// by hand, so `nil` here is the honest "no grid" state spec §6 requires — not a default.
+    private func applyBeatGrid(from clip: PracticeClip) {
+        guard let bpm = clip.bpm else {
+            timeline.beatGrid = nil
+            return
+        }
+        timeline.beatGrid = BeatGrid(bpm: bpm, downbeatOffsetSeconds: clip.downbeatOffsetSeconds ?? 0)
     }
 
     /// Drops the loop when the deck moves to a different clip.
@@ -299,6 +322,7 @@ final class PracticeDeckViewController: NSViewController, NSTextFieldDelegate {
         // Separation has appended to the sidecars. The lane set may grow; the viewport must not
         // move — spec §7.
         timeline.refreshPeaks()
+        applyBeatGrid(from: updated)
         updateTimelineHeight()
 
         if !isEngineLoaded {

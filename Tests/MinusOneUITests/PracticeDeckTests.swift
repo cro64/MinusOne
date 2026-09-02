@@ -238,4 +238,63 @@ final class PracticeDeckTests: XCTestCase {
             try file.write(from: buffer)
         }
     }
+
+    func testAClipWithADetectedGridShowsIt() throws {
+        var clip = try makeClip(withStemSidecars: true)
+        clip.bpm = 128
+        clip.downbeatOffsetSeconds = 0.75
+        clip.beatConfidence = 9
+        libraryStore.update(clip)
+
+        let controller = deck()
+        controller.show(clip: clip)
+        controller.view.layoutSubtreeIfNeeded()
+
+        let grid = try XCTUnwrap(controller.timelineForTesting.beatGrid)
+        XCTAssertEqual(grid.bpm, 128, accuracy: 0.001)
+        XCTAssertEqual(grid.downbeatOffsetSeconds, 0.75, accuracy: 0.001)
+    }
+
+    /// Spec §6: below the threshold the grid is suppressed, so a clip with no stored tempo shows
+    /// the clock ruler and an empty field.
+    func testAClipWithNoGridShowsNone() throws {
+        let clip = try makeClip(withStemSidecars: true)
+        let controller = deck()
+        controller.show(clip: clip)
+        XCTAssertNil(controller.timelineForTesting.beatGrid)
+        XCTAssertTrue(controller.timelineForTesting.toolbarForTesting.displayedBPMForTesting.isEmpty)
+    }
+
+    /// The rule the whole `isBeatGridUserSet` boolean exists for.
+    func testEditingTheTempoPersistsItAsAUserSetGrid() throws {
+        var clip = try makeClip(withStemSidecars: true)
+        clip.bpm = 128
+        clip.downbeatOffsetSeconds = 0.5
+        libraryStore.update(clip)
+
+        let controller = deck()
+        controller.show(clip: clip)
+        controller.view.layoutSubtreeIfNeeded()
+        controller.timelineForTesting.toolbarForTesting.commitBPMForTesting("96")
+
+        let stored = try XCTUnwrap(libraryStore.clip(withID: clip.id))
+        XCTAssertEqual(try XCTUnwrap(stored.bpm), 96, accuracy: 0.001)
+        XCTAssertTrue(stored.isBeatGridUserSet, "a hand-set tempo was not marked as user-set")
+    }
+
+    /// A grid must not follow the user to the next clip — each clip has its own.
+    func testTheGridIsReplacedOnAClipSwitch() throws {
+        var first = try makeClip(withStemSidecars: true)
+        first.bpm = 128
+        first.downbeatOffsetSeconds = 0.5
+        libraryStore.update(first)
+        let second = try makeClip(withStemSidecars: true)
+
+        let controller = deck()
+        controller.show(clip: first)
+        XCTAssertNotNil(controller.timelineForTesting.beatGrid)
+
+        controller.show(clip: second)
+        XCTAssertNil(controller.timelineForTesting.beatGrid, "the previous clip's grid survived the switch")
+    }
 }
