@@ -73,4 +73,59 @@ final class BeatGridTests: XCTestCase {
         XCTAssertTrue(grid.beatTimes(from: 3, to: 3).isEmpty)
         XCTAssertTrue(grid.beatTimes(from: 5, to: 2).isEmpty)
     }
+
+    /// A tempo the detector can actually return, and the reason every 120 BPM fixture above is
+    /// blind to the defect these three pin. 126.048… BPM is autocorrelation lag 41 at the STFT's
+    /// 86.1328125 frames/second and 0.7314… s is frame 63 on the same grid, so neither
+    /// `beatDuration` nor the offset is exactly representable in binary and
+    /// `(time(beatIndex: i) - offset) / beatDuration` lands at `i - ε`, which floors to `i - 1`.
+    /// Measured before the fix: 4 of the first 40 indices round-tripped wrong (i = 1, 2, 35, 39).
+    /// On screen that is two full-height ticks both labelled "1" and bar lines missing elsewhere.
+    private var irrationalGrid: BeatGrid {
+        BeatGrid(bpm: 126.04801829268293, downbeatOffsetSeconds: 0.7314285714285714)
+    }
+
+    func testTheBeatIndexRoundTripIsExactAtATempoThatIsNotBinaryExact() {
+        let grid = irrationalGrid
+        for index in -20...200 {
+            let time = grid.time(beatIndex: index)
+            let bar = Int((Double(index) / 4).rounded(.down)) + 1
+            var beat = index % 4
+            if beat < 0 { beat += 4 }
+            XCTAssertEqual(grid.position(at: time), BeatGrid.Position(bar: bar, beat: beat + 1),
+                           "beat index \(index) at \(time) did not round-trip")
+        }
+    }
+
+    /// What `TimelineRulerView.barLabels()` depends on: every downbeat the grid reports must be
+    /// classified as beat 1, and consecutive downbeats must be exactly one bar apart. Before the
+    /// fix this range produced duplicate bar numbers and missing bar lines.
+    func testDownbeatTimesAreOneBarApartAtANonBinaryTempo() throws {
+        let grid = irrationalGrid
+        let downbeats = grid.downbeatTimes(from: 0, to: 120)
+        XCTAssertFalse(downbeats.isEmpty)
+        for time in downbeats {
+            XCTAssertEqual(grid.position(at: time).beat, 1, "downbeat at \(time) was not beat 1")
+        }
+        let bars = try downbeats.map { grid.position(at: $0).bar }
+        let firstBar = try XCTUnwrap(bars.first)
+        XCTAssertEqual(bars, Array(firstBar...(firstBar + bars.count - 1)),
+                       "bar numbers are not consecutive: \(bars)")
+        for index in 1..<downbeats.count {
+            XCTAssertEqual(downbeats[index] - downbeats[index - 1], grid.barDuration, accuracy: 1e-9,
+                           "downbeats \(index - 1) and \(index) are not one bar apart")
+        }
+    }
+
+    /// The range edges carry the same rounding hazard: a `start` that *is* a beat must be included
+    /// rather than rounded up past itself, and likewise an `end`.
+    func testBeatTimesIncludeRangeEndsThatAreThemselvesBeats() throws {
+        let grid = irrationalGrid
+        let first = grid.time(beatIndex: 10)
+        let last = grid.time(beatIndex: 20)
+        let beats = grid.beatTimes(from: first, to: last)
+        XCTAssertEqual(beats.count, 11, "dropped a beat at one of the range ends")
+        XCTAssertEqual(try XCTUnwrap(beats.first), first, accuracy: 1e-12)
+        XCTAssertEqual(try XCTUnwrap(beats.last), last, accuracy: 1e-12)
+    }
 }

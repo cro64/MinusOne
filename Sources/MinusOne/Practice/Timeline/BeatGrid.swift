@@ -31,9 +31,30 @@ struct BeatGrid: Equatable {
     var beatDuration: Double { 60 / bpm }
     var barDuration: Double { beatDuration * Double(beatsPerBar) }
 
+    /// How much floating-point slack, measured in beats, every flooring and ceiling in this type
+    /// allows before it decides a time is past a beat boundary.
+    ///
+    /// Without it the round trip is not exact. `beatDuration` is `60 / bpm`, which is only exactly
+    /// representable for a handful of tempi (120 BPM is one, which is why every 120 BPM fixture in
+    /// the suite was blind to this), so `(time(beatIndex: i) - downbeatOffsetSeconds) /
+    /// beatDuration` regularly evaluates to `i - ε` and floors to `i - 1`. At the detector's own
+    /// output — 126.048… BPM, offset 0.7314… s — that mislabels 4 of the first 40 beats, which the
+    /// ruler draws as two adjacent full-height ticks both numbered "1" with bar lines missing
+    /// elsewhere.
+    ///
+    /// 1e-9 beats is under a nanosecond at any tempo this grid accepts, so it can never absorb a
+    /// real time difference; and it is far larger than the accumulated error, whose worst case is
+    /// a few ulps of the quotient (~1.5e-11 beats even at 400 BPM three hours into a clip).
+    private static let beatEpsilon = 1e-9
+
+    /// Fractional beat position relative to the first downbeat: 0 at the downbeat, negative before.
+    private func rawBeatPosition(at time: Double) -> Double {
+        (time - downbeatOffsetSeconds) / beatDuration
+    }
+
     /// Beat index relative to the first downbeat: 0 at the downbeat, negative before it.
     private func beatIndex(at time: Double) -> Int {
-        Int(((time - downbeatOffsetSeconds) / beatDuration).rounded(.down))
+        Int((rawBeatPosition(at: time) + Self.beatEpsilon).rounded(.down))
     }
 
     func time(beatIndex index: Int) -> Double {
@@ -54,16 +75,32 @@ struct BeatGrid: Equatable {
         time(beatIndex: (bar - 1) * beatsPerBar + (beat - 1))
     }
 
-    func beatTimes(from start: Double, to end: Double) -> [Double] {
-        guard end > start, beatDuration > 0 else { return [] }
-        let first = Int((((start - downbeatOffsetSeconds) / beatDuration)).rounded(.up))
-        let last = Int((((end - downbeatOffsetSeconds) / beatDuration)).rounded(.down))
-        guard last >= first else { return [] }
-        return (first...last).map(time(beatIndex:))
+    /// The beat indices whose times fall inside the range, or `nil` when none do.
+    ///
+    /// Both range generators go through this so they cannot disagree about which beats exist, and
+    /// so `downbeatTimes` never has to re-derive a beat number from a time it just produced.
+    private func beatIndices(from start: Double, to end: Double) -> ClosedRange<Int>? {
+        guard end > start, beatDuration > 0 else { return nil }
+        // The same epsilon as `beatIndex(at:)`, in the direction each end rounds: a `start` that is
+        // itself a beat must be included rather than rounded up past itself, and likewise an `end`.
+        let first = Int((rawBeatPosition(at: start) - Self.beatEpsilon).rounded(.up))
+        let last = Int((rawBeatPosition(at: end) + Self.beatEpsilon).rounded(.down))
+        guard last >= first else { return nil }
+        return first...last
     }
 
+    func beatTimes(from start: Double, to end: Double) -> [Double] {
+        guard let indices = beatIndices(from: start, to: end) else { return [] }
+        return indices.map(time(beatIndex:))
+    }
+
+    /// Filtered on the beat index directly rather than by round-tripping each generated time back
+    /// through `position(at:)`. Belt and braces with the epsilon in `beatIndex(at:)`: even if a
+    /// future change to the arithmetic reintroduced a rounding error, a downbeat here is one by
+    /// construction — `index` is a multiple of `beatsPerBar` — rather than by measurement.
     func downbeatTimes(from start: Double, to end: Double) -> [Double] {
-        beatTimes(from: start, to: end).filter { position(at: $0).beat == 1 }
+        guard let indices = beatIndices(from: start, to: end) else { return [] }
+        return indices.filter { $0 % beatsPerBar == 0 }.map(time(beatIndex:))
     }
 
     /// The closest beat, not the preceding one — loop edges snap to whichever side is nearer.

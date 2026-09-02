@@ -73,6 +73,53 @@ final class BeatRulerTests: XCTestCase {
         XCTAssertFalse(inLabels.isEmpty)
     }
 
+    /// The ordinary pickup-bar configuration, and the one the 120 BPM fixtures above cannot see:
+    /// a tempo whose beat duration is not exactly representable in binary, a nonzero downbeat
+    /// offset, and a visible range that starts before bar 1 so the labels cross bar 0. Every
+    /// labelled time must be a real downbeat, its bar number must match `position(at:)`, and the
+    /// numbers must ascend by exactly the stride with no repeats. Before the fix this produced
+    /// two ticks both labelled the same bar and gaps where bar lines went missing.
+    func testBarLabelsStayConsecutiveAtAStrideAcrossBarZero() throws {
+        let grid = BeatGrid(bpm: 126.04801829268293, downbeatOffsetSeconds: 0.7314285714285714)
+        let view = ruler(clipDuration: 240, grid: grid)
+        let pixelsPerBar = CGFloat(grid.barDuration) * view.viewport.pixelsPerSecond
+        let stride = TimelineRulerView.barStride(pixelsPerBar: pixelsPerBar)
+        XCTAssertGreaterThan(stride, 1, "fixture no longer exercises a stride > 1")
+        XCTAssertLessThan(view.viewport.startTime, grid.downbeatOffsetSeconds,
+                          "fixture no longer starts before bar 1")
+
+        let labels = view.barLabels()
+        XCTAssertFalse(labels.isEmpty)
+        for label in labels {
+            XCTAssertEqual(grid.position(at: label.time).beat, 1,
+                           "labelled \(label.time), which is not a downbeat")
+            XCTAssertEqual(grid.position(at: label.time).bar, label.bar)
+        }
+        for index in 1..<labels.count {
+            XCTAssertEqual(labels[index].bar - labels[index - 1].bar, stride,
+                           "bar numbers \(labels.map(\.bar)) do not ascend by the stride \(stride)")
+        }
+    }
+
+    /// Musicians count phrases from 1, 5, 9 — not 2, 4, 8. `bar % stride == 0` labelled the wrong
+    /// members of the sequence entirely once the stride grew past 1.
+    func testStridedBarLabelsStartAtBarOneRatherThanTheStride() {
+        let grid = BeatGrid(bpm: 120, downbeatOffsetSeconds: 0)
+        let view = ruler(clipDuration: 600, grid: grid)
+        let stride = TimelineRulerView.barStride(
+            pixelsPerBar: CGFloat(grid.barDuration) * view.viewport.pixelsPerSecond
+        )
+        XCTAssertGreaterThan(stride, 1)
+
+        let bars = view.barLabels().map(\.bar)
+        XCTAssertFalse(bars.isEmpty)
+        for bar in bars {
+            XCTAssertEqual((bar - 1) % stride, 0,
+                           "labelled bar \(bar), which is not 1 + a multiple of the stride \(stride)")
+        }
+        XCTAssertTrue(bars.contains(1), "bar 1 was never labelled at stride \(stride): \(bars)")
+    }
+
     func testTheStrideGrowsAsBarsGetNarrower() {
         XCTAssertEqual(TimelineRulerView.barStride(pixelsPerBar: 200), 1)
         XCTAssertGreaterThan(TimelineRulerView.barStride(pixelsPerBar: 10), TimelineRulerView.barStride(pixelsPerBar: 100))

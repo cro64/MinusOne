@@ -120,9 +120,14 @@ final class TimelineRulerView: NSView {
         guard let beatGrid, bounds.width > 0 else { return [] }
         let pixelsPerBar = CGFloat(beatGrid.barDuration) * viewport.pixelsPerSecond
         let stride = Self.barStride(pixelsPerBar: pixelsPerBar)
+        // `(bar - 1) % stride`, not `bar % stride`: bars are 1-based, so the latter labels 2, 4, 8
+        // and never bar 1, where musicians count phrases from 1, 5, 9. (The old `|| stride == 1`
+        // disjunct was dead — `x % 1` is always 0 — and hid nothing.) The modulo is floored so the
+        // sequence stays on the same phase through bar 0 and below, where a clip with a pickup
+        // starts.
         return beatGrid.downbeatTimes(from: viewport.startTime, to: viewport.endTime)
             .map { (time: $0, bar: beatGrid.position(at: $0).bar) }
-            .filter { $0.bar % stride == 0 || stride == 1 }
+            .filter { (($0.bar - 1) % stride + stride) % stride == 0 }
     }
 
     override func draw(_ dirtyRect: NSRect) {
