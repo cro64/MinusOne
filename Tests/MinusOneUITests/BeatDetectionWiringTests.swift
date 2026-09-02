@@ -147,4 +147,35 @@ final class BeatDetectionWiringTests: XCTestCase {
         let updated = engine().detectBeatGrid(for: clip)
         XCTAssertNil(updated.bpm, "a low-confidence detection was written anyway")
     }
+
+    /// Spec §6, reached through the separation flush path this time rather than `detectBeatGrid`
+    /// directly: `workingClip` is a snapshot taken before separation began, so if the user sets a
+    /// tempo mid-separation the *store* holds their edit while the snapshot still doesn't know
+    /// about it. Persisting the stale snapshot as-is would silently discard that edit.
+    func testItRefreshesTheBeatGridFromTheStoreBeforePersisting() throws {
+        let clip = try clipWithDrums(bpm: 120)
+
+        // The store holds a user-set grid — as if the user had edited the tempo mid-separation.
+        var userSet = clip
+        userSet.bpm = 140
+        userSet.downbeatOffsetSeconds = 0.33
+        userSet.beatConfidence = 8
+        userSet.isBeatGridUserSet = true
+        libraryStore.update(userSet)
+
+        // `workingClip` is the pre-edit snapshot: no tempo, not user-set.
+        var staleSnapshot = clip
+        staleSnapshot.bpm = nil
+        staleSnapshot.isBeatGridUserSet = false
+
+        let merged = engine().withCurrentBeatGrid(staleSnapshot)
+
+        XCTAssertEqual(merged.bpm, 140, "the store's user-set tempo was discarded")
+        XCTAssertEqual(merged.downbeatOffsetSeconds, 0.33)
+        XCTAssertEqual(merged.beatConfidence, 8)
+        XCTAssertTrue(merged.isBeatGridUserSet, "a hand-set grid must not be reported as undetected")
+        // Everything else stays the snapshot's own — this only refreshes the four beat-grid fields.
+        XCTAssertEqual(merged.id, staleSnapshot.id)
+        XCTAssertEqual(merged.stemFileNames, staleSnapshot.stemFileNames)
+    }
 }
