@@ -18,6 +18,10 @@ final class DeckTimelineView: NSView {
     var onStemSoloToggled: ((SeparationStem) -> Void)?
     var onStemExportRequested: ((SeparationStem) -> Void)?
 
+    /// Fired when the user sets the grid by hand — an edited tempo or a dragged downbeat. The deck
+    /// persists it and sets `isBeatGridUserSet`, which stops detection ever overwriting it.
+    var onBeatGridEdited: ((BeatGrid) -> Void)?
+
     /// Supplies each stem's current mixer state so a rebuilt lane header shows it.
     ///
     /// `StemMixerController` outlives any one clip — `PracticePlaybackEngine.tearDown()` does not
@@ -40,24 +44,42 @@ final class DeckTimelineView: NSView {
         set { overlay.loopRange = newValue }
     }
 
+    /// The musical grid, or `nil` when none was detected confidently. Propagated to the ruler and
+    /// used to snap loop edges.
+    var beatGrid: BeatGrid? {
+        didSet {
+            guard beatGrid != oldValue else { return }
+            ruler.beatGrid = beatGrid
+            toolbar.setBPM(beatGrid?.bpm)
+        }
+    }
+
     private var peakStore: PeakStore?
     private var clipDuration: Double = 1
 
     private let ruler = TimelineRulerView()
     private let overlay = PlayheadOverlayView()
     private let indicator = TimelineScrollIndicatorView()
+    private let toolbar = TimelineToolbarView()
     private var lanes: [StemLaneView] = []
     private var headers: [SeparationStem: LaneHeaderView] = [:]
     private var headerViews: [NSView] = []
 
     private var dragStartX: CGFloat?
     private var loopBeforeDrag: ClosedRange<Double>?
+    private var downbeatDragOffset: Double?
+    /// The grid as it stood when the marker was grabbed, so a click that never moves it can be
+    /// told from a drag that did.
+    private var gridBeforeDownbeatDrag: BeatGrid?
+    private var tapTempo = TapTempo()
 
     init() {
         viewport = Viewport(clipDuration: 1, widthPoints: 0)
         super.init(frame: .zero)
         wantsLayer = true
         addSubview(ruler)
+        addSubview(toolbar)
+        toolbar.translatesAutoresizingMaskIntoConstraints = true
         addSubview(indicator)
         // Last, so it composites over the lanes. It returns `nil` from `hitTest`, so being on top
         // costs nothing in events.
@@ -66,6 +88,25 @@ final class DeckTimelineView: NSView {
         indicator.onScrubToStartTime = { [weak self] time in
             guard let self else { return }
             self.apply(self.viewport.scrolled(toStartTime: time))
+        }
+
+        toolbar.onBPMEdited = { [weak self] bpm in
+            guard let self else { return }
+            let grid = BeatGrid(bpm: bpm, downbeatOffsetSeconds: self.beatGrid?.downbeatOffsetSeconds ?? 0)
+            self.beatGrid = grid
+            self.onBeatGridEdited?(grid)
+        }
+        toolbar.onTapped = { [weak self] in
+            guard let self, let bpm = self.tapTempo.tap(at: Date().timeIntervalSinceReferenceDate) else { return }
+            let grid = BeatGrid(bpm: bpm, downbeatOffsetSeconds: self.beatGrid?.downbeatOffsetSeconds ?? 0)
+            self.beatGrid = grid
+            // `grid.bpm`, not the raw tap result: `BeatGrid.init` clamps to 1...400, and two taps
+            // 120ms apart imply 500. Showing the raw number leaves the field disagreeing with the
+            // grid, the ruler and the persisted clip — and stickily so, because `setBPM` records it
+            // as the last accepted value and the toolbar then rejects a re-Enter of it as outside
+            // its own 20...400, restoring the wrong number.
+            self.toolbar.setBPM(grid.bpm)
+            self.onBeatGridEdited?(grid)
         }
     }
 
@@ -76,10 +117,12 @@ final class DeckTimelineView: NSView {
 
     override var isFlipped: Bool { true }
 
-    /// Ruler + lanes + indicator, with `laneSpacing` between every block.
+    /// Toolbar + ruler + lanes + indicator, with `laneSpacing` between every block.
     static func height(forLaneCount count: Int) -> CGFloat {
         let lanes = CGFloat(count) * TimelineMetrics.laneHeight + CGFloat(max(0, count - 1)) * TimelineMetrics.laneSpacing
-        return TimelineMetrics.rulerHeight
+        return TimelineMetrics.toolbarHeight
+            + TimelineMetrics.laneSpacing
+            + TimelineMetrics.rulerHeight
             + TimelineMetrics.laneSpacing
             + lanes
             + TimelineMetrics.laneSpacing
@@ -233,9 +276,11 @@ final class DeckTimelineView: NSView {
         let canvasX = TimelineMetrics.headerWidth
         let width = canvasWidth
 
-        ruler.frame = NSRect(x: canvasX, y: 0, width: width, height: TimelineMetrics.rulerHeight)
+        toolbar.frame = NSRect(x: canvasX, y: 0, width: width, height: TimelineMetrics.toolbarHeight)
+        let rulerY = TimelineMetrics.toolbarHeight + TimelineMetrics.laneSpacing
+        ruler.frame = NSRect(x: canvasX, y: rulerY, width: width, height: TimelineMetrics.rulerHeight)
 
-        var y = TimelineMetrics.rulerHeight + TimelineMetrics.laneSpacing
+        var y = rulerY + TimelineMetrics.rulerHeight + TimelineMetrics.laneSpacing
         for (index, lane) in lanes.enumerated() {
             lane.frame = NSRect(x: canvasX, y: y, width: width, height: TimelineMetrics.laneHeight)
             if index < headerViews.count {
@@ -245,8 +290,9 @@ final class DeckTimelineView: NSView {
         }
 
         // From the top of the ruler to the bottom of the last lane: one band, all four lanes, so
-        // the loop cannot read as lane-local state.
-        overlay.frame = NSRect(x: canvasX, y: 0, width: width, height: max(0, y - TimelineMetrics.laneSpacing))
+        // the loop cannot read as lane-local state. The toolbar is not included — it is not part
+        // of the loop gesture's surface.
+        overlay.frame = NSRect(x: canvasX, y: rulerY, width: width, height: max(0, y - TimelineMetrics.laneSpacing - rulerY))
         indicator.frame = NSRect(x: canvasX, y: y, width: width, height: TimelineMetrics.scrollIndicatorHeight)
 
         // A resize changes pixels per second, never the visible seconds.
@@ -291,13 +337,13 @@ final class DeckTimelineView: NSView {
         loopBeforeDrag = overlay.loopRange
     }
 
-    func continueCanvasDrag(toX x: CGFloat) {
+    func continueCanvasDrag(toX x: CGFloat, bypassSnapping: Bool = false) {
         guard let dragStartX, abs(x - dragStartX) >= Self.dragThreshold else { return }
-        // Previewed, not committed: the engine hears about it once, on mouse up.
-        overlay.loopRange = range(from: dragStartX, to: x)
+        // Previewed already snapped, so the band does not jump on mouse-up.
+        overlay.loopRange = range(from: dragStartX, to: x, bypassSnapping: bypassSnapping)
     }
 
-    func endCanvasDrag(atX x: CGFloat) {
+    func endCanvasDrag(atX x: CGFloat, bypassSnapping: Bool = false) {
         guard let start = dragStartX else { return }
         dragStartX = nil
 
@@ -308,7 +354,7 @@ final class DeckTimelineView: NSView {
             if time <= readyDuration { onSeek?(time) }
             return
         }
-        let loop = range(from: start, to: x)
+        let loop = range(from: start, to: x, bypassSnapping: bypassSnapping)
         overlay.loopRange = loop
         onLoopRangeChanged?(loop)
     }
@@ -325,10 +371,69 @@ final class DeckTimelineView: NSView {
         viewport.time(forX: min(max(0, x), max(0, canvasWidth)))
     }
 
-    private func range(from startX: CGFloat, to endX: CGFloat) -> ClosedRange<Double> {
+    private func range(from startX: CGFloat, to endX: CGFloat, bypassSnapping: Bool) -> ClosedRange<Double> {
         let a = canvasTime(forX: min(startX, endX))
         let b = canvasTime(forX: max(startX, endX))
-        return min(a, b)...max(a, b)
+        guard let beatGrid, !bypassSnapping else { return min(a, b)...max(a, b) }
+        // Snapped after clamping, never before: `canvasTime` is what guarantees both ends are
+        // inside the clip, and a beat just outside it would undo that.
+        let lower = min(max(0, beatGrid.nearestBeat(to: a)), viewport.clipDuration)
+        let upper = min(max(0, beatGrid.nearestBeat(to: b)), viewport.clipDuration)
+        guard lower != upper else {
+            // A drag entirely inside one beat snaps both edges to the same instant. Snapping must
+            // never produce that: `PracticePlaybackEngine.tick()` seeks back to `lowerBound` the
+            // moment `time >= upperBound`, so a zero-length loop re-seeks — and reschedules every
+            // player — on every timer tick, stalling playback with no way out but clearing the
+            // loop. Extend to a one-beat loop instead of falling back to an off-grid sliver: the
+            // whole point of snapping is that both edges land on beats.
+            let beatDuration = beatGrid.beatDuration
+            if lower + beatDuration <= viewport.clipDuration {
+                return lower...(lower + beatDuration)
+            } else if upper - beatDuration >= 0 {
+                return (upper - beatDuration)...upper
+            } else {
+                // The clip itself is shorter than one beat, so neither direction fits. A
+                // degenerate clip should not produce a degenerate loop: fall back to the
+                // unsnapped, already-clamped range.
+                return min(a, b)...max(a, b)
+            }
+        }
+        return min(lower, upper)...max(lower, upper)
+    }
+
+    // MARK: - Downbeat drag
+
+    /// Grabs the downbeat marker if the pointer is on it. Returns false when there is no grid or
+    /// the pointer is elsewhere, so the caller can fall through to the loop gesture.
+    func beginDownbeatDrag(atX x: CGFloat) -> Bool {
+        guard let beatGrid else { return false }
+        let markerX = viewport.x(forTime: beatGrid.downbeatOffsetSeconds)
+        guard abs(x - markerX) <= TimelineRulerView.downbeatGrabRadius else { return false }
+        downbeatDragOffset = beatGrid.downbeatOffsetSeconds - canvasTime(forX: x)
+        gridBeforeDownbeatDrag = beatGrid
+        return true
+    }
+
+    func continueDownbeatDrag(toX x: CGFloat) {
+        guard let downbeatDragOffset, let current = beatGrid else { return }
+        beatGrid = BeatGrid(
+            bpm: current.bpm,
+            downbeatOffsetSeconds: max(0, canvasTime(forX: x) + downbeatDragOffset),
+            beatsPerBar: current.beatsPerBar
+        )
+    }
+
+    func endDownbeatDrag() {
+        guard downbeatDragOffset != nil else { return }
+        downbeatDragOffset = nil
+        let before = gridBeforeDownbeatDrag
+        gridBeforeDownbeatDrag = nil
+        // Only when the grid actually moved. Reporting unconditionally makes a stray click on the
+        // marker an "edit", and the deck answers an edit by setting `isBeatGridUserSet` — which
+        // permanently blocks re-detection for that clip. A click is not a decision to hand-set the
+        // grid forever.
+        guard let beatGrid, beatGrid != before else { return }
+        onBeatGridEdited?(beatGrid)
     }
 
     // MARK: - Events
@@ -355,17 +460,39 @@ final class DeckTimelineView: NSView {
 
     override func mouseDown(with event: NSEvent) {
         guard let x = canvasX(forWindowPoint: event.locationInWindow) else { return }
+        // The marker wins over the loop gesture when the pointer is on it — it is a much smaller
+        // target, so a grab that lands on it was almost certainly meant for it.
+        if isPointInRuler(event.locationInWindow), beginDownbeatDrag(atX: x) { return }
         beginCanvasDrag(atX: x)
     }
 
+    private func isPointInRuler(_ windowPoint: NSPoint) -> Bool {
+        ruler.frame.contains(convert(windowPoint, from: nil))
+    }
+
     override func mouseDragged(with event: NSEvent) {
+        if downbeatDragOffset != nil {
+            continueDownbeatDrag(toX: rawCanvasX(forWindowPoint: event.locationInWindow))
+            return
+        }
         // Not gated on the canvas column: a drag that starts on a lane and wanders over the
-        // headers is still that drag.
-        continueCanvasDrag(toX: rawCanvasX(forWindowPoint: event.locationInWindow))
+        // headers is still that drag. The modifier is read live, not latched at drag start, so
+        // pressing or releasing ⌥ mid-drag takes effect immediately.
+        continueCanvasDrag(
+            toX: rawCanvasX(forWindowPoint: event.locationInWindow),
+            bypassSnapping: event.modifierFlags.contains(.option)
+        )
     }
 
     override func mouseUp(with event: NSEvent) {
-        endCanvasDrag(atX: rawCanvasX(forWindowPoint: event.locationInWindow))
+        if downbeatDragOffset != nil {
+            endDownbeatDrag()
+            return
+        }
+        endCanvasDrag(
+            atX: rawCanvasX(forWindowPoint: event.locationInWindow),
+            bypassSnapping: event.modifierFlags.contains(.option)
+        )
     }
 
     override func mouseMoved(with event: NSEvent) {
@@ -394,4 +521,5 @@ final class DeckTimelineView: NSView {
     var laneRenderCountsForTesting: [Int] { lanes.map(\.renderCount) }
     var hoverTimeForTesting: Double? { overlay.hoverTime }
     var headersForTesting: [SeparationStem: LaneHeaderView] { headers }
+    var toolbarForTesting: TimelineToolbarView { toolbar }
 }

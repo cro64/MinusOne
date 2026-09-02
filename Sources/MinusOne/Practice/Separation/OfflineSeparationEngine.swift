@@ -211,6 +211,11 @@ final class OfflineSeparationEngine {
                 workingClip.readyDurationSeconds = Double(flushedFrames) / modelSampleRate
                 workingClip.stemFileNames = fileNames
                 workingClip.peakFileNames = peakFileNames
+                // Spec §6: the user can set a tempo or drag the downbeat at any point during
+                // separation. `workingClip` is a snapshot from before separation began, so without
+                // this it would silently overwrite that edit — and leave `isBeatGridUserSet` false,
+                // letting the final `detectBeatGrid` call below clobber it again.
+                workingClip = withCurrentBeatGrid(workingClip)
                 libraryStore.update(workingClip)
                 onUpdate(workingClip)
             }
@@ -228,8 +233,65 @@ final class OfflineSeparationEngine {
         workingClip.stemFileNames = fileNames
         workingClip.peakFileNames = peakFileNames
         workingClip.processingFailed = false
+        // Detection needs the finished drums file, so it runs here rather than in the flush loop.
+        // Already on the separation queue; `detectBeatGrid` cannot throw. Refreshed first so
+        // detection sees the current `isBeatGridUserSet`, not the stale snapshot's.
+        workingClip = detectBeatGrid(for: withCurrentBeatGrid(workingClip))
         libraryStore.update(workingClip)
         onUpdate(workingClip)
+    }
+
+    /// Refreshes the beat-grid fields from the store before persisting.
+    ///
+    /// `workingClip` is a snapshot taken before separation began, but the user can set a tempo or
+    /// drag the downbeat at any point during it. Writing the snapshot back would silently discard
+    /// that edit — and leave `isBeatGridUserSet` false, so detection would overwrite it at the end,
+    /// which is exactly what spec §6 forbids.
+    ///
+    /// Internal rather than private so `BeatDetectionWiringTests` can pin it directly, the same way
+    /// `detectBeatGrid` is — driving the real `process()` pipeline in a test would need a loaded
+    /// separation model over real audio, which is what that suite deliberately avoids.
+    func withCurrentBeatGrid(_ clip: PracticeClip) -> PracticeClip {
+        guard let current = libraryStore.clip(withID: clip.id) else { return clip }
+        var merged = clip
+        merged.bpm = current.bpm
+        merged.downbeatOffsetSeconds = current.downbeatOffsetSeconds
+        merged.beatConfidence = current.beatConfidence
+        merged.isBeatGridUserSet = current.isBeatGridUserSet
+        return merged
+    }
+
+    /// Detects a beat grid from the clip's drums stem and returns the clip with it applied.
+    ///
+    /// Runs on the drums rather than the mix (spec §6): an isolated drum track has no harmonic or
+    /// vocal energy to mistake for a transient, which is an advantage most detectors do not get.
+    ///
+    /// Deliberately non-throwing and total: a clip with no drums, an unreadable file, or a
+    /// low-confidence result all come back unchanged. Beat detection is a convenience on top of
+    /// separation and must never be able to fail it.
+    func detectBeatGrid(for clip: PracticeClip) -> PracticeClip {
+        // Spec §6: never run on, nor overwrite, a grid the user set by hand.
+        guard !clip.isBeatGridUserSet else { return clip }
+        guard let fileName = clip.stemFileNames[SeparationStem.drums.rawValue] else { return clip }
+
+        let url = libraryStore.stemFileURL(clipID: clip.id, fileName: fileName)
+        guard FileManager.default.fileExists(atPath: url.path) else { return clip }
+
+        do {
+            guard let detection = try BeatDetector.detect(audioURL: url) else { return clip }
+            guard detection.confidence >= BeatDetector.confidenceThreshold else {
+                AppLogger.shared.info("Beat detection below threshold for \(clip.title): \(detection.confidence)")
+                return clip
+            }
+            var updated = clip
+            updated.bpm = detection.bpm
+            updated.downbeatOffsetSeconds = detection.downbeatOffsetSeconds
+            updated.beatConfidence = detection.confidence
+            return updated
+        } catch {
+            AppLogger.shared.warning("Beat detection failed for \(clip.title): \(error.localizedDescription)")
+            return clip
+        }
     }
 
     private func loadModelIfNeeded() throws -> AudioSeparationModel {

@@ -42,6 +42,14 @@ final class DeckTimelineRenderTests: XCTestCase {
             view.readyDuration = 10
             view.loopRange = 2...5
             view.setPlayheadTime(3.5)
+            // Deliberately *not* 120 BPM. 120 makes `beatDuration` exactly 0.5 — exactly
+            // representable in binary — so the beat-index round trip is exact and a whole class of
+            // grid defect is invisible in the render. This is a tempo the detector can actually
+            // return (autocorrelation lag 41 at 86.1328125 fps) with a downbeat on the STFT frame
+            // grid (frame 63), and it is the fixture under which `barLabels()` used to emit
+            // duplicate bar numbers with bar lines missing between them. A reader checking these
+            // PNGs should see bar numbers ascending by one with even spacing.
+            view.beatGrid = BeatGrid(bpm: 126.04801829268293, downbeatOffsetSeconds: 0.7314285714285714)
 
             // The timeline's views are transparent by design — in the app they sit on the window's
             // background. Rendered without one, the dark pass resolves its labels and playhead to
