@@ -216,6 +216,10 @@ final class PracticeDeckViewController: NSViewController, NSTextFieldDelegate {
             guard let self, var clip = self.clip else { return }
             clip.bpm = grid.bpm
             clip.downbeatOffsetSeconds = grid.downbeatOffsetSeconds
+            // A confidence describes a detection, and this grid is no longer that detection's. It
+            // stays a lie on disk otherwise — nothing reads it at runtime today, which is precisely
+            // why a stale value would go unnoticed until something did.
+            clip.beatConfidence = nil
             // Spec §6: an explicit flag, never a magic confidence value. Detection reads this and
             // will not run on, nor overwrite, a grid the user set.
             clip.isBeatGridUserSet = true

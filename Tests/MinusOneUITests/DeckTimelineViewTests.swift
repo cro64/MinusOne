@@ -226,6 +226,68 @@ final class DeckTimelineViewTests: XCTestCase {
         XCTAssertGreaterThan(grid.downbeatOffsetSeconds, 0.5)
     }
 
+    /// A click on the marker that never moves is not an edit. `endDownbeatDrag` used to fire
+    /// `onBeatGridEdited` unconditionally once the grab succeeded, and the deck answers that by
+    /// setting `isBeatGridUserSet = true` — which permanently blocks re-detection for the clip. A
+    /// stray double-click on the marker latched it forever.
+    func testAClickOnTheMarkerThatDoesNotMoveItReportsNoEdit() throws {
+        try writeTrack(.mix, seconds: 60)
+        let view = timeline()
+        let original = BeatGrid(bpm: 120, downbeatOffsetSeconds: 0.5)
+        view.beatGrid = original
+        view.layoutSubtreeIfNeeded()
+
+        var reported: [BeatGrid] = []
+        view.onBeatGridEdited = { reported.append($0) }
+
+        let markerX = view.viewport.x(forTime: 0.5)
+        XCTAssertTrue(view.beginDownbeatDrag(atX: markerX))
+        view.endDownbeatDrag()
+
+        XCTAssertTrue(reported.isEmpty, "a zero-movement click reported an edit: \(reported)")
+        XCTAssertEqual(view.beatGrid, original)
+    }
+
+    /// And a drag that does move it still reports, so the guard above cannot be satisfied by
+    /// simply never reporting.
+    func testAMovedMarkerStillReportsAnEditAfterTheZeroMovementGuard() throws {
+        try writeTrack(.mix, seconds: 60)
+        let view = timeline()
+        view.beatGrid = BeatGrid(bpm: 120, downbeatOffsetSeconds: 0.5)
+        view.layoutSubtreeIfNeeded()
+
+        var reported: [BeatGrid] = []
+        view.onBeatGridEdited = { reported.append($0) }
+
+        let markerX = view.viewport.x(forTime: 0.5)
+        XCTAssertTrue(view.beginDownbeatDrag(atX: markerX))
+        view.continueDownbeatDrag(toX: markerX + 40)
+        view.endDownbeatDrag()
+        XCTAssertEqual(reported.count, 1)
+    }
+
+    /// The field must show the tempo the grid is actually using. `BeatGrid.init` clamps to
+    /// 1...400, so a raw tap result outside that diverged: the grid, ruler and persisted clip used
+    /// 400 while the field read the raw number — and because `setBPM` also records it as the last
+    /// accepted value, a later Enter on the field was rejected (the toolbar accepts 20...400) and
+    /// restored the wrong number, making the divergence sticky. Two taps in quick succession, which
+    /// a stray double-click produces, reach this.
+    func testTappingFasterThanTheGridAllowsLeavesTheFieldAgreeingWithTheGrid() throws {
+        try writeTrack(.mix, seconds: 60)
+        let view = timeline()
+        var reported: [BeatGrid] = []
+        view.onBeatGridEdited = { reported.append($0) }
+
+        // Back-to-back, so the implied tempo is far above the grid's 400 BPM ceiling.
+        view.toolbarForTesting.tapForTesting()
+        view.toolbarForTesting.tapForTesting()
+
+        let grid = try XCTUnwrap(reported.last)
+        XCTAssertEqual(grid.bpm, 400, accuracy: 0.001, "fixture no longer exceeds the grid's clamp")
+        XCTAssertEqual(view.toolbarForTesting.displayedBPMForTesting, "400",
+                       "the field shows a tempo the grid is not using")
+    }
+
     /// A grab far from the marker is not a downbeat drag — it must fall through to the loop gesture.
     func testAGrabAwayFromTheMarkerIsNotADownbeatDrag() throws {
         try writeTrack(.mix, seconds: 60)

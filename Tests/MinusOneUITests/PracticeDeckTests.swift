@@ -282,6 +282,26 @@ final class PracticeDeckTests: XCTestCase {
         XCTAssertTrue(stored.isBeatGridUserSet, "a hand-set tempo was not marked as user-set")
     }
 
+    /// A confidence measures a detection. Once the grid is hand-set the stored figure describes a
+    /// tempo that is no longer on the clip, and leaving it attached writes a lie to the index —
+    /// nothing reads it at runtime today, which is exactly why it would go unnoticed.
+    func testAHandSetGridClearsTheDetectionConfidence() throws {
+        var clip = try makeClip(withStemSidecars: true)
+        clip.bpm = 128
+        clip.downbeatOffsetSeconds = 0.5
+        clip.beatConfidence = 21.5
+        libraryStore.update(clip)
+
+        let controller = deck()
+        controller.show(clip: clip)
+        controller.view.layoutSubtreeIfNeeded()
+        controller.timelineForTesting.toolbarForTesting.commitBPMForTesting("96")
+
+        let stored = try XCTUnwrap(libraryStore.clip(withID: clip.id))
+        XCTAssertNil(stored.beatConfidence,
+                     "kept the old detection's confidence \(String(describing: stored.beatConfidence)) on a hand-set grid")
+    }
+
     /// A grid must not follow the user to the next clip — each clip has its own.
     func testTheGridIsReplacedOnAClipSwitch() throws {
         var first = try makeClip(withStemSidecars: true)

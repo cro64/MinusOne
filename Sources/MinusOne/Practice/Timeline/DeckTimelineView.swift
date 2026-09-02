@@ -68,6 +68,9 @@ final class DeckTimelineView: NSView {
     private var dragStartX: CGFloat?
     private var loopBeforeDrag: ClosedRange<Double>?
     private var downbeatDragOffset: Double?
+    /// The grid as it stood when the marker was grabbed, so a click that never moves it can be
+    /// told from a drag that did.
+    private var gridBeforeDownbeatDrag: BeatGrid?
     private var tapTempo = TapTempo()
 
     init() {
@@ -97,7 +100,12 @@ final class DeckTimelineView: NSView {
             guard let self, let bpm = self.tapTempo.tap(at: Date().timeIntervalSinceReferenceDate) else { return }
             let grid = BeatGrid(bpm: bpm, downbeatOffsetSeconds: self.beatGrid?.downbeatOffsetSeconds ?? 0)
             self.beatGrid = grid
-            self.toolbar.setBPM(bpm)
+            // `grid.bpm`, not the raw tap result: `BeatGrid.init` clamps to 1...400, and two taps
+            // 120ms apart imply 500. Showing the raw number leaves the field disagreeing with the
+            // grid, the ruler and the persisted clip — and stickily so, because `setBPM` records it
+            // as the last accepted value and the toolbar then rejects a re-Enter of it as outside
+            // its own 20...400, restoring the wrong number.
+            self.toolbar.setBPM(grid.bpm)
             self.onBeatGridEdited?(grid)
         }
     }
@@ -402,6 +410,7 @@ final class DeckTimelineView: NSView {
         let markerX = viewport.x(forTime: beatGrid.downbeatOffsetSeconds)
         guard abs(x - markerX) <= TimelineRulerView.downbeatGrabRadius else { return false }
         downbeatDragOffset = beatGrid.downbeatOffsetSeconds - canvasTime(forX: x)
+        gridBeforeDownbeatDrag = beatGrid
         return true
     }
 
@@ -417,7 +426,14 @@ final class DeckTimelineView: NSView {
     func endDownbeatDrag() {
         guard downbeatDragOffset != nil else { return }
         downbeatDragOffset = nil
-        if let beatGrid { onBeatGridEdited?(beatGrid) }
+        let before = gridBeforeDownbeatDrag
+        gridBeforeDownbeatDrag = nil
+        // Only when the grid actually moved. Reporting unconditionally makes a stray click on the
+        // marker an "edit", and the deck answers an edit by setting `isBeatGridUserSet` — which
+        // permanently blocks re-detection for that clip. A click is not a decision to hand-set the
+        // grid forever.
+        guard let beatGrid, beatGrid != before else { return }
+        onBeatGridEdited?(beatGrid)
     }
 
     // MARK: - Events
