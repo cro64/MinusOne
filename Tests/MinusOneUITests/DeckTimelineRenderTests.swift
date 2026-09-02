@@ -42,6 +42,7 @@ final class DeckTimelineRenderTests: XCTestCase {
             view.readyDuration = 10
             view.loopRange = 2...5
             view.setPlayheadTime(3.5)
+            view.beatGrid = BeatGrid(bpm: 120, downbeatOffsetSeconds: 0.25)
 
             // The timeline's views are transparent by design — in the app they sit on the window's
             // background. Rendered without one, the dark pass resolves its labels and playhead to
