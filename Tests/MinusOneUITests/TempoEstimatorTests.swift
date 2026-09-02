@@ -29,10 +29,14 @@ final class TempoEstimatorTests: XCTestCase {
         return envelope
     }
 
+    /// The tolerance is tighter than one integer lag step on purpose. At 86.13 fps the reachable
+    /// integer lags are 1.6 BPM apart at 90 and 3.9 apart at 140, so the old `accuracy: 2` was
+    /// wider than the resolution it was measuring and could not tell an exact answer from a
+    /// quantised one. Anything inside 0.5 BPM has to have come off the integer grid.
     func testItRecoversAKnownTempo() throws {
         for bpm in [90.0, 120.0, 140.0] {
             let result = try XCTUnwrap(TempoEstimator.estimate(envelope: pulsedEnvelope(bpm: bpm, seconds: 20), framesPerSecond: fps))
-            XCTAssertEqual(result.bpm, bpm, accuracy: 2, "recovered \(result.bpm) for \(bpm)")
+            XCTAssertEqual(result.bpm, bpm, accuracy: 0.5, "recovered \(result.bpm) for \(bpm)")
         }
     }
 

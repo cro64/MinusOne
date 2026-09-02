@@ -43,7 +43,9 @@ final class BeatDetectorTests: XCTestCase {
     func testItDetectsAKnownTempo() throws {
         for bpm in [100.0, 128.0] {
             let detection = try XCTUnwrap(BeatDetector.detect(samples: drumTrack(seconds: 20, bpm: bpm, downbeatOffset: 0.75), sampleRate: sampleRate))
-            XCTAssertEqual(detection.bpm, bpm, accuracy: 2, "recovered \(detection.bpm) for \(bpm)")
+            // Tighter than one integer lag step (2.7 BPM at 100, 4.5 at 128), so this can tell an
+            // exact tempo from one quantised onto the autocorrelation's lag grid.
+            XCTAssertEqual(detection.bpm, bpm, accuracy: 0.5, "recovered \(detection.bpm) for \(bpm)")
         }
     }
 
@@ -66,6 +68,38 @@ final class BeatDetectorTests: XCTestCase {
         let grid = BeatGrid(bpm: detection.bpm, downbeatOffsetSeconds: detection.downbeatOffsetSeconds)
         for expected in [0.75, 1.25, 1.75, 2.25, 2.75] {
             XCTAssertEqual(grid.nearestBeat(to: expected), expected, accuracy: 0.08, "beat at \(expected)")
+        }
+    }
+
+    /// The assertion the five-beat check above cannot make. A tempo error is a *rate* error, so it
+    /// accumulates: the first beats land whatever the tempo is off by, and the drift only becomes
+    /// visible late in the clip. Quantising the tempo to integer autocorrelation lags — 1.6 BPM
+    /// apart at 90, 3.9 at 140, 5.9 at 174 — put the bar lines up to half a beat out by the last
+    /// third of every clip over about a minute, on a perfectly quantised synthetic click track.
+    ///
+    /// So this measures the *worst* bar-line error anywhere in a three-minute clip, at tempi spread
+    /// across the search range, and requires it to stay under a tenth of a beat.
+    func testTheGridStaysOnTheBeatsToTheEndOfALongClip() throws {
+        for bpm in [90.0, 100.0, 120.0, 128.0, 140.0, 174.0] {
+            let seconds = 180.0
+            let offset = 0.75
+            let samples = drumTrack(seconds: seconds, bpm: bpm, downbeatOffset: offset)
+            let detection = try XCTUnwrap(BeatDetector.detect(samples: samples, sampleRate: sampleRate))
+            let grid = BeatGrid(bpm: detection.bpm, downbeatOffsetSeconds: detection.downbeatOffsetSeconds)
+
+            // Every true beat in the clip, not just the first five.
+            let trueBeat = 60 / bpm
+            var worstBeats = 0.0
+            var time = offset
+            while time < seconds {
+                let error = abs(grid.nearestBeat(to: time) - time) / trueBeat
+                worstBeats = max(worstBeats, error)
+                time += trueBeat
+            }
+            print("MEASURED drift, \(bpm) BPM: detected \(detection.bpm), worst \(worstBeats) beats, confidence \(detection.confidence)")
+            XCTAssertLessThan(worstBeats, 0.1,
+                              "at \(bpm) BPM the grid drifts \(worstBeats) beats out by the end of a \(seconds)s clip "
+                              + "(detected \(detection.bpm))")
         }
     }
 
