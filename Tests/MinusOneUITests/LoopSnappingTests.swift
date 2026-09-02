@@ -114,9 +114,10 @@ final class LoopSnappingTests: XCTestCase {
         view.beginCanvasDrag(atX: 200)
         view.endCanvasDrag(atX: 205)
 
-        if let range = reported.first {
-            XCTAssertLessThanOrEqual(range.lowerBound, range.upperBound)
-        }
+        // Unwrapped, not `if let`: the whole assertion passes vacuously if the drag reports nothing
+        // at all, which is the most likely way this could regress.
+        let range = try XCTUnwrap(reported.first, "the drag reported no loop range at all")
+        XCTAssertLessThanOrEqual(range.lowerBound, range.upperBound)
     }
 
     /// A drag that starts and ends inside a single beat snaps both edges to the same instant

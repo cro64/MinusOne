@@ -97,22 +97,47 @@ final class BeatDetectionWiringTests: XCTestCase {
     /// `detectBeatGrid` even runs, so it never proved anything.
     ///
     /// What this pins is the *composite* behaviour — no mutation without a readable drums file —
-    /// not any single guard in isolation. `detectBeatGrid` reaches the same "return clip unchanged"
-    /// outcome for a missing-stem clip via three independent, deliberately redundant layers: the
-    /// `stemFileNames` lookup, the `fileExists` check, and the `catch` around `AVAudioFile`. Any one
-    /// of them suffices, so deleting just one does not fail this test — e.g. dropping the
-    /// `stemFileNames` guard alone still passes, because an empty filename's `stemFileURL` resolves
-    /// back to the clip's stem *directory* (which the fixture created), so `fileExists` reports
-    /// true, and it is the subsequent `AVAudioFile(forReading:)` throwing on a directory, caught
-    /// below, that actually returns the clip unchanged. That redundancy is the intended design —
-    /// detection must never be able to fail separation — so this test is deliberately written
-    /// against the chain's net effect rather than contrived to isolate one link of it.
+    /// not any single guard in isolation. `detectBeatGrid` has three deliberately redundant layers:
+    /// the `stemFileNames` lookup, the `fileExists` check, and the `catch` around `AVAudioFile`.
+    /// That redundancy is the intended design — detection must never be able to fail separation —
+    /// so this test is written against the chain's net effect rather than contrived to isolate one
+    /// link. With `stemFileNames` empty it is the first layer that returns; the empty-file-name
+    /// case below exercises the other two.
     func testAClipWithNoDrumsStemIsLeftAlone() throws {
         var clip = try clipWithDrums(bpm: 120)
         clip.bpm = 87
         clip.downbeatOffsetSeconds = 0.42
         clip.beatConfidence = 3.5
         clip.stemFileNames = [:]
+
+        let updated = engine().detectBeatGrid(for: clip)
+        XCTAssertEqual(updated.bpm, 87)
+        XCTAssertEqual(updated.downbeatOffsetSeconds, 0.42)
+        XCTAssertEqual(updated.beatConfidence, 3.5)
+    }
+
+    /// A recorded drums file name that is present but empty, which is the case the docstring above
+    /// used to describe from reasoning alone. It is worth an actual test because the path is
+    /// counter-intuitive: `stemFileURL` appends an empty component and so resolves back to the
+    /// clip's stem *directory*, which exists, so `fileExists` reports true and the
+    /// `stemFileNames` and `fileExists` layers both wave it through. Only the `catch` around
+    /// `AVAudioFile(forReading:)` stops it.
+    ///
+    /// Verified directly rather than reasoned: for a temporary directory D,
+    /// `D.appendingPathComponent("")` standardises to D, `fileExists(atPath:)` on it returns true,
+    /// and `AVAudioFile(forReading:)` throws `com.apple.coreaudio.avfaudio error 2003334207`.
+    func testAClipWhoseDrumsFileNameIsEmptyIsAlsoLeftAlone() throws {
+        var clip = try clipWithDrums(bpm: 120)
+        clip.bpm = 87
+        clip.downbeatOffsetSeconds = 0.42
+        clip.beatConfidence = 3.5
+        clip.stemFileNames = [SeparationStem.drums.rawValue: ""]
+
+        // The premise: this really does reach the layers past the `stemFileNames` lookup.
+        let url = libraryStore.stemFileURL(clipID: clip.id, fileName: "")
+        XCTAssertTrue(FileManager.default.fileExists(atPath: url.path),
+                      "an empty file name no longer resolves to the stem directory, so this case "
+                      + "returns at `fileExists` and no longer exercises the `AVAudioFile` catch")
 
         let updated = engine().detectBeatGrid(for: clip)
         XCTAssertEqual(updated.bpm, 87)

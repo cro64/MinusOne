@@ -77,11 +77,13 @@ final class TapTempoTests: XCTestCase {
         XCTAssertNil(tap.tap(at: 1.0))
     }
 
-    /// Two taps at the same instant would divide by zero.
+    /// Two taps at the same instant would divide by zero. `nil` — the zero-length interval
+    /// discarded, no tempo yet — is the required answer, so it is asserted rather than tolerated:
+    /// wrapped in `if let`, this passed whatever happened.
     func testSimultaneousTapsAreIgnoredRatherThanDividingByZero() {
         var tap = TapTempo()
         _ = tap.tap(at: 5)
         let bpm = tap.tap(at: 5)
-        if let bpm { XCTAssertTrue(bpm.isFinite) }
+        XCTAssertNil(bpm, "a zero-length interval produced a tempo of \(String(describing: bpm))")
     }
 }

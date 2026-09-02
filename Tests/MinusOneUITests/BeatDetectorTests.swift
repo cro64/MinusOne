@@ -103,7 +103,15 @@ final class BeatDetectorTests: XCTestCase {
         }
     }
 
-    func testNoiseIsRejectedRatherThanGuessedAt() {
+    /// `nil` is the stronger form of rejection — no estimate at all — so it is an acceptable
+    /// outcome here, but it is spelled out rather than left implicit in an `if let`, and paired
+    /// with a positive control: a detector that had regressed to returning `nil` for everything
+    /// would otherwise satisfy this test perfectly.
+    func testNoiseIsRejectedRatherThanGuessedAt() throws {
+        XCTAssertNotNil(BeatDetector.detect(samples: drumTrack(seconds: 20, bpm: 120, downbeatOffset: 0.5), sampleRate: sampleRate),
+                        "positive control: the detector returns nothing even for a clean drum track, "
+                        + "so the noise result below proves nothing")
+
         let detection = BeatDetector.detect(samples: noise(seconds: 20), sampleRate: sampleRate)
         if let detection {
             XCTAssertLessThan(detection.confidence, BeatDetector.confidenceThreshold,
@@ -120,7 +128,11 @@ final class BeatDetectorTests: XCTestCase {
     /// that makes any threshold possible at all.
     func testMeasureConfidenceSeparation() throws {
         var musical: [Double] = []
-        for bpm in [90.0, 110.0, 128.0, 145.0] {
+        // Spanning the detector's whole 60–200 BPM search range, not just its middle. The original
+        // 90–145 set was a third of the range, and a clean click track at 174 BPM scores 10.9 —
+        // only 21% above the gate, against a recorded "musical floor" of 15.47 that was really just
+        // the floor of the middle third.
+        for bpm in [62.0, 75.0, 90.0, 110.0, 128.0, 145.0, 174.0, 195.0] {
             let detection = try XCTUnwrap(BeatDetector.detect(samples: drumTrack(seconds: 20, bpm: bpm, downbeatOffset: 0.5), sampleRate: sampleRate))
             musical.append(detection.confidence)
             print("MEASURED confidence, drums at \(bpm) BPM: \(detection.confidence)")

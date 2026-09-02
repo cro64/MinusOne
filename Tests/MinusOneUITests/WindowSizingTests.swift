@@ -67,6 +67,11 @@ final class WindowSizingTests: XCTestCase {
 
         let headerStrip: CGFloat = 52
         let needed = deckContent + WindowUI.Metrics.padding + headerStrip
+        // Printed because `TimelineMetrics.laneHeight`'s docstring quotes this figure as the reason
+        // the compress-then-scroll path in spec §8 is unreachable. A quoted number nobody can
+        // re-derive goes stale silently — the previous one did.
+        print("MEASURED deck height: stack \(deckContent) + padding \(WindowUI.Metrics.padding) "
+              + "+ header \(headerStrip) = \(needed)pt against a \(WindowSizing.minimum.height)pt floor")
         XCTAssertLessThanOrEqual(
             needed, WindowSizing.minimum.height,
             "the deck needs \(needed)pt but the floor is \(WindowSizing.minimum.height)pt"

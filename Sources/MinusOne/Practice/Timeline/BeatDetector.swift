@@ -18,11 +18,23 @@ enum BeatDetector {
         let confidence: Double
     }
 
-    /// Measured on this task's fixtures (Apple Silicon, `BeatDetectorTests`, 3 runs / 12 noise
-    /// trials): synthetic drum tracks at 90–145 BPM score 15.47–28.73, white noise scores
-    /// 2.80–5.72. The threshold sits between them, deliberately nearer the noise end — a
-    /// suppressed grid costs the user a tap on the tempo button, a wrong grid costs them trust in
-    /// every bar line on screen.
+    /// A detection is kept when its confidence is at or above this, so a *lower* threshold is the
+    /// permissive one: it admits more marginal detections and puts more wrong grids on screen.
+    ///
+    /// Measured on `BeatDetectorTests.testMeasureConfidenceSeparation`, which spans the whole
+    /// 60–200 BPM search range: synthetic drum tracks score 10.88–28.73 (the floor is the 174 BPM
+    /// fixture) and white noise scores 2.41–3.71. 9.0 sits just below the musical floor, which is
+    /// the *permissive* end of that gap — chosen to keep every genuine detection rather than to
+    /// suppress marginal ones, and defensible only because the gap is as wide as it is: nothing
+    /// musical came within 17% of the threshold from above, and nothing noisy within 140% from
+    /// below.
+    ///
+    /// What the number is not: white noise is not the material that actually defeats detection.
+    /// Rubato, live and expressively-timed playing produce a real but wrong peak, and nothing in
+    /// this measurement says where those score. The gate is a floor against nonsense, not a
+    /// guarantee that everything above it is right — which is why the manual override in spec §6
+    /// is not optional, and why the failure mode below the gate is deliberately the safe one:
+    /// suppress the grid, fall back to m:ss, leave the field empty, invite a tap.
     static let confidenceThreshold: Double = 9.0
 
     static func detect(samples: [Float], sampleRate: Double) -> Detection? {
