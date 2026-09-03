@@ -312,8 +312,14 @@ final class PracticeDeckViewController: NSViewController, NSTextFieldDelegate {
     /// tears down, and it runs on *every* separation tick, so clearing there would wipe a loop the
     /// user drew moments earlier while their clip was still separating.
     private func clearLoop() {
-        playbackEngine.setLoopRange(nil)
+        // isLoopEnabled's didSet reads loopRangeSeconds to compute the pre-change playhead — it
+        // must still see the real range, so this flips before setLoopRange(nil) clears it. Doing it
+        // the other way around (as this once did) hands didSet a nil range while the loop is still
+        // conceptually active, so filePosition falls back to the unwrapped elapsed sample time —
+        // after several loop iterations a large, effectively garbage position — and
+        // rescheduleForLoopChange then reschedules the outgoing clip's own files there.
         playbackEngine.isLoopEnabled = false
+        playbackEngine.setLoopRange(nil)
         loopButton.state = .off
         loopButton.refreshStyle()
     }

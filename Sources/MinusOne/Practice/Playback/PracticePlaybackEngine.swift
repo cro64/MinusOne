@@ -252,6 +252,42 @@ final class PracticePlaybackEngine {
         return target >= loopStartFrame && target < loopEndFrame
     }
 
+    /// The sample-time starts of the loop-body iterations that should be queued next, given how many
+    /// are already scheduled and the current player position — enough that at least `lookaheadFrames`
+    /// of source frames stay banked ahead of `currentPlayerSampleTime` at all times. For an ordinary
+    /// multi-second loop this returns a single sample time (the very next one already clears the
+    /// lookahead bar), but a loop shorter than `lookaheadFrames` returns several, so a short loop
+    /// keeps real margin banked against a late `tick()`.
+    ///
+    /// `currentPlayerSampleTime == nil` means no live player timing is available yet — the very first
+    /// iteration, queued right after the lead-in and before playback has actually started — and always
+    /// yields exactly one candidate, matching the original (pre-lookahead) behavior for that case.
+    ///
+    /// Pure and static so it's testable without a running `AVAudioEngine`, same as
+    /// `filePosition`/`isFrameInsideLoopRange`. `scheduleNextLoopIterationIfNeeded()` is the sole
+    /// caller and performs the actual `AVAudioPlayerNode` scheduling this only describes.
+    static func loopIterationsToSchedule(
+        alreadyScheduled: Int,
+        leadInLength: AVAudioFramePosition,
+        loopLength: AVAudioFramePosition,
+        currentPlayerSampleTime: AVAudioFramePosition?,
+        lookaheadFrames: AVAudioFramePosition
+    ) -> [AVAudioFramePosition] {
+        guard loopLength > 0 else { return [] }
+        var sampleTimes: [AVAudioFramePosition] = []
+        var index = alreadyScheduled
+        while true {
+            let nextIterationSampleTime = leadInLength + AVAudioFramePosition(index) * loopLength
+            if let currentPlayerSampleTime, nextIterationSampleTime >= currentPlayerSampleTime + lookaheadFrames {
+                break
+            }
+            sampleTimes.append(nextIterationSampleTime)
+            index += 1
+            if currentPlayerSampleTime == nil { break }
+        }
+        return sampleTimes
+    }
+
     // MARK: - Internals
 
     private func frame(forSeconds seconds: Double) -> AVAudioFramePosition {
@@ -294,16 +330,28 @@ final class PracticePlaybackEngine {
         }
     }
 
-    /// Keeps exactly one loop-body iteration `[loopStartFrame, loopEndFrame)` queued ahead of the
-    /// one currently playing, chained on the still-playing node via `scheduleSegment(..., at:)`
-    /// with an explicit future `AVAudioTime` — never `stop()`, which is what made every previous
-    /// wrap tear playback down. Validated in the Task 2 measurement harness (spec §12, "Measured
-    /// 2026-09-02"): a segment scheduled this way joins the currently-playing one sample-accurately.
+    /// Keeps loop-body iterations `[loopStartFrame, loopEndFrame)` queued ahead of the one currently
+    /// playing, chained on the still-playing node via `scheduleSegment(..., at:)` with an explicit
+    /// future `AVAudioTime` — never `stop()`, which is what made every previous wrap tear playback
+    /// down. Validated in the Task 2 measurement harness (spec §12, "Measured 2026-09-02"): a segment
+    /// scheduled this way joins the currently-playing one sample-accurately.
+    ///
+    /// Tops up with a ~1-second time-based lookahead (`Self.loopIterationsToSchedule`) rather than
+    /// "exactly one iteration ahead": for an ordinary multi-second loop this still queues exactly one
+    /// iteration per call, same as scheduling only once the previous one had already started, since
+    /// the very next not-yet-queued iteration already clears the 1-second bar on its own. But a
+    /// one-iteration margin was only as safe as the 50ms poll timer never running late — for a short
+    /// loop (well under a second) a main-thread stall (a sheet presenting, a relayout, a completion
+    /// handler doing real work) could eat that margin entirely, and unlike the pre-Phase-4
+    /// stop/reschedule/play code (where a late tick just meant audible overshoot), a late tick here
+    /// could produce actual silence at the wrap. `loopIterationsToSchedule` instead keeps queuing —
+    /// each `loopLength` further along than the last — until the most recently queued iteration starts
+    /// at least a second of source frames ahead of the current player position, so a short loop
+    /// naturally ends up with several iterations banked instead of one.
     ///
     /// Called once unconditionally right after the lead-in is scheduled (`loopIterationsScheduled
     /// == 0`, so no live player timing is needed yet — we're declaring a future start time, not
-    /// reading the current position), and from every `tick()` afterward to top up once the most
-    /// recently queued iteration has actually started playing.
+    /// reading the current position), and from every `tick()` afterward to top up as needed.
     private func scheduleNextLoopIterationIfNeeded() {
         guard isLoopEnabled, let loopRangeSeconds else { return }
         let loopStartFrame = frame(forSeconds: loopRangeSeconds.lowerBound)
@@ -313,25 +361,46 @@ final class PracticePlaybackEngine {
         let loopLength = loopEndFrame - loopStartFrame
         let leadInLength = loopEndFrame - segmentStartFrame
 
+        var currentPlayerSampleTime: AVAudioFramePosition?
         if loopIterationsScheduled > 0 {
             guard let referenceStem, let player = players[referenceStem],
                   let nodeTime = player.lastRenderTime, nodeTime.isSampleTimeValid,
                   let playerTime = player.playerTime(forNodeTime: nodeTime)
             else { return }
-            let lastScheduledIterationStart = leadInLength + AVAudioFramePosition(loopIterationsScheduled - 1) * loopLength
-            guard playerTime.sampleTime >= lastScheduledIterationStart else { return }
+            currentPlayerSampleTime = playerTime.sampleTime
         }
 
-        let nextIterationSampleTime = leadInLength + AVAudioFramePosition(loopIterationsScheduled) * loopLength
-        let nextIterationStart = AVAudioTime(sampleTime: nextIterationSampleTime, atRate: sampleRate)
+        let sampleTimesToSchedule = Self.loopIterationsToSchedule(
+            alreadyScheduled: loopIterationsScheduled,
+            leadInLength: leadInLength,
+            loopLength: loopLength,
+            currentPlayerSampleTime: currentPlayerSampleTime,
+            lookaheadFrames: AVAudioFramePosition(sampleRate) // ~1 second of source frames
+        )
+        guard !sampleTimesToSchedule.isEmpty else { return }
+
+        // Whether a given stem can be scheduled at all (does its file currently reach the loop?)
+        // doesn't vary across the candidate sample times above — same `files`, same loop bounds for
+        // all of them in this one call — so a single players loop, scheduling every candidate time
+        // per player, is equivalent to (and cheaper than) re-checking per iteration.
+        var scheduledAny = false
         for (stem, player) in players {
             guard let file = files[stem] else { continue }
             let clampedLoopEnd = min(loopEndFrame, file.length)
             guard clampedLoopEnd > loopStartFrame else { continue }
             let framesToPlay = AVAudioFrameCount(clampedLoopEnd - loopStartFrame)
-            player.scheduleSegment(file, startingFrame: loopStartFrame, frameCount: framesToPlay, at: nextIterationStart)
+            for sampleTime in sampleTimesToSchedule {
+                let at = AVAudioTime(sampleTime: sampleTime, atRate: sampleRate)
+                player.scheduleSegment(file, startingFrame: loopStartFrame, frameCount: framesToPlay, at: at)
+            }
+            scheduledAny = true
         }
-        loopIterationsScheduled += 1
+        // Only counts as queued once at least one player was actually given a segment — a stem
+        // whose file doesn't yet reach the loop must not silently inflate the count while
+        // contributing nothing.
+        if scheduledAny {
+            loopIterationsScheduled += sampleTimesToSchedule.count
+        }
     }
 
     /// Rebuilds scheduling from the current playhead when looping is turned on or off outside a

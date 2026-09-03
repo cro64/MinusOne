@@ -106,4 +106,52 @@ final class PracticePlaybackEngineLoopMathTests: XCTestCase {
     func testIsFrameInsideLoopRangeIsFalseForADegenerateZeroLengthRange() {
         XCTAssertFalse(PracticePlaybackEngine.isFrameInsideLoopRange(2.0, range: 2.0...2.0, sampleRate: sampleRate))
     }
+
+    func testLoopIterationsToScheduleReturnsExactlyOneCandidateWhenNoLiveTimingYet() {
+        // The very first queue, right after the lead-in and before playback has started: always
+        // exactly one candidate, regardless of how short the loop is.
+        let sampleTimes = PracticePlaybackEngine.loopIterationsToSchedule(
+            alreadyScheduled: 0, leadInLength: 50, loopLength: 100,
+            currentPlayerSampleTime: nil, lookaheadFrames: 1_000
+        )
+        XCTAssertEqual(sampleTimes, [50])
+    }
+
+    func testLoopIterationsToScheduleReturnsEmptyWhenAlreadyEnoughMarginIsBanked() {
+        // One iteration already queued (index 1's candidate starts at 88_200), and that is already
+        // more than the 44_100-frame lookahead ahead of a player position of 0 — nothing more to do.
+        let sampleTimes = PracticePlaybackEngine.loopIterationsToSchedule(
+            alreadyScheduled: 1, leadInLength: 0, loopLength: 88_200,
+            currentPlayerSampleTime: 0, lookaheadFrames: 44_100
+        )
+        XCTAssertEqual(sampleTimes, [], "already banked more than one lookahead window of margin")
+    }
+
+    func testLoopIterationsToScheduleReturnsTheNextCandidateOnceWithinTheLookaheadWindow() {
+        // Candidate for index 1 is 88_200; once the player is within 44_100 frames of that, it must
+        // be queued (and only that one — index 2's candidate, 176_400, is still comfortably ahead).
+        let sampleTimes = PracticePlaybackEngine.loopIterationsToSchedule(
+            alreadyScheduled: 1, leadInLength: 0, loopLength: 88_200,
+            currentPlayerSampleTime: 44_101, lookaheadFrames: 44_100
+        )
+        XCTAssertEqual(sampleTimes, [88_200])
+    }
+
+    func testLoopIterationsToScheduleQueuesMultipleIterationsForAShortLoop() {
+        // A 100-frame loop against a 250-frame lookahead: one iteration of margin (100 frames) is
+        // not enough, so this must keep queuing until the banked margin clears the window.
+        let sampleTimes = PracticePlaybackEngine.loopIterationsToSchedule(
+            alreadyScheduled: 1, leadInLength: 0, loopLength: 100,
+            currentPlayerSampleTime: 0, lookaheadFrames: 250
+        )
+        XCTAssertEqual(sampleTimes, [100, 200], "a loop shorter than the lookahead window must bank several iterations at once")
+    }
+
+    func testLoopIterationsToScheduleReturnsEmptyForAZeroLengthLoop() {
+        let sampleTimes = PracticePlaybackEngine.loopIterationsToSchedule(
+            alreadyScheduled: 0, leadInLength: 0, loopLength: 0,
+            currentPlayerSampleTime: nil, lookaheadFrames: 44_100
+        )
+        XCTAssertEqual(sampleTimes, [], "a degenerate zero-length loop must not schedule anything (and must not loop forever)")
+    }
 }
