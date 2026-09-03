@@ -132,7 +132,7 @@ final class PracticePlaybackEngine {
         // corralling rescheduleForLoopChange() does when the loop config itself changes; here it's
         // needed because a plain seek (a timeline tap, or the skip-forward/back buttons) can also
         // land outside the loop while isLoopEnabled/loopRangeSeconds stay untouched.
-        if isLoopEnabled, let loopRangeSeconds, !loopRangeSeconds.contains(clamped) {
+        if isLoopEnabled, let loopRangeSeconds, !Self.isFrameInsideLoopRange(clamped, range: loopRangeSeconds, sampleRate: sampleRate) {
             clamped = loopRangeSeconds.lowerBound
         }
         segmentStartFrame = AVAudioFramePosition(clamped * sampleRate)
@@ -237,6 +237,21 @@ final class PracticePlaybackEngine {
         return loopStartFrame + sinceLoopStart
     }
 
+    /// True when `seconds`, converted to frames at `sampleRate`, falls inside
+    /// `[range.lowerBound, range.upperBound)` — the same half-open test `scheduleSegment(fromFrame:)`'s
+    /// loop branch uses. Deliberately not `ClosedRange<Double>.contains`, which is inclusive of
+    /// `upperBound` and would let a target landing exactly there slip past uncorralled, producing
+    /// `segmentStartFrame == loopEndFrame` — outside the loop-participating range `filePosition` and
+    /// `scheduleNextLoopIterationIfNeeded()` both assume. `static` for the same reason `filePosition`
+    /// is: testable without a running `AVAudioEngine`.
+    static func isFrameInsideLoopRange(_ seconds: Double, range: ClosedRange<Double>, sampleRate: Double) -> Bool {
+        let loopStartFrame = AVAudioFramePosition(range.lowerBound * sampleRate)
+        let loopEndFrame = AVAudioFramePosition(range.upperBound * sampleRate)
+        guard loopEndFrame > loopStartFrame else { return false }
+        let target = AVAudioFramePosition(seconds * sampleRate)
+        return target >= loopStartFrame && target < loopEndFrame
+    }
+
     // MARK: - Internals
 
     private func frame(forSeconds seconds: Double) -> AVAudioFramePosition {
@@ -331,7 +346,7 @@ final class PracticePlaybackEngine {
         guard hasScheduledSegment else { return }
         let wasPlaying = isPlaying
         var target = resumeTime
-        if isLoopEnabled, let loopRangeSeconds, !loopRangeSeconds.contains(target) {
+        if isLoopEnabled, let loopRangeSeconds, !Self.isFrameInsideLoopRange(target, range: loopRangeSeconds, sampleRate: sampleRate) {
             target = loopRangeSeconds.lowerBound
         }
         for player in players.values { player.stop() }
@@ -362,7 +377,16 @@ final class PracticePlaybackEngine {
         scheduleNextLoopIterationIfNeeded()
         let time = currentTime()
 
-        if time >= totalDurationSeconds - 0.02 {
+        // A genuinely active loop never "finishes" — it loops until disabled or stopped, regardless
+        // of where its end falls relative to totalDurationSeconds. Without this guard, a loop whose
+        // end is at or past the clip's ready/total duration would hit the finished branch below on
+        // every tick (currentTime()'s clamp pins `time` at totalDurationSeconds), which is worse than
+        // just missing a wrap: scheduleNextLoopIterationIfNeeded() above may have just queued another
+        // iteration at a future player sample time, and pause() doesn't stop the players or reset
+        // their timeline — so the queued segment stays pending while segmentStartFrame resets to 0
+        // out from under it.
+        let isActivelyLooping = isLoopEnabled && loopRangeSeconds != nil
+        if !isActivelyLooping, time >= totalDurationSeconds - 0.02 {
             pause()
             segmentStartFrame = 0
             hasScheduledSegment = false

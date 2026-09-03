@@ -85,4 +85,25 @@ final class PracticePlaybackEngineLoopMathTests: XCTestCase {
         )
         XCTAssertEqual(position, 500_000, "a zero-length loop range must not wrap (and must not divide by zero)")
     }
+
+    func testIsFrameInsideLoopRangeIsTrueStrictlyInsideTheRange() {
+        XCTAssertTrue(PracticePlaybackEngine.isFrameInsideLoopRange(2.0, range: 1.0...3.0, sampleRate: sampleRate))
+    }
+
+    func testIsFrameInsideLoopRangeIsTrueExactlyAtTheLowerBound() {
+        XCTAssertTrue(PracticePlaybackEngine.isFrameInsideLoopRange(1.0, range: 1.0...3.0, sampleRate: sampleRate))
+    }
+
+    func testIsFrameInsideLoopRangeIsFalseExactlyAtTheUpperBound() {
+        // The crux of the fix: the upper bound is exclusive, matching scheduleSegment's own gate.
+        XCTAssertFalse(PracticePlaybackEngine.isFrameInsideLoopRange(3.0, range: 1.0...3.0, sampleRate: sampleRate))
+    }
+
+    func testIsFrameInsideLoopRangeIsFalseBeforeTheRange() {
+        XCTAssertFalse(PracticePlaybackEngine.isFrameInsideLoopRange(0.5, range: 1.0...3.0, sampleRate: sampleRate))
+    }
+
+    func testIsFrameInsideLoopRangeIsFalseForADegenerateZeroLengthRange() {
+        XCTAssertFalse(PracticePlaybackEngine.isFrameInsideLoopRange(2.0, range: 2.0...2.0, sampleRate: sampleRate))
+    }
 }
