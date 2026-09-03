@@ -170,6 +170,39 @@ final class PracticePlaybackEngine {
         return min(totalDurationSeconds, Double(segmentStartFrame) / sampleRate + Double(playerTime.sampleTime) / sampleRate)
     }
 
+    // MARK: - Loop position math
+
+    /// Maps the player's own continuously-increasing sample clock back to a position within the
+    /// file, wrapping modulo the loop length once a loop is engaged.
+    ///
+    /// Pure and parameterized (not reading instance state directly) so it is testable without a
+    /// running `AVAudioEngine` — a real one crashes outright in this project's test environment.
+    /// Internal rather than private for the same reason `OfflineSeparationEngine.withCurrentBeatGrid`
+    /// is: so `PracticePlaybackEngineLoopMathTests` can pin it directly.
+    static func filePosition(
+        elapsedSampleTime: AVAudioFramePosition,
+        segmentStartFrame: AVAudioFramePosition,
+        loopEnabled: Bool,
+        range: ClosedRange<Double>?,
+        sampleRate: Double
+    ) -> AVAudioFramePosition {
+        guard loopEnabled, let range else {
+            return segmentStartFrame + elapsedSampleTime
+        }
+        let loopStartFrame = AVAudioFramePosition(range.lowerBound * sampleRate)
+        let loopEndFrame = AVAudioFramePosition(range.upperBound * sampleRate)
+        guard loopEndFrame > loopStartFrame else {
+            return segmentStartFrame + elapsedSampleTime
+        }
+        let leadInLength = loopEndFrame - segmentStartFrame
+        guard elapsedSampleTime >= leadInLength else {
+            return segmentStartFrame + elapsedSampleTime
+        }
+        let loopLength = loopEndFrame - loopStartFrame
+        let sinceLoopStart = (elapsedSampleTime - leadInLength) % loopLength
+        return loopStartFrame + sinceLoopStart
+    }
+
     // MARK: - Internals
 
     private func scheduleSegment(fromFrame startFrame: AVAudioFramePosition) {
