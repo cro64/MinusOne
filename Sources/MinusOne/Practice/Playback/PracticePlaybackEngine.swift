@@ -126,7 +126,15 @@ final class PracticePlaybackEngine {
     func seek(toSeconds seconds: Double) {
         let wasPlaying = isPlaying
         for player in players.values { player.stop() }
-        let clamped = min(max(0, seconds), totalDurationSeconds)
+        var clamped = min(max(0, seconds), totalDurationSeconds)
+        // Keeps segmentStartFrame inside the loop whenever looping is active — the invariant
+        // scheduleNextLoopIterationIfNeeded() and filePosition() both depend on. Mirrors the same
+        // corralling rescheduleForLoopChange() does when the loop config itself changes; here it's
+        // needed because a plain seek (a timeline tap, or the skip-forward/back buttons) can also
+        // land outside the loop while isLoopEnabled/loopRangeSeconds stay untouched.
+        if isLoopEnabled, let loopRangeSeconds, !loopRangeSeconds.contains(clamped) {
+            clamped = loopRangeSeconds.lowerBound
+        }
         segmentStartFrame = AVAudioFramePosition(clamped * sampleRate)
         scheduleSegment(fromFrame: segmentStartFrame)
         if wasPlaying {
