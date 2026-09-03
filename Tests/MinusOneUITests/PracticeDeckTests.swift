@@ -239,6 +239,108 @@ final class PracticeDeckTests: XCTestCase {
         }
     }
 
+    /// A drums stem with periodic transients at a known tempo, written directly so
+    /// `detectBeatGrid` has real audio to detect against.
+    ///
+    /// Deliberately never sets `readyDurationSeconds` above its default 0 in the tests that use
+    /// this: `loadPlaybackIfPossible` gates on that before touching `PracticePlaybackEngine.load()`,
+    /// and `AVAudioEngine.start()` crashes outright in this test environment (no audio device).
+    private func writeDrumBeat(to url: URL, bpm: Double, seconds: Double) throws {
+        let settings: [String: Any] = [
+            AVFormatIDKey: kAudioFormatLinearPCM,
+            AVSampleRateKey: 44_100.0,
+            AVNumberOfChannelsKey: 1
+        ]
+        try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try autoreleasepool {
+            let file = try AVAudioFile(forWriting: url, settings: settings)
+            let frames = AVAudioFrameCount(44_100 * seconds)
+            let buffer = try XCTUnwrap(AVAudioPCMBuffer(pcmFormat: file.processingFormat, frameCapacity: frames))
+            buffer.frameLength = frames
+            let beat = 60 / bpm * 44_100
+            var position = 0.5 * 44_100
+            var index = 0
+            while position < Double(frames) {
+                let start = Int(position)
+                let amplitude: Float = index % 4 == 0 ? 0.95 : 0.4
+                for offset in 0..<220 where start + offset < Int(frames) {
+                    buffer.floatChannelData![0][start + offset] = amplitude * (1 - Float(offset) / 220)
+                }
+                position += beat
+                index += 1
+            }
+            try file.write(from: buffer)
+        }
+    }
+
+    /// Spec §9: an existing clip that predates the sidecar format gets no beat grid until it is
+    /// separated again, because `detectBeatGrid`'s only trigger was separation finishing. The
+    /// migration backfill is the other place a clip's audio is already read from disk — the hook
+    /// belongs there.
+    func testShowingAClipWithoutSidecarsAlsoDetectsItsBeatGrid() throws {
+        var clip = try makeClip(withStemSidecars: false)
+        try FileManager.default.removeItem(at: libraryStore.peaksFolder(forClipID: clip.id))
+        let source = libraryStore.stemFileURL(clipID: clip.id, fileName: clip.sourceFileName)
+        try writeSilentAudio(to: source, seconds: 20)
+        let drumsURL = libraryStore.stemFileURL(clipID: clip.id, fileName: "drums.caf")
+        try writeDrumBeat(to: drumsURL, bpm: 120, seconds: 20)
+        clip.stemFileNames = [SeparationStem.drums.rawValue: "drums.caf"]
+        clip.peakFileNames = [:]
+        libraryStore.update(clip)
+
+        let controller = deck()
+        controller.show(clip: clip)
+
+        let expectation = XCTestExpectation(description: "migration backfill completed")
+        DispatchQueue.global().async {
+            for _ in 0..<200 where self.libraryStore.clip(withID: clip.id)?.peakFileNames["mix"] == nil {
+                Thread.sleep(forTimeInterval: 0.05)
+            }
+            expectation.fulfill()
+        }
+        wait(for: [expectation], timeout: 15)
+
+        let stored = try XCTUnwrap(libraryStore.clip(withID: clip.id))
+        let bpm = try XCTUnwrap(stored.bpm)
+        XCTAssertEqual(bpm, 120, accuracy: 3)
+        XCTAssertFalse(stored.isBeatGridUserSet)
+    }
+
+    /// A user-set grid must survive a migration backfill exactly like it survives separation
+    /// (`BeatDetectionWiringTests.testItRefusesToOverwriteAUserSetGrid` pins the same rule for
+    /// `detectBeatGrid` directly).
+    func testShowingAClipWithAUserSetGridDoesNotOverwriteItDuringMigration() throws {
+        var clip = try makeClip(withStemSidecars: false)
+        try FileManager.default.removeItem(at: libraryStore.peaksFolder(forClipID: clip.id))
+        let source = libraryStore.stemFileURL(clipID: clip.id, fileName: clip.sourceFileName)
+        try writeSilentAudio(to: source, seconds: 20)
+        let drumsURL = libraryStore.stemFileURL(clipID: clip.id, fileName: "drums.caf")
+        try writeDrumBeat(to: drumsURL, bpm: 120, seconds: 20)
+        clip.stemFileNames = [SeparationStem.drums.rawValue: "drums.caf"]
+        clip.peakFileNames = [:]
+        clip.bpm = 97
+        clip.downbeatOffsetSeconds = 1.25
+        clip.isBeatGridUserSet = true
+        libraryStore.update(clip)
+
+        let controller = deck()
+        controller.show(clip: clip)
+
+        let expectation = XCTestExpectation(description: "migration backfill completed")
+        DispatchQueue.global().async {
+            for _ in 0..<200 where self.libraryStore.clip(withID: clip.id)?.peakFileNames["mix"] == nil {
+                Thread.sleep(forTimeInterval: 0.05)
+            }
+            expectation.fulfill()
+        }
+        wait(for: [expectation], timeout: 15)
+
+        let stored = try XCTUnwrap(libraryStore.clip(withID: clip.id))
+        XCTAssertEqual(stored.bpm, 97)
+        XCTAssertEqual(stored.downbeatOffsetSeconds, 1.25)
+        XCTAssertTrue(stored.isBeatGridUserSet)
+    }
+
     func testAClipWithADetectedGridShowsIt() throws {
         var clip = try makeClip(withStemSidecars: true)
         clip.bpm = 128

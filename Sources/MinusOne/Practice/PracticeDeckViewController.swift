@@ -249,16 +249,19 @@ final class PracticeDeckViewController: NSViewController, NSTextFieldDelegate {
 
     /// Spec §9: clips that predate the sidecar format get theirs generated from the audio already
     /// on disk, on first open, in the background — never eagerly for the whole library, so the cost
-    /// is spread and never blocks.
-    ///
-    /// This is the call site the previous phase shipped without.
+    /// is spread and never blocks. Spec §9 also flags that this path must run beat detection: it is
+    /// the other place an existing clip's audio is read from disk, since `detectBeatGrid`'s only
+    /// other trigger is a separation run finishing, which an already-separated legacy clip will
+    /// never do again.
     private func backfillPeaksIfNeeded(for clip: PracticeClip) {
         guard !PeakSidecarMigrator.missingTracks(for: clip, libraryStore: libraryStore).isEmpty else { return }
         guard !backfillsInFlight.contains(clip.id) else { return }
         backfillsInFlight.insert(clip.id)
         let libraryStore = self.libraryStore
         DispatchQueue.global(qos: .utility).async {
-            let updated = PeakSidecarMigrator.backfill(clip: clip, libraryStore: libraryStore)
+            let peaksUpdated = PeakSidecarMigrator.backfill(clip: clip, libraryStore: libraryStore)
+            let separationEngine = OfflineSeparationEngine(libraryStore: libraryStore)
+            let updated = separationEngine.detectBeatGrid(for: separationEngine.withCurrentBeatGrid(peaksUpdated))
             DispatchQueue.main.async { [weak self] in
                 guard let self else { return }
                 self.backfillsInFlight.remove(updated.id)
@@ -266,12 +269,19 @@ final class PracticeDeckViewController: NSViewController, NSTextFieldDelegate {
                 // Re-read rather than writing back the snapshot this closure captured: the decode
                 // above takes seconds, `ClipLibraryStore.update` is a whole-record replace, and
                 // separation's flush loop may have advanced `readyDurationSeconds` and
-                // `stemFileNames` in the meantime. Only the peak file names are ours to contribute.
+                // `stemFileNames` in the meantime. Only the peak file names and (when nothing else
+                // has since claimed the grid) the beat grid are ours to contribute.
                 guard var current = libraryStore.clip(withID: updated.id) else { return }
                 current.peakFileNames = updated.peakFileNames
+                if !current.isBeatGridUserSet {
+                    current.bpm = updated.bpm
+                    current.downbeatOffsetSeconds = updated.downbeatOffsetSeconds
+                    current.beatConfidence = updated.beatConfidence
+                }
                 libraryStore.update(current)
                 self.clip = current
                 self.timeline.refreshPeaks()
+                self.applyBeatGrid(from: current)
                 self.updateTimelineHeight()
             }
         }
