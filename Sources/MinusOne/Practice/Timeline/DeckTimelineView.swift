@@ -265,8 +265,7 @@ final class DeckTimelineView: NSView {
         }
 
         // From the top of the ruler to the bottom of the last lane: one band, all four lanes, so
-        // the loop cannot read as lane-local state. The toolbar is not included — it is not part
-        // of the loop gesture's surface.
+        // the loop cannot read as lane-local state.
         overlay.frame = NSRect(x: canvasX, y: rulerY, width: width, height: max(0, y - TimelineMetrics.laneSpacing - rulerY))
         indicator.frame = NSRect(x: canvasX, y: y, width: width, height: TimelineMetrics.scrollIndicatorHeight)
 
