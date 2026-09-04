@@ -120,26 +120,29 @@ final class PracticeDeckViewController: NSViewController, NSTextFieldDelegate {
         // Back/play/forward read as one cluster, then a wider gap before Loop — which is a mode,
         // not a transport action, and shouldn't look like a fourth button in the same group.
         let playbackCluster = Layout.horizontalStack([skipBackButton, playPauseButton, skipForwardButton], spacing: 4)
-        // A nested stack hugs its content only if told to: at the default priority this one soaked
-        // up the row's slack and shoved Loop 343pt to the right (measured, and only sometimes —
-        // exactly the ambiguity `Layout.flexibleSpacer` exists to remove). The spacer gives the
-        // slack a defined home at the end of the row instead.
         playbackCluster.setHuggingPriority(.required, for: .horizontal)
-        let transportStack = Layout.horizontalStack(
-            [playbackCluster, loopButton, timeLabel, Layout.flexibleSpacer()],
-            spacing: WindowUI.Metrics.sectionSpacing
-        )
 
         tempoSlider.isContinuous = true
         tempoSlider.target = self
         tempoSlider.action = #selector(tempoChanged)
-        let tempoLabel = SharedUI.fieldLabel("Tempo")
-        tempoLabel.widthAnchor.constraint(equalToConstant: WindowUI.Metrics.labelWidth).isActive = true
-        let tempoRow = Layout.horizontalStack([tempoLabel, tempoSlider, tempoValueLabel], spacing: WindowUI.Metrics.rowSpacing)
-        tempoSlider.widthAnchor.constraint(greaterThanOrEqualToConstant: 160).isActive = true
+        let tempoLabel = SharedUI.fieldLabel("Speed")
+        let speedCluster = Layout.horizontalStack([tempoLabel, tempoSlider, tempoValueLabel], spacing: WindowUI.Metrics.rowSpacing)
+        speedCluster.setHuggingPriority(.required, for: .horizontal)
+        // Fixed, not `greaterThanOrEqualToConstant` — a small control paired with BPM/Tap in the
+        // control bar, not a row that owns the deck's full width the way it used to.
+        tempoSlider.widthAnchor.constraint(equalToConstant: 96).isActive = true
+
+        // One control bar: playback transport on the left, BPM/Tap + Speed on the right, so the
+        // deck's two tempo concepts (the musical grid and the playback rate) sit next to each other
+        // instead of on opposite ends of the deck. Replaces what used to be two separate rows (the
+        // transport, and a full-width "Tempo" slider) plus the toolbar's own row above the ruler.
+        let controlBar = Layout.horizontalStack(
+            [playbackCluster, loopButton, timeLabel, Layout.flexibleSpacer(), toolbar, speedCluster],
+            spacing: WindowUI.Metrics.sectionSpacing
+        )
 
         let content = Layout.verticalStack(
-            [titleLabel, statusLabel, timeline, toolbar, transportStack, tempoRow],
+            [titleLabel, statusLabel, timeline, controlBar],
             spacing: WindowUI.Metrics.sectionSpacing
         )
         content.setCustomSpacing(4, after: titleLabel)
@@ -166,7 +169,7 @@ final class PracticeDeckViewController: NSViewController, NSTextFieldDelegate {
         titleLabel.widthAnchor.constraint(lessThanOrEqualTo: content.widthAnchor).isActive = true
         sizeTitleFieldToText(titleLabel.stringValue)
         timeline.widthAnchor.constraint(equalTo: content.widthAnchor).isActive = true
-        tempoRow.widthAnchor.constraint(equalTo: content.widthAnchor).isActive = true
+        controlBar.widthAnchor.constraint(equalTo: content.widthAnchor).isActive = true
 
         let pad = WindowUI.Metrics.padding
         Layout.pin(content, to: view, edges: [.top, .leading, .trailing], insets: NSEdgeInsets(top: pad, left: pad, bottom: 0, right: pad))
@@ -546,6 +549,10 @@ final class PracticeDeckViewController: NSViewController, NSTextFieldDelegate {
 
     /// The BPM/Tap toolbar, for the same reason.
     var toolbarForTesting: TimelineToolbarView { toolbar }
+
+    /// The playback-speed slider, so a test can confirm it stays a small fixed-width control
+    /// rather than stretching across the deck the way it used to.
+    var speedSliderForTesting: NSSlider { tempoSlider }
 
     /// The deck's playback engine, for tests that need to drive mixer state directly.
     var playbackEngineForTesting: PracticePlaybackEngine { playbackEngine }

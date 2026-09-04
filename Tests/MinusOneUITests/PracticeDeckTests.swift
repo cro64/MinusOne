@@ -441,6 +441,20 @@ final class PracticeDeckTests: XCTestCase {
                        "the field shows a tempo the grid is not using")
     }
 
+    /// The playback-speed slider used to stretch across the whole deck — the single heaviest
+    /// element on the screen, and it duplicated the word "Tempo" already used by the BPM field.
+    /// It's now a small, fixed-width control paired with BPM/Tap instead of its own full-width row.
+    func testTheSpeedSliderIsNotFullWidth() throws {
+        let clip = try makeClip(withStemSidecars: true)
+        let controller = deck()
+        controller.show(clip: clip)
+        controller.view.frame = NSRect(x: 0, y: 0, width: 900, height: 700)
+        controller.view.layoutSubtreeIfNeeded()
+
+        XCTAssertLessThan(controller.speedSliderForTesting.frame.width, 150,
+                           "the speed slider is \(controller.speedSliderForTesting.frame.width)pt wide — still reads as a full-width row")
+    }
+
     /// A grid must not follow the user to the next clip — each clip has its own.
     func testTheGridIsReplacedOnAClipSwitch() throws {
         var first = try makeClip(withStemSidecars: true)
