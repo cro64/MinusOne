@@ -149,14 +149,15 @@ final class PracticeDeckViewController: NSViewController, NSTextFieldDelegate {
         content.setCustomSpacing(4, after: statusLabel)
 
         // `.leading`-aligned stacks pin their arranged subviews' leading edge and nothing else —
-        // the same trap `WindowUI.section` documents. `tempoRow` got away with it because it *is* an
-        // NSStackView holding a low-hugging NSSlider, so its own arrangement let it fill;
-        // `DeckTimelineView` is a plain NSView, which to this stack is an opaque box that gets its
-        // fitting width. Measured before this chain (with the old mixer rows, which had the same
-        // shape): tempo slider 556.5pt, every stem fader stuck at 140pt — exactly its
-        // `greaterThanOrEqualToConstant` floor, in a 671pt-wide pane. The timeline needs the same
-        // treatment: its lane canvas is `bounds.width - headerWidth`, so a fitting-width timeline
-        // would draw every waveform into a sliver.
+        // the same trap `WindowUI.section` documents. `controlBar` got away with it because
+        // `Layout.flexibleSpacer()` is one of its own arranged views: a low-hugging spacer that
+        // absorbs the forced width, while the fixed-width playback cluster and speed cluster on
+        // either side of it don't stretch. `DeckTimelineView` is a plain NSView, which to this
+        // stack is an opaque box that gets its fitting width. Measured before this chain (with the
+        // old mixer rows, which had the same shape): tempo slider 556.5pt, every stem fader stuck
+        // at 140pt — exactly its `greaterThanOrEqualToConstant` floor, in a 671pt-wide pane. The
+        // timeline needs the same treatment: its lane canvas is `bounds.width - headerWidth`, so a
+        // fitting-width timeline would draw every waveform into a sliver.
         // The title is sized to its own text rather than left to fill the pane. An editable
         // NSTextField reports no intrinsic width (measured: -1, scrollable cell or not), so
         // content hugging can't do this job — the width is measured from the string and kept up
