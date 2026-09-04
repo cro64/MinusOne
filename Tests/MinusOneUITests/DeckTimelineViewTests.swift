@@ -164,46 +164,11 @@ final class DeckTimelineViewTests: XCTestCase {
     }
 
     func testTheHeightFitsSpecEightsBudget() {
-        // Ruler 22 + 4pt + (4 lanes at 72 with three 4pt gaps = 300) + 4pt + 12pt indicator = 342,
-        // against spec §8's budget of 22 + 288 + 12 plus spacing. The toolbar (Task 10) adds its
-        // own 38pt row plus a 4pt gap on top of that 342.
-        XCTAssertEqual(DeckTimelineView.height(forLaneCount: 4), 342 + TimelineMetrics.toolbarHeight + TimelineMetrics.laneSpacing, accuracy: 0.001)
-        XCTAssertEqual(DeckTimelineView.height(forLaneCount: 1), 22 + 4 + 72 + 4 + 12 + TimelineMetrics.toolbarHeight + TimelineMetrics.laneSpacing, accuracy: 0.001)
-    }
-
-    /// Spec §8 budgeted 38pt for the tempo row; the container now actually reserves it.
-    func testTheHeightIncludesTheToolbar() {
-        let withToolbar = DeckTimelineView.height(forLaneCount: 4)
-        let expected = TimelineMetrics.toolbarHeight + TimelineMetrics.laneSpacing
-            + TimelineMetrics.rulerHeight + TimelineMetrics.laneSpacing
-            + (4 * TimelineMetrics.laneHeight + 3 * TimelineMetrics.laneSpacing)
-            + TimelineMetrics.laneSpacing + TimelineMetrics.scrollIndicatorHeight
-        XCTAssertEqual(withToolbar, expected, accuracy: 0.001)
-    }
-
-    /// The toolbar shares the canvas column with the ruler and lanes — a tempo field floating over
-    /// the lane headers would read as belonging to one stem.
-    func testTheToolbarSharesTheCanvasColumn() throws {
-        try writeTrack(.mix, seconds: 60)
-        let view = timeline(width: 856)
-        XCTAssertEqual(view.toolbarForTesting.frame.minX, TimelineMetrics.headerWidth, accuracy: 0.001)
-        XCTAssertEqual(view.toolbarForTesting.frame.width, 856 - TimelineMetrics.headerWidth, accuracy: 0.001)
-    }
-
-    /// Editing the tempo by hand produces a grid, and the container reports it so the deck can
-    /// persist it with `isBeatGridUserSet`.
-    func testEditingTheTempoReportsANewGrid() throws {
-        try writeTrack(.mix, seconds: 60)
-        let view = timeline()
-        view.beatGrid = BeatGrid(bpm: 120, downbeatOffsetSeconds: 0.5)
-
-        var reported: [BeatGrid] = []
-        view.onBeatGridEdited = { reported.append($0) }
-        view.toolbarForTesting.commitBPMForTesting("96")
-
-        let grid = try XCTUnwrap(reported.first)
-        XCTAssertEqual(grid.bpm, 96, accuracy: 0.001)
-        XCTAssertEqual(grid.downbeatOffsetSeconds, 0.5, accuracy: 0.001, "editing the tempo moved the downbeat")
+        // Ruler 22 + 4pt + (4 lanes at 72 with three 4pt gaps = 300) + 4pt + 12pt indicator = 342.
+        // The toolbar no longer lives inside DeckTimelineView — it moved to
+        // PracticeDeckViewController's control bar (see PracticeDeckViewController.swift).
+        XCTAssertEqual(DeckTimelineView.height(forLaneCount: 4), 342, accuracy: 0.001)
+        XCTAssertEqual(DeckTimelineView.height(forLaneCount: 1), 22 + 4 + 72 + 4 + 12, accuracy: 0.001)
     }
 
     /// Dragging the marker moves the downbeat and keeps the tempo.
@@ -264,28 +229,6 @@ final class DeckTimelineViewTests: XCTestCase {
         view.continueDownbeatDrag(toX: markerX + 40)
         view.endDownbeatDrag()
         XCTAssertEqual(reported.count, 1)
-    }
-
-    /// The field must show the tempo the grid is actually using. `BeatGrid.init` clamps to
-    /// 1...400, so a raw tap result outside that diverged: the grid, ruler and persisted clip used
-    /// 400 while the field read the raw number — and because `setBPM` also records it as the last
-    /// accepted value, a later Enter on the field was rejected (the toolbar accepts 20...400) and
-    /// restored the wrong number, making the divergence sticky. Two taps in quick succession, which
-    /// a stray double-click produces, reach this.
-    func testTappingFasterThanTheGridAllowsLeavesTheFieldAgreeingWithTheGrid() throws {
-        try writeTrack(.mix, seconds: 60)
-        let view = timeline()
-        var reported: [BeatGrid] = []
-        view.onBeatGridEdited = { reported.append($0) }
-
-        // Back-to-back, so the implied tempo is far above the grid's 400 BPM ceiling.
-        view.toolbarForTesting.tapForTesting()
-        view.toolbarForTesting.tapForTesting()
-
-        let grid = try XCTUnwrap(reported.last)
-        XCTAssertEqual(grid.bpm, 400, accuracy: 0.001, "fixture no longer exceeds the grid's clamp")
-        XCTAssertEqual(view.toolbarForTesting.displayedBPMForTesting, "400",
-                       "the field shows a tempo the grid is not using")
     }
 
     /// A grab far from the marker is not a downbeat drag — it must fall through to the loop gesture.

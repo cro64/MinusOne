@@ -23,6 +23,8 @@ final class PracticeDeckViewController: NSViewController, NSTextFieldDelegate {
     private let titleLabel = ClickToEditTextField(labelWithString: "")
     private let statusLabel = NSTextField(labelWithString: "")
     private let timeline = DeckTimelineView()
+    private let toolbar = TimelineToolbarView()
+    private var tapTempo = TapTempo()
     private lazy var timelineHeightConstraint = timeline.heightAnchor.constraint(
         equalToConstant: DeckTimelineView.height(forLaneCount: 4)
     )
@@ -99,6 +101,7 @@ final class PracticeDeckViewController: NSViewController, NSTextFieldDelegate {
 
         timeline.translatesAutoresizingMaskIntoConstraints = false
         timelineHeightConstraint.isActive = true
+        toolbar.translatesAutoresizingMaskIntoConstraints = false
 
         playPauseButton.target = self
         playPauseButton.action = #selector(togglePlayPause)
@@ -136,7 +139,7 @@ final class PracticeDeckViewController: NSViewController, NSTextFieldDelegate {
         tempoSlider.widthAnchor.constraint(greaterThanOrEqualToConstant: 160).isActive = true
 
         let content = Layout.verticalStack(
-            [titleLabel, statusLabel, timeline, transportStack, tempoRow],
+            [titleLabel, statusLabel, timeline, toolbar, transportStack, tempoRow],
             spacing: WindowUI.Metrics.sectionSpacing
         )
         content.setCustomSpacing(4, after: titleLabel)
@@ -213,18 +216,23 @@ final class PracticeDeckViewController: NSViewController, NSTextFieldDelegate {
             self?.showPlayGlyph(true)
         }
         timeline.onBeatGridEdited = { [weak self] grid in
-            guard let self, var clip = self.clip else { return }
-            clip.bpm = grid.bpm
-            clip.downbeatOffsetSeconds = grid.downbeatOffsetSeconds
-            // A confidence describes a detection, and this grid is no longer that detection's. It
-            // stays a lie on disk otherwise — nothing reads it at runtime today, which is precisely
-            // why a stale value would go unnoticed until something did.
-            clip.beatConfidence = nil
-            // Spec §6: an explicit flag, never a magic confidence value. Detection reads this and
-            // will not run on, nor overwrite, a grid the user set.
-            clip.isBeatGridUserSet = true
-            self.clip = clip
-            self.libraryStore.update(clip)
+            self?.persistEditedBeatGrid(grid)
+        }
+        toolbar.onBPMEdited = { [weak self] bpm in
+            guard let self else { return }
+            let grid = BeatGrid(bpm: bpm, downbeatOffsetSeconds: self.timeline.beatGrid?.downbeatOffsetSeconds ?? 0)
+            self.timeline.beatGrid = grid
+            self.persistEditedBeatGrid(grid)
+        }
+        toolbar.onTapped = { [weak self] in
+            guard let self, let bpm = self.tapTempo.tap(at: Date().timeIntervalSinceReferenceDate) else { return }
+            let grid = BeatGrid(bpm: bpm, downbeatOffsetSeconds: self.timeline.beatGrid?.downbeatOffsetSeconds ?? 0)
+            self.timeline.beatGrid = grid
+            // `grid.bpm`, not the raw tap result — see `BeatGrid.init`'s 1...400 clamp. Showing the
+            // raw number would leave the field disagreeing with the grid, the ruler and the
+            // persisted clip.
+            self.toolbar.setBPM(grid.bpm)
+            self.persistEditedBeatGrid(grid)
         }
     }
 
@@ -294,9 +302,25 @@ final class PracticeDeckViewController: NSViewController, NSTextFieldDelegate {
     private func applyBeatGrid(from clip: PracticeClip) {
         guard let bpm = clip.bpm else {
             timeline.beatGrid = nil
+            toolbar.setBPM(nil)
             return
         }
         timeline.beatGrid = BeatGrid(bpm: bpm, downbeatOffsetSeconds: clip.downbeatOffsetSeconds ?? 0)
+        toolbar.setBPM(bpm)
+    }
+
+    /// The one place any beat-grid edit — a downbeat drag, a typed BPM, or a tap — gets persisted.
+    /// Spec §6: an explicit flag, never a magic confidence value; a hand-set grid is marked so
+    /// detection never overwrites it, and its stale confidence is dropped since it no longer
+    /// describes a detection.
+    private func persistEditedBeatGrid(_ grid: BeatGrid) {
+        guard var clip else { return }
+        clip.bpm = grid.bpm
+        clip.downbeatOffsetSeconds = grid.downbeatOffsetSeconds
+        clip.beatConfidence = nil
+        clip.isBeatGridUserSet = true
+        self.clip = clip
+        self.libraryStore.update(clip)
     }
 
     /// Drops the loop when the deck moves to a different clip.
@@ -519,6 +543,9 @@ final class PracticeDeckViewController: NSViewController, NSTextFieldDelegate {
 
     /// The deck's own views are private; this is the one the timeline tests need to reach.
     var timelineForTesting: DeckTimelineView { timeline }
+
+    /// The BPM/Tap toolbar, for the same reason.
+    var toolbarForTesting: TimelineToolbarView { toolbar }
 
     /// The deck's playback engine, for tests that need to drive mixer state directly.
     var playbackEngineForTesting: PracticePlaybackEngine { playbackEngine }

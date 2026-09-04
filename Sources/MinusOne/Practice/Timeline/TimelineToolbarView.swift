@@ -41,8 +41,10 @@ final class TimelineToolbarView: NSView {
         tapButton.target = self
         tapButton.action = #selector(tapped)
 
-        let row = Layout.horizontalStack([label, bpmField, unit, tapButton, Layout.flexibleSpacer()], spacing: WindowUI.Metrics.rowSpacing)
+        let row = Layout.horizontalStack([label, bpmField, unit, tapButton], spacing: WindowUI.Metrics.rowSpacing)
         Layout.pin(row, to: self, insets: NSEdgeInsets(top: 4, left: 0, bottom: 4, right: 0))
+        setContentHuggingPriority(.required, for: .horizontal)
+        setContentCompressionResistancePriority(.required, for: .horizontal)
     }
 
     convenience init() {

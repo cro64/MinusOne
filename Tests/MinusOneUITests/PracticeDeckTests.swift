@@ -364,7 +364,7 @@ final class PracticeDeckTests: XCTestCase {
         let controller = deck()
         controller.show(clip: clip)
         XCTAssertNil(controller.timelineForTesting.beatGrid)
-        XCTAssertTrue(controller.timelineForTesting.toolbarForTesting.displayedBPMForTesting.isEmpty)
+        XCTAssertTrue(controller.toolbarForTesting.displayedBPMForTesting.isEmpty)
     }
 
     /// The rule the whole `isBeatGridUserSet` boolean exists for.
@@ -377,7 +377,7 @@ final class PracticeDeckTests: XCTestCase {
         let controller = deck()
         controller.show(clip: clip)
         controller.view.layoutSubtreeIfNeeded()
-        controller.timelineForTesting.toolbarForTesting.commitBPMForTesting("96")
+        controller.toolbarForTesting.commitBPMForTesting("96")
 
         let stored = try XCTUnwrap(libraryStore.clip(withID: clip.id))
         XCTAssertEqual(try XCTUnwrap(stored.bpm), 96, accuracy: 0.001)
@@ -397,11 +397,48 @@ final class PracticeDeckTests: XCTestCase {
         let controller = deck()
         controller.show(clip: clip)
         controller.view.layoutSubtreeIfNeeded()
-        controller.timelineForTesting.toolbarForTesting.commitBPMForTesting("96")
+        controller.toolbarForTesting.commitBPMForTesting("96")
 
         let stored = try XCTUnwrap(libraryStore.clip(withID: clip.id))
         XCTAssertNil(stored.beatConfidence,
                      "kept the old detection's confidence \(String(describing: stored.beatConfidence)) on a hand-set grid")
+    }
+
+    /// Editing the tempo by hand still moves the deck's live grid (not just the persisted clip),
+    /// and preserves the downbeat — this used to be `DeckTimelineView`'s own wiring before the
+    /// toolbar moved into the controller alongside the rest of the transport.
+    func testEditingTheTempoUpdatesTheLiveGrid() throws {
+        var clip = try makeClip(withStemSidecars: true)
+        clip.bpm = 120
+        clip.downbeatOffsetSeconds = 0.5
+        libraryStore.update(clip)
+
+        let controller = deck()
+        controller.show(clip: clip)
+        controller.view.layoutSubtreeIfNeeded()
+        controller.toolbarForTesting.commitBPMForTesting("96")
+
+        let grid = try XCTUnwrap(controller.timelineForTesting.beatGrid)
+        XCTAssertEqual(grid.bpm, 96, accuracy: 0.001)
+        XCTAssertEqual(grid.downbeatOffsetSeconds, 0.5, accuracy: 0.001, "editing the tempo moved the downbeat")
+    }
+
+    /// Same clamp-divergence risk `DeckTimelineView` used to guard against, now that the toolbar
+    /// and the grid it edits live on opposite sides of `PracticeDeckViewController`.
+    func testTappingFasterThanTheGridAllowsLeavesTheFieldAgreeingWithTheGrid() throws {
+        let clip = try makeClip(withStemSidecars: true)
+        let controller = deck()
+        controller.show(clip: clip)
+        controller.view.layoutSubtreeIfNeeded()
+
+        // Back-to-back, so the implied tempo is far above the grid's 400 BPM ceiling.
+        controller.toolbarForTesting.tapForTesting()
+        controller.toolbarForTesting.tapForTesting()
+
+        let grid = try XCTUnwrap(controller.timelineForTesting.beatGrid)
+        XCTAssertEqual(grid.bpm, 400, accuracy: 0.001, "fixture no longer exceeds the grid's clamp")
+        XCTAssertEqual(controller.toolbarForTesting.displayedBPMForTesting, "400",
+                       "the field shows a tempo the grid is not using")
     }
 
     /// A grid must not follow the user to the next clip — each clip has its own.

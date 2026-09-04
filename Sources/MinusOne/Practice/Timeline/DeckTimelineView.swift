@@ -50,7 +50,6 @@ final class DeckTimelineView: NSView {
         didSet {
             guard beatGrid != oldValue else { return }
             ruler.beatGrid = beatGrid
-            toolbar.setBPM(beatGrid?.bpm)
         }
     }
 
@@ -60,7 +59,6 @@ final class DeckTimelineView: NSView {
     private let ruler = TimelineRulerView()
     private let overlay = PlayheadOverlayView()
     private let indicator = TimelineScrollIndicatorView()
-    private let toolbar = TimelineToolbarView()
     private var lanes: [StemLaneView] = []
     private var headers: [SeparationStem: LaneHeaderView] = [:]
     private var headerViews: [NSView] = []
@@ -71,15 +69,12 @@ final class DeckTimelineView: NSView {
     /// The grid as it stood when the marker was grabbed, so a click that never moves it can be
     /// told from a drag that did.
     private var gridBeforeDownbeatDrag: BeatGrid?
-    private var tapTempo = TapTempo()
 
     init() {
         viewport = Viewport(clipDuration: 1, widthPoints: 0)
         super.init(frame: .zero)
         wantsLayer = true
         addSubview(ruler)
-        addSubview(toolbar)
-        toolbar.translatesAutoresizingMaskIntoConstraints = true
         addSubview(indicator)
         // Last, so it composites over the lanes. It returns `nil` from `hitTest`, so being on top
         // costs nothing in events.
@@ -88,25 +83,6 @@ final class DeckTimelineView: NSView {
         indicator.onScrubToStartTime = { [weak self] time in
             guard let self else { return }
             self.apply(self.viewport.scrolled(toStartTime: time))
-        }
-
-        toolbar.onBPMEdited = { [weak self] bpm in
-            guard let self else { return }
-            let grid = BeatGrid(bpm: bpm, downbeatOffsetSeconds: self.beatGrid?.downbeatOffsetSeconds ?? 0)
-            self.beatGrid = grid
-            self.onBeatGridEdited?(grid)
-        }
-        toolbar.onTapped = { [weak self] in
-            guard let self, let bpm = self.tapTempo.tap(at: Date().timeIntervalSinceReferenceDate) else { return }
-            let grid = BeatGrid(bpm: bpm, downbeatOffsetSeconds: self.beatGrid?.downbeatOffsetSeconds ?? 0)
-            self.beatGrid = grid
-            // `grid.bpm`, not the raw tap result: `BeatGrid.init` clamps to 1...400, and two taps
-            // 120ms apart imply 500. Showing the raw number leaves the field disagreeing with the
-            // grid, the ruler and the persisted clip — and stickily so, because `setBPM` records it
-            // as the last accepted value and the toolbar then rejects a re-Enter of it as outside
-            // its own 20...400, restoring the wrong number.
-            self.toolbar.setBPM(grid.bpm)
-            self.onBeatGridEdited?(grid)
         }
     }
 
@@ -117,12 +93,12 @@ final class DeckTimelineView: NSView {
 
     override var isFlipped: Bool { true }
 
-    /// Toolbar + ruler + lanes + indicator, with `laneSpacing` between every block.
+    /// Ruler + lanes + indicator, with `laneSpacing` between every block. The BPM/Tap toolbar used
+    /// to add its own row here; it now lives in `PracticeDeckViewController`'s control bar, below
+    /// the whole timeline, alongside the rest of the transport.
     static func height(forLaneCount count: Int) -> CGFloat {
         let lanes = CGFloat(count) * TimelineMetrics.laneHeight + CGFloat(max(0, count - 1)) * TimelineMetrics.laneSpacing
-        return TimelineMetrics.toolbarHeight
-            + TimelineMetrics.laneSpacing
-            + TimelineMetrics.rulerHeight
+        return TimelineMetrics.rulerHeight
             + TimelineMetrics.laneSpacing
             + lanes
             + TimelineMetrics.laneSpacing
@@ -276,8 +252,7 @@ final class DeckTimelineView: NSView {
         let canvasX = TimelineMetrics.headerWidth
         let width = canvasWidth
 
-        toolbar.frame = NSRect(x: canvasX, y: 0, width: width, height: TimelineMetrics.toolbarHeight)
-        let rulerY = TimelineMetrics.toolbarHeight + TimelineMetrics.laneSpacing
+        let rulerY: CGFloat = 0
         ruler.frame = NSRect(x: canvasX, y: rulerY, width: width, height: TimelineMetrics.rulerHeight)
 
         var y = rulerY + TimelineMetrics.rulerHeight + TimelineMetrics.laneSpacing
@@ -521,5 +496,4 @@ final class DeckTimelineView: NSView {
     var laneRenderCountsForTesting: [Int] { lanes.map(\.renderCount) }
     var hoverTimeForTesting: Double? { overlay.hoverTime }
     var headersForTesting: [SeparationStem: LaneHeaderView] { headers }
-    var toolbarForTesting: TimelineToolbarView { toolbar }
 }

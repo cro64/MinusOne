@@ -17,14 +17,15 @@ enum TimelineMetrics {
     /// `WindowSizing.minimum`'s 600pt with room to spare.
     ///
     /// Measured, not derived, by `WindowSizingTests.testTheDeckFitsTheMinimumWindowHeight`, which prints
-    /// it: **566pt** against the 600pt floor, 34pt spare. That is the deck's vertical stack at
-    /// 490pt (of which `DeckTimelineView.height(forLaneCount: 4)` is 384: 38 toolbar + 4 + 22 ruler
-    /// + 4 + 300 lanes + 4 + 12 indicator) plus 24pt of window padding and the 52pt header strip.
+    /// it: **578pt** against the 600pt floor, 22pt spare. That is the deck's vertical stack at
+    /// 502pt (of which `DeckTimelineView.height(forLaneCount: 4)` is 342: 22 ruler + 4 + 300 lanes
+    /// + 4 + 12 indicator) plus 24pt of window padding and the 52pt header strip.
     ///
-    /// The earlier figure recorded here was 574pt, from before the tempo toolbar existed, and adding
-    /// the toolbar to it read as 616 > 600 — arguing against the conclusion it was there to support.
-    /// If a later change lowers the window floor or grows the chrome past 34pt, the
-    /// compress-then-scroll behaviour is what to build then.
+    /// The BPM/Tap toolbar used to live inside that 384pt figure; it now sits in
+    /// `PracticeDeckViewController`'s content stack as its own row (temporarily — see
+    /// `toolbarHeight`'s comment), which is why the stack total moved from 490pt to 502pt while
+    /// the timeline's own height shrank. If a later change lowers the window floor or grows the
+    /// chrome past this margin, the compress-then-scroll behaviour is what to build then.
     static let laneHeight: CGFloat = 72
     static let laneSpacing: CGFloat = 4
 
@@ -33,8 +34,10 @@ enum TimelineMetrics {
     static let headerWidth: CGFloat = 132
     static let rulerHeight: CGFloat = 22
 
-    /// The tempo row above the ruler. Spec §8 budgeted 38pt for it; Phase 2 left the space unused
-    /// because there was no grid to control yet.
+    /// The BPM/Tap toolbar's height. Spec §8 budgeted 38pt for it. It no longer sits inside
+    /// `DeckTimelineView` — it moved to `PracticeDeckViewController`'s content stack as its own
+    /// row (temporary, until it is folded into the unified control bar) — but the row still needs
+    /// this constant, so it stays here alongside the rest of the timeline's shared geometry.
     static let toolbarHeight: CGFloat = 38
     static let scrollIndicatorHeight: CGFloat = 12
 
