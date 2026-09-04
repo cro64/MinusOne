@@ -41,12 +41,16 @@ final class TimelineToolbarView: NSView {
         tapButton.target = self
         tapButton.action = #selector(tapped)
 
-        // Tighter than `WindowUI.Metrics.rowSpacing` (8pt) — this view now sits inside the unified
-        // control bar (`PracticeDeckViewController.buildContent`), which has to fit alongside the
-        // transport and the speed slider in the 632pt the deck pane gets at `WindowSizing.minimum`;
-        // see `WindowSizingTests.testTheControlBarFitsTheMinimumWindowWidth`. A local override
-        // rather than lowering `rowSpacing` itself, since that constant is shared elsewhere.
-        let row = Layout.horizontalStack([label, bpmField, unit, tapButton], spacing: 4)
+        // Tighter than `WindowUI.Metrics.rowSpacing` (8pt), and one point tighter than
+        // `controlBar`'s own between-cluster spacing (`PracticeDeckViewController.buildContent`'s
+        // `controlBarSpacing`, 4pt) — this view sits inside that unified control bar, which has to
+        // fit alongside the transport and the speed slider in the 632pt the deck pane gets at
+        // `WindowSizing.minimum`; see `WindowSizingTests.testTheControlBarFitsTheMinimumWindowWidth`.
+        // Deliberately kept narrower than `controlBarSpacing` rather than merely fitting the width
+        // budget — equal or wider would make this row's own fields read as loosely as the toolbar
+        // reads against its neighboring clusters, undoing the grouping the redesign is for. A local
+        // override rather than lowering `rowSpacing` itself, since that constant is shared elsewhere.
+        let row = Layout.horizontalStack([label, bpmField, unit, tapButton], spacing: 3)
         Layout.pin(row, to: self, insets: NSEdgeInsets(top: 4, left: 0, bottom: 4, right: 0))
         setContentHuggingPriority(.required, for: .horizontal)
         setContentCompressionResistancePriority(.required, for: .horizontal)

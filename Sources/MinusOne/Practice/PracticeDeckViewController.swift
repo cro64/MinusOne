@@ -118,10 +118,10 @@ final class PracticeDeckViewController: NSViewController, NSTextFieldDelegate {
 
         // Back/play/forward read as one cluster, distinct from Loop — which is a mode, not a
         // transport action, and shouldn't look like a fourth button in the same group. The gap
-        // before Loop used to be visibly wider than this cluster's own 4pt; now both are close
-        // (see `controlBarSpacing`'s comment below on why the outer gap had to shrink to fit the
-        // minimum window), but the cluster still reads as one unit because its three buttons touch
-        // no other control on either side.
+        // before Loop (`controlBarSpacing`, 4pt) equals this cluster's own 4pt, which still reads
+        // as a boundary because it's no smaller than any internal gap in the bar (see
+        // `controlBarSpacing`'s comment below) — the cluster reads as one unit because its three
+        // buttons touch no other control on either side.
         let playbackCluster = Layout.horizontalStack([skipBackButton, playPauseButton, skipForwardButton], spacing: 4)
         // Required, not the stack's own default: `controlBar`'s slack is meant to be absorbed by
         // `Layout.flexibleSpacer()` alone. Without this, a nested stack like this one is a
@@ -133,9 +133,11 @@ final class PracticeDeckViewController: NSViewController, NSTextFieldDelegate {
         tempoSlider.target = self
         tempoSlider.action = #selector(tempoChanged)
         let tempoLabel = SharedUI.fieldLabel("Speed")
-        // Tighter than `WindowUI.Metrics.rowSpacing` (8pt) — see `controlBarSpacing`'s comment on
-        // `controlBar` below for why this cluster's own internal gap had to shrink too.
-        let speedCluster = Layout.horizontalStack([tempoLabel, tempoSlider, tempoValueLabel], spacing: 4)
+        // Tighter than `WindowUI.Metrics.rowSpacing` (8pt), and one point tighter than
+        // `controlBarSpacing` itself — see `controlBarSpacing`'s comment on `controlBar` below for
+        // why this cluster's own internal gap had to shrink, and why it stays strictly narrower
+        // than the gap between clusters rather than merely fitting the width budget.
+        let speedCluster = Layout.horizontalStack([tempoLabel, tempoSlider, tempoValueLabel], spacing: 3)
         // Same reason as `playbackCluster`'s hugging priority above: left at the default, this
         // nested stack could absorb `controlBar`'s slack instead of `Layout.flexibleSpacer()`.
         speedCluster.setHuggingPriority(.required, for: .horizontal)
@@ -153,7 +155,13 @@ final class PracticeDeckViewController: NSViewController, NSTextFieldDelegate {
         // — see `WindowSizingTests.testTheControlBarFitsTheMinimumWindowWidth`, which pins this
         // budget. A local override rather than lowering `sectionSpacing` itself, since that constant
         // is shared by unrelated layout elsewhere in the app.
-        let controlBarSpacing: CGFloat = 3
+        //
+        // Held at 4pt rather than dropping further to chase margin: this is the gap *between*
+        // `controlBar`'s six arranged views, so it must stay >= every internal gap inside those
+        // views (`playbackCluster`'s 4pt, `toolbar`'s 3pt, `speedCluster`'s 3pt) or the clusters
+        // stop reading as distinct groups — measured once at 3pt, narrower than the 4pt inside
+        // `playbackCluster` and `toolbar`, which is exactly that regression.
+        let controlBarSpacing: CGFloat = 4
         let controlBar = Layout.horizontalStack(
             [playbackCluster, loopButton, timeLabel, Layout.flexibleSpacer(), toolbar, speedCluster],
             spacing: controlBarSpacing
