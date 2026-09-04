@@ -20,14 +20,9 @@ final class LaneHeaderView: NSView {
     init(stem: SeparationStem) {
         nameLabel = SharedUI.fieldLabel(stem.displayName)
         slider = NSSlider(value: 1, minValue: 0, maxValue: 1, target: nil, action: nil)
-        soloButton = Self.laneToggleButton(symbolName: "headphones", label: "Solo \(stem.displayName)", target: nil, action: nil)
-        muteButton = Self.laneToggleButton(symbolName: "speaker.slash.fill", label: "Mute \(stem.displayName)", target: nil, action: nil)
-        exportButton = WindowUI.rowIconButton(
-            symbolName: "square.and.arrow.up",
-            label: "Export \(stem.displayName)",
-            target: nil,
-            action: nil
-        )
+        soloButton = Self.laneIconButton(symbolName: "headphones", label: "Solo \(stem.displayName)", target: nil, action: nil)
+        muteButton = Self.laneIconButton(symbolName: "speaker.slash.fill", label: "Mute \(stem.displayName)", target: nil, action: nil)
+        exportButton = Self.laneIconButton(symbolName: "square.and.arrow.up", label: "Export \(stem.displayName)", target: nil, action: nil)
         super.init(frame: .zero)
 
         // The text variant, not the fill: as an 11pt label the raw stem hues measure 2.7:1
@@ -48,14 +43,25 @@ final class LaneHeaderView: NSView {
         soloButton.action = #selector(soloClicked)
         muteButton.target = self
         muteButton.action = #selector(muteClicked)
+        exportButton.setButtonType(.momentaryPushIn)
+        exportButton.reflectsState = false
         exportButton.target = self
         exportButton.action = #selector(exportClicked)
         exportButton.isEnabled = false
 
-        let buttons = Layout.horizontalStack([soloButton, muteButton, exportButton], spacing: 4)
-        let stack = Layout.verticalStack([nameLabel, slider, buttons], spacing: 3)
-        Layout.pin(stack, to: self, insets: NSEdgeInsets(top: 6, left: 6, bottom: 6, right: 6))
-        exportButton.heightAnchor.constraint(equalTo: muteButton.heightAnchor).isActive = true
+        // Name + state toggles on top, fader + the export action below — two roomy rows instead of
+        // three cramped ones (name / fader / a three-icon row), and solo/mute no longer carry a
+        // permanent border (see `laneIconButton`), so an inert lane reads as a name and a fader,
+        // not three boxed controls.
+        let topRow = Layout.horizontalStack([nameLabel, Layout.flexibleSpacer(), soloButton, muteButton], spacing: 4)
+        let bottomRow = Layout.horizontalStack([slider, exportButton], spacing: 6)
+        let stack = Layout.verticalStack([topRow, bottomRow], spacing: 8)
+        Layout.pin(stack, to: self, insets: NSEdgeInsets(top: 8, left: 8, bottom: 8, right: 8))
+        // `.leading`-aligned stacks pin their children's leading edge only — see `WindowUI.section`
+        // for the same trap. Without this, `bottomRow`'s slider (the widest thing here) would claim
+        // only its own fitting width instead of the header's, and `topRow` would do the same.
+        topRow.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
+        bottomRow.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
     }
 
     @available(*, unavailable)
@@ -63,17 +69,19 @@ final class LaneHeaderView: NSView {
         fatalError("init(coder:) has not been implemented")
     }
 
-    /// A latching icon button sized for the lane header's 132pt column.
+    /// A borderless icon button for the lane header — solo, mute and export all use this now,
+    /// instead of `WindowUI.rowIconButton`'s permanently bordered chrome. Three individually
+    /// outlined 26×20 boxes read as three separate controls even when none of them are engaged;
+    /// dropping the border (kept only as `FlatButton.engagedFillColorOverride`'s solid fill, which
+    /// still shows when a toggle is on) leaves a lane with nothing engaged reading as a name and a
+    /// fader, with icons that light up rather than a row of boxes.
     ///
-    /// Not `WindowUI.toggleControlButton`: `FlatButton` inflates a *titled* button's intrinsic size
-    /// by 14.4pt a side, which measured a three-button row at 135×76 against a 132×72 budget. An
-    /// empty title skips that padding — the escape `FlatButton.intrinsicContentSize` documents for
-    /// the title bar's theme switch — so these are glyphs with tooltips and accessibility labels
-    /// rather than "Solo"/"Mute" text.
-    ///
-    /// Not `WindowUI.rowIconButton` either: that one is momentary, and these are modes that must
-    /// stay lit while engaged.
-    private static func laneToggleButton(
+    /// `cornerStyle = .capsule` makes a 20×20 button's engaged fill a circle rather than a rounded
+    /// square — `FlatButton.layout()` re-derives the radius from the bounds on every layout pass,
+    /// so this is set once here rather than fought on every resize. Momentary buttons (export) set
+    /// `reflectsState = false` themselves after construction, same as `WindowUI.transportButton`
+    /// documents — a plain click leaves `state == .on` regardless of button type.
+    private static func laneIconButton(
         symbolName: String,
         label: String,
         target: AnyObject?,
@@ -86,7 +94,9 @@ final class LaneHeaderView: NSView {
         button.setIcon(symbolName, pointSize: 11, label: label)
         button.toolTip = label
         button.setAccessibilityLabel(label)
-        button.constrainSize(width: 26, height: 20)
+        button.cornerStyle = .capsule
+        button.layer?.borderWidth = 0
+        button.constrainSize(width: 20, height: 20)
         return button
     }
 
