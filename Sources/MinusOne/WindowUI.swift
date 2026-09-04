@@ -171,8 +171,10 @@ enum WindowUI {
 
     /// Icon-only transport control (Practice deck's back/play/forward/loop). Same flat
     /// `.secondary` chrome as `toggleControlButton` — so a toggled Loop still fills solid accent —
-    /// but sized as a square-ish glyph button instead of a text one. The 33pt height is the height
-    /// the row's text buttons measured, so swapping labels for glyphs doesn't reflow the deck.
+    /// but sized as a square-ish glyph button instead of a text one. 32×28, not the deck's older
+    /// 40×33: once these four buttons sit in the unified control bar beside the BPM/Tap toolbar
+    /// and Speed slider (both far more compact controls), the old size read as oversized next to
+    /// its neighbours — measured against the real deck, not just eyeballed off a mockup.
     static func transportButton(
         symbolName: String,
         label: String,
@@ -189,7 +191,7 @@ enum WindowUI {
         button.imagePosition = .imageOnly
         button.imageScaling = .scaleProportionallyDown
         button.setIcon(symbolName, label: label)
-        button.constrainSize(width: 40, height: 33)
+        button.constrainSize(width: 32, height: 28)
         return button
     }
 

@@ -118,10 +118,8 @@ final class PracticeDeckViewController: NSViewController, NSTextFieldDelegate {
 
         // Back/play/forward read as one cluster, distinct from Loop — which is a mode, not a
         // transport action, and shouldn't look like a fourth button in the same group. The gap
-        // before Loop (`controlBarSpacing`, 4pt) equals this cluster's own 4pt, which still reads
-        // as a boundary because it's no smaller than any internal gap in the bar (see
-        // `controlBarSpacing`'s comment below) — the cluster reads as one unit because its three
-        // buttons touch no other control on either side.
+        // before Loop (`controlBarSpacing`, 8pt) is wider than this cluster's own 4pt, which is
+        // what makes the cluster read as one unit rather than four buttons in a row.
         let playbackCluster = Layout.horizontalStack([skipBackButton, playPauseButton, skipForwardButton], spacing: 4)
         // Required, not the stack's own default: `controlBar`'s slack is meant to be absorbed by
         // `Layout.flexibleSpacer()` alone. Without this, a nested stack like this one is a
@@ -133,11 +131,10 @@ final class PracticeDeckViewController: NSViewController, NSTextFieldDelegate {
         tempoSlider.target = self
         tempoSlider.action = #selector(tempoChanged)
         let tempoLabel = SharedUI.fieldLabel("Speed")
-        // Tighter than `WindowUI.Metrics.rowSpacing` (8pt), and one point tighter than
-        // `controlBarSpacing` itself — see `controlBarSpacing`'s comment on `controlBar` below for
-        // why this cluster's own internal gap had to shrink, and why it stays strictly narrower
-        // than the gap between clusters rather than merely fitting the width budget.
-        let speedCluster = Layout.horizontalStack([tempoLabel, tempoSlider, tempoValueLabel], spacing: 3)
+        // Tighter than `WindowUI.Metrics.rowSpacing` (8pt) and `controlBarSpacing` (8pt) both — see
+        // `controlBarSpacing`'s comment on `controlBar` below for why this cluster's own fields must
+        // stay more tightly grouped than the gap separating the cluster from its neighbours.
+        let speedCluster = Layout.horizontalStack([tempoLabel, tempoSlider, tempoValueLabel], spacing: 5)
         // Same reason as `playbackCluster`'s hugging priority above: left at the default, this
         // nested stack could absorb `controlBar`'s slack instead of `Layout.flexibleSpacer()`.
         speedCluster.setHuggingPriority(.required, for: .horizontal)
@@ -149,19 +146,14 @@ final class PracticeDeckViewController: NSViewController, NSTextFieldDelegate {
         // deck's two tempo concepts (the musical grid and the playback rate) sit next to each other
         // instead of on opposite ends of the deck. Replaces what used to be two separate rows (the
         // transport, and a full-width "Tempo" slider) plus the toolbar's own row above the ruler.
-        // Tighter than `WindowUI.Metrics.sectionSpacing` (16pt): at `WindowSizing.minimum` the deck
-        // pane only has 632pt for this bar (900 - the sidebar's 220pt `minimumThickness` - 48pt of
-        // deck padding), and the unified bar's five gaps at the shared 16pt spacing measured 706pt
-        // — see `WindowSizingTests.testTheControlBarFitsTheMinimumWindowWidth`, which pins this
-        // budget. A local override rather than lowering `sectionSpacing` itself, since that constant
-        // is shared by unrelated layout elsewhere in the app.
         //
-        // Held at 4pt rather than dropping further to chase margin: this is the gap *between*
-        // `controlBar`'s six arranged views, so it must stay >= every internal gap inside those
-        // views (`playbackCluster`'s 4pt, `toolbar`'s 3pt, `speedCluster`'s 3pt) or the clusters
-        // stop reading as distinct groups — measured once at 3pt, narrower than the 4pt inside
-        // `playbackCluster` and `toolbar`, which is exactly that regression.
-        let controlBarSpacing: CGFloat = 4
+        // This is the gap *between* `controlBar`'s six arranged views, so it must stay >= every
+        // internal gap inside those views (`playbackCluster`'s 4pt, `toolbar`'s 5pt, `speedCluster`'s
+        // 5pt) or the clusters stop reading as distinct groups. `WindowUI.Metrics.rowSpacing` (8pt),
+        // not `sectionSpacing` (16pt): `controlBar` no longer stretches to the pane's full width (see
+        // the `.leading`-stack comment below), so 16pt is no longer forced open by a flexible spacer
+        // soaking up the whole pane's slack — it would just be 16pt of dead air the bar doesn't need.
+        let controlBarSpacing: CGFloat = 8
         let controlBar = Layout.horizontalStack(
             [playbackCluster, loopButton, timeLabel, Layout.flexibleSpacer(), toolbar, speedCluster],
             spacing: controlBarSpacing
@@ -175,15 +167,25 @@ final class PracticeDeckViewController: NSViewController, NSTextFieldDelegate {
         content.setCustomSpacing(4, after: statusLabel)
 
         // `.leading`-aligned stacks pin their arranged subviews' leading edge and nothing else —
-        // the same trap `WindowUI.section` documents. `controlBar` got away with it because
-        // `Layout.flexibleSpacer()` is one of its own arranged views: a low-hugging spacer that
-        // absorbs the forced width, while the fixed-width playback cluster and speed cluster on
-        // either side of it don't stretch. `DeckTimelineView` is a plain NSView, which to this
-        // stack is an opaque box that gets its fitting width. Measured before this chain (with the
-        // old mixer rows, which had the same shape): tempo slider 556.5pt, every stem fader stuck
-        // at 140pt — exactly its `greaterThanOrEqualToConstant` floor, in a 671pt-wide pane. The
-        // timeline needs the same treatment: its lane canvas is `bounds.width - headerWidth`, so a
-        // fitting-width timeline would draw every waveform into a sliver.
+        // the same trap `WindowUI.section` documents. `DeckTimelineView` is a plain NSView, which to
+        // this stack is an opaque box that gets its fitting width, so `timeline` needs an explicit
+        // equal-width constraint below or its lane canvas (`bounds.width - headerWidth`) draws every
+        // waveform into a sliver. Measured before this chain (with the old mixer rows, which had the
+        // same shape): tempo slider 556.5pt, every stem fader stuck at 140pt — exactly its
+        // `greaterThanOrEqualToConstant` floor, in a 671pt-wide pane.
+        //
+        // `controlBar` deliberately does NOT get the same treatment. An earlier version forced it to
+        // `content`'s full width with `Layout.flexibleSpacer()` absorbing the slack — which reads
+        // fine on paper, but at any window wider than the bar's own fitting width it puts the whole
+        // gap in one place: the playback cluster hugs the left edge, BPM/Tap/Speed hug the right, and
+        // a single wide gash of empty space sits between them, while every visible gap in the bar
+        // stays at its tight fixed spacing regardless of how much room the window actually has. Left
+        // unconstrained, `controlBar` instead sits at its own comfortable fitting width, pinned only
+        // by its leading edge (inherited from `content`'s `.leading` alignment) — the same width at
+        // every window size, with no window-width-dependent gap to look wrong. It still has to fit
+        // within what `WindowSizing.minimum` gives the deck pane (632pt); see
+        // `WindowSizingTests.testTheControlBarFitsTheMinimumWindowWidth`, which measures the real
+        // fitting width against that budget rather than asserting a literal.
         // The title is sized to its own text rather than left to fill the pane. An editable
         // NSTextField reports no intrinsic width (measured: -1, scrollable cell or not), so
         // content hugging can't do this job — the width is measured from the string and kept up
@@ -196,7 +198,6 @@ final class PracticeDeckViewController: NSViewController, NSTextFieldDelegate {
         titleLabel.widthAnchor.constraint(lessThanOrEqualTo: content.widthAnchor).isActive = true
         sizeTitleFieldToText(titleLabel.stringValue)
         timeline.widthAnchor.constraint(equalTo: content.widthAnchor).isActive = true
-        controlBar.widthAnchor.constraint(equalTo: content.widthAnchor).isActive = true
 
         let pad = WindowUI.Metrics.padding
         Layout.pin(content, to: view, edges: [.top, .leading, .trailing], insets: NSEdgeInsets(top: pad, left: pad, bottom: 0, right: pad))
