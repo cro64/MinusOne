@@ -77,4 +77,57 @@ final class WindowSizingTests: XCTestCase {
             "the deck needs \(needed)pt but the floor is \(WindowSizing.minimum.height)pt"
         )
     }
+
+    /// Width companion to `testTheDeckFitsTheMinimumWindowHeight`: at `WindowSizing.minimum` the
+    /// sidebar claims its `minimumThickness` (`PracticeSplitViewController.swift:15`) and the deck
+    /// pane is padded on both sides, so whatever is left over is the control bar's real budget.
+    ///
+    /// Measured, not derived, the same way the height test insists on — a hand-summed cluster
+    /// width silently goes stale exactly like a hand-summed chrome literal would.
+    func testTheControlBarFitsTheMinimumWindowWidth() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("WindowSizing-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let controller = PracticeDeckViewController(
+            libraryStore: ClipLibraryStore(rootURL: root),
+            playbackEngine: PracticePlaybackEngine()
+        )
+        controller.loadView()
+
+        // The same 220pt `minimumThickness` PracticeSplitViewController.swift:15 gives the sidebar
+        // item — not exposed as a shared constant, so mirrored here as the height test mirrors its
+        // own 52pt header strip.
+        let sidebarMinimumThickness: CGFloat = 220
+        let deckPadding = WindowUI.Metrics.padding * 2
+        let availableContentWidth = WindowSizing.minimum.width - sidebarMinimumThickness - deckPadding
+        controller.view.frame = NSRect(x: 0, y: 0, width: availableContentWidth + deckPadding, height: 900)
+        controller.view.layoutSubtreeIfNeeded()
+
+        var stacks: [NSStackView] = []
+        func walk(_ view: NSView) {
+            if let stack = view as? NSStackView, stack.orientation == .horizontal { stacks.append(stack) }
+            view.subviews.forEach(walk)
+        }
+        walk(controller.view)
+        // The control bar is the horizontal stack that directly arranges the BPM/Tap toolbar —
+        // `controlBar` itself is private, so this is the least invasive way to find it from a test.
+        let toolbar = controller.toolbarForTesting
+        let controlBar = try XCTUnwrap(
+            stacks.first { $0.arrangedSubviews.contains(toolbar) },
+            "couldn't find the control bar — expected a horizontal stack directly containing the toolbar"
+        )
+
+        let fittingWidth = controlBar.fittingSize.width
+        // Printed for the same reason the height test prints its figure: a quoted number nobody can
+        // re-derive goes stale silently.
+        print("MEASURED control bar width: \(fittingWidth)pt against \(availableContentWidth)pt available "
+              + "(minimum window \(WindowSizing.minimum.width)pt - sidebar \(sidebarMinimumThickness)pt "
+              + "- padding \(deckPadding)pt)")
+        XCTAssertLessThanOrEqual(
+            fittingWidth, availableContentWidth,
+            "the control bar needs \(fittingWidth)pt but only \(availableContentWidth)pt is available"
+        )
+    }
 }

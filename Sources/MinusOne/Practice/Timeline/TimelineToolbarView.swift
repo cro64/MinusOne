@@ -41,7 +41,12 @@ final class TimelineToolbarView: NSView {
         tapButton.target = self
         tapButton.action = #selector(tapped)
 
-        let row = Layout.horizontalStack([label, bpmField, unit, tapButton], spacing: WindowUI.Metrics.rowSpacing)
+        // Tighter than `WindowUI.Metrics.rowSpacing` (8pt) — this view now sits inside the unified
+        // control bar (`PracticeDeckViewController.buildContent`), which has to fit alongside the
+        // transport and the speed slider in the 632pt the deck pane gets at `WindowSizing.minimum`;
+        // see `WindowSizingTests.testTheControlBarFitsTheMinimumWindowWidth`. A local override
+        // rather than lowering `rowSpacing` itself, since that constant is shared elsewhere.
+        let row = Layout.horizontalStack([label, bpmField, unit, tapButton], spacing: 4)
         Layout.pin(row, to: self, insets: NSEdgeInsets(top: 4, left: 0, bottom: 4, right: 0))
         setContentHuggingPriority(.required, for: .horizontal)
         setContentCompressionResistancePriority(.required, for: .horizontal)

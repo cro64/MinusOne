@@ -16,16 +16,18 @@ enum TimelineMetrics {
     /// is deliberately not built, because it is unreachable — the deck fits inside
     /// `WindowSizing.minimum`'s 600pt with room to spare.
     ///
-    /// Measured, not derived, by `WindowSizingTests.testTheDeckFitsTheMinimumWindowHeight`, which prints
-    /// it: **578pt** against the 600pt floor, 22pt spare. That is the deck's vertical stack at
-    /// 502pt (of which `DeckTimelineView.height(forLaneCount: 4)` is 342: 22 ruler + 4 + 300 lanes
-    /// + 4 + 12 indicator) plus 24pt of window padding and the 52pt header strip.
+    /// Measured, not derived, by `WindowSizingTests.testTheDeckFitsTheMinimumWindowHeight`, which
+    /// prints it: **497pt** against the 600pt floor, 103pt spare. That is the deck's vertical
+    /// stack (title, status, timeline, and the unified control bar — see
+    /// `PracticeDeckViewController.buildContent`) at 421pt, of which
+    /// `DeckTimelineView.height(forLaneCount: 4)` is 342 (22 ruler + 4 + 300 lanes + 4 + 12
+    /// indicator), plus 24pt of window padding and the 52pt header strip.
     ///
-    /// The BPM/Tap toolbar used to live inside that 384pt figure; it now sits in
-    /// `PracticeDeckViewController`'s content stack as its own row (temporarily — see
-    /// `toolbarHeight`'s comment), which is why the stack total moved from 490pt to 502pt while
-    /// the timeline's own height shrank. If a later change lowers the window floor or grows the
-    /// chrome past this margin, the compress-then-scroll behaviour is what to build then.
+    /// The BPM/Tap toolbar no longer has a row of its own: it is one of the arranged views inside
+    /// the control bar alongside the transport and the speed slider, so there is no separate
+    /// toolbar-row height to account for here any more (see `toolbarHeight`'s comment). If a
+    /// later change lowers the window floor or grows the chrome past this margin, the
+    /// compress-then-scroll behaviour is what to build then.
     static let laneHeight: CGFloat = 72
     static let laneSpacing: CGFloat = 4
 
@@ -34,10 +36,12 @@ enum TimelineMetrics {
     static let headerWidth: CGFloat = 132
     static let rulerHeight: CGFloat = 22
 
-    /// The BPM/Tap toolbar's height. Spec §8 budgeted 38pt for it. It no longer sits inside
-    /// `DeckTimelineView` — it moved to `PracticeDeckViewController`'s content stack as its own
-    /// row (temporary, until it is folded into the unified control bar) — but the row still needs
-    /// this constant, so it stays here alongside the rest of the timeline's shared geometry.
+    /// The BPM/Tap toolbar's height. Spec §8 budgeted 38pt for it. It has no production call site
+    /// any more: `TimelineToolbarView` is now one of the arranged views inside
+    /// `PracticeDeckViewController`'s unified control bar, which sizes it by its own fitting size
+    /// rather than by this constant. It stays here as the fitting-height budget
+    /// `TimelineToolbarTests` checks the view against in isolation, and alongside the rest of the
+    /// timeline's shared geometry since that is where it originated.
     static let toolbarHeight: CGFloat = 38
     static let scrollIndicatorHeight: CGFloat = 12
 

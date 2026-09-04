@@ -69,12 +69,11 @@ final class LaneHeaderView: NSView {
         fatalError("init(coder:) has not been implemented")
     }
 
-    /// A borderless icon button for the lane header — solo, mute and export all use this now,
-    /// instead of `WindowUI.rowIconButton`'s permanently bordered chrome. Three individually
-    /// outlined 26×20 boxes read as three separate controls even when none of them are engaged;
-    /// dropping the border (kept only as `FlatButton.engagedFillColorOverride`'s solid fill, which
-    /// still shows when a toggle is on) leaves a lane with nothing engaged reading as a name and a
-    /// fader, with icons that light up rather than a row of boxes.
+    /// A borderless icon button for the lane header — solo, mute and export all use this now.
+    /// Three individually outlined 26×20 boxes read as three separate controls even when none of
+    /// them are engaged; dropping the border (kept only as `FlatButton.engagedFillColorOverride`'s
+    /// solid fill, which still shows when a toggle is on) leaves a lane with nothing engaged
+    /// reading as a name and a fader, with icons that light up rather than a row of boxes.
     ///
     /// `cornerStyle = .capsule` makes a 20×20 button's engaged fill a circle rather than a rounded
     /// square — `FlatButton.layout()` re-derives the radius from the bounds on every layout pass,

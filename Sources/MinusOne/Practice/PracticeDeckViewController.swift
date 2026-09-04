@@ -101,7 +101,6 @@ final class PracticeDeckViewController: NSViewController, NSTextFieldDelegate {
 
         timeline.translatesAutoresizingMaskIntoConstraints = false
         timelineHeightConstraint.isActive = true
-        toolbar.translatesAutoresizingMaskIntoConstraints = false
 
         playPauseButton.target = self
         playPauseButton.action = #selector(togglePlayPause)
@@ -117,16 +116,28 @@ final class PracticeDeckViewController: NSViewController, NSTextFieldDelegate {
         timeLabel.isHidden = false
         timeLabel.stringValue = "0:00 / 0:00"
 
-        // Back/play/forward read as one cluster, then a wider gap before Loop — which is a mode,
-        // not a transport action, and shouldn't look like a fourth button in the same group.
+        // Back/play/forward read as one cluster, distinct from Loop — which is a mode, not a
+        // transport action, and shouldn't look like a fourth button in the same group. The gap
+        // before Loop used to be visibly wider than this cluster's own 4pt; now both are close
+        // (see `controlBarSpacing`'s comment below on why the outer gap had to shrink to fit the
+        // minimum window), but the cluster still reads as one unit because its three buttons touch
+        // no other control on either side.
         let playbackCluster = Layout.horizontalStack([skipBackButton, playPauseButton, skipForwardButton], spacing: 4)
+        // Required, not the stack's own default: `controlBar`'s slack is meant to be absorbed by
+        // `Layout.flexibleSpacer()` alone. Without this, a nested stack like this one is a
+        // candidate to absorb it instead — measured once at ~343pt, which shoved a sibling control
+        // that far off its intended position with nothing on screen to explain why.
         playbackCluster.setHuggingPriority(.required, for: .horizontal)
 
         tempoSlider.isContinuous = true
         tempoSlider.target = self
         tempoSlider.action = #selector(tempoChanged)
         let tempoLabel = SharedUI.fieldLabel("Speed")
-        let speedCluster = Layout.horizontalStack([tempoLabel, tempoSlider, tempoValueLabel], spacing: WindowUI.Metrics.rowSpacing)
+        // Tighter than `WindowUI.Metrics.rowSpacing` (8pt) — see `controlBarSpacing`'s comment on
+        // `controlBar` below for why this cluster's own internal gap had to shrink too.
+        let speedCluster = Layout.horizontalStack([tempoLabel, tempoSlider, tempoValueLabel], spacing: 4)
+        // Same reason as `playbackCluster`'s hugging priority above: left at the default, this
+        // nested stack could absorb `controlBar`'s slack instead of `Layout.flexibleSpacer()`.
         speedCluster.setHuggingPriority(.required, for: .horizontal)
         // Fixed, not `greaterThanOrEqualToConstant` — a small control paired with BPM/Tap in the
         // control bar, not a row that owns the deck's full width the way it used to.
@@ -136,9 +147,16 @@ final class PracticeDeckViewController: NSViewController, NSTextFieldDelegate {
         // deck's two tempo concepts (the musical grid and the playback rate) sit next to each other
         // instead of on opposite ends of the deck. Replaces what used to be two separate rows (the
         // transport, and a full-width "Tempo" slider) plus the toolbar's own row above the ruler.
+        // Tighter than `WindowUI.Metrics.sectionSpacing` (16pt): at `WindowSizing.minimum` the deck
+        // pane only has 632pt for this bar (900 - the sidebar's 220pt `minimumThickness` - 48pt of
+        // deck padding), and the unified bar's five gaps at the shared 16pt spacing measured 706pt
+        // — see `WindowSizingTests.testTheControlBarFitsTheMinimumWindowWidth`, which pins this
+        // budget. A local override rather than lowering `sectionSpacing` itself, since that constant
+        // is shared by unrelated layout elsewhere in the app.
+        let controlBarSpacing: CGFloat = 3
         let controlBar = Layout.horizontalStack(
             [playbackCluster, loopButton, timeLabel, Layout.flexibleSpacer(), toolbar, speedCluster],
-            spacing: WindowUI.Metrics.sectionSpacing
+            spacing: controlBarSpacing
         )
 
         let content = Layout.verticalStack(
