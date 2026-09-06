@@ -318,3 +318,41 @@ final class HeroWaveformView: NSView {
         ))
     }
 }
+
+/// The hero band's bottom-edge drag handle. Draws a short grip line and reports raw vertical drag
+/// deltas — clamping to `HeroWaveformView.minimumHeight...maximumHeight` and writing to
+/// `Preferences` are the caller's job (`PracticeDeckViewController`), not this view's.
+final class HeroResizeHandleView: NSView {
+    /// Positive when the user drags down, since AppKit's window coordinate space (this view is not
+    /// flipped) has y increasing upward — dragging down means a smaller `locationInWindow.y`, and
+    /// dragging down should make the band taller.
+    var onDrag: ((CGFloat) -> Void)?
+
+    private var lastY: CGFloat?
+
+    override func resetCursorRects() {
+        addCursorRect(bounds, cursor: .resizeUpDown)
+    }
+
+    override func mouseDown(with event: NSEvent) {
+        lastY = event.locationInWindow.y
+    }
+
+    override func mouseDragged(with event: NSEvent) {
+        guard let lastY else { return }
+        let currentY = event.locationInWindow.y
+        onDrag?(lastY - currentY)
+        self.lastY = currentY
+    }
+
+    override func mouseUp(with event: NSEvent) {
+        lastY = nil
+    }
+
+    override func draw(_ dirtyRect: NSRect) {
+        super.draw(dirtyRect)
+        let grip = NSRect(x: bounds.midX - 16, y: bounds.midY - 1.5, width: 32, height: 3)
+        NSColor.labelColor.withAlphaComponent(0.16).setFill()
+        NSBezierPath(roundedRect: grip, xRadius: 1.5, yRadius: 1.5).fill()
+    }
+}

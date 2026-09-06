@@ -23,6 +23,12 @@ final class PracticeDeckViewController: NSViewController, NSTextFieldDelegate {
     private let titleLabel = ClickToEditTextField(labelWithString: "")
     private let statusLabel = NSTextField(labelWithString: "")
     private let timeline = DeckTimelineView()
+    private let preferences = Preferences()
+    private let heroWaveformView = HeroWaveformView(frame: .zero)
+    private let heroResizeHandle = HeroResizeHandleView(frame: .zero)
+    private var heroContainer: NSStackView?
+    private lazy var heroHeightConstraint = heroWaveformView.heightAnchor.constraint(equalToConstant: CGFloat(preferences.heroWaveformHeight))
+    private let heroToggleButton = FlatButton(title: "", kind: .secondary, target: nil, action: nil)
     private let toolbar = TimelineToolbarView()
     private var tapTempo = TapTempo()
     private lazy var timelineHeightConstraint = timeline.heightAnchor.constraint(
@@ -102,6 +108,27 @@ final class PracticeDeckViewController: NSViewController, NSTextFieldDelegate {
         timeline.translatesAutoresizingMaskIntoConstraints = false
         timelineHeightConstraint.isActive = true
 
+        heroToggleButton.setButtonType(.pushOnPushOff)
+        heroToggleButton.imagePosition = .imageOnly
+        heroToggleButton.imageScaling = .scaleProportionallyDown
+        heroToggleButton.setIcon("waveform", pointSize: 11, label: "Show hero waveform")
+        heroToggleButton.cornerStyle = .capsule
+        heroToggleButton.layer?.borderWidth = 0
+        heroToggleButton.constrainSize(width: 20, height: 20)
+        heroToggleButton.target = self
+        heroToggleButton.action = #selector(toggleHeroWaveform)
+
+        heroWaveformView.translatesAutoresizingMaskIntoConstraints = false
+        heroResizeHandle.translatesAutoresizingMaskIntoConstraints = false
+        heroResizeHandle.onDrag = { [weak self] delta in self?.heroResizeHandleDragged(byDeltaY: delta) }
+        heroHeightConstraint.isActive = true
+        // 4pt, not a rounder 8: `HeroWaveformView.maximumHeight` (80) was sized against the
+        // measured 103pt spare margin at `WindowSizing.minimum` assuming exactly this height for
+        // the handle plus the 16pt section-spacing gap above the hero (80 + 4 + 16 = 100 ≤ 103) —
+        // see that constant's doc comment. Widening this strip without also lowering
+        // `maximumHeight` reopens that margin.
+        heroResizeHandle.heightAnchor.constraint(equalToConstant: 4).isActive = true
+
         playPauseButton.target = self
         playPauseButton.action = #selector(togglePlayPause)
 
@@ -159,11 +186,15 @@ final class PracticeDeckViewController: NSViewController, NSTextFieldDelegate {
             spacing: controlBarSpacing
         )
 
+        let titleRow = Layout.horizontalStack([titleLabel, heroToggleButton], spacing: 8)
+        let heroStack = Layout.verticalStack([heroWaveformView, heroResizeHandle], spacing: 0)
+        heroContainer = heroStack
+
         let content = Layout.verticalStack(
-            [titleLabel, statusLabel, timeline, controlBar],
+            [titleRow, statusLabel, heroStack, timeline, controlBar],
             spacing: WindowUI.Metrics.sectionSpacing
         )
-        content.setCustomSpacing(4, after: titleLabel)
+        content.setCustomSpacing(4, after: titleRow)
         content.setCustomSpacing(4, after: statusLabel)
 
         // `.leading`-aligned stacks pin their arranged subviews' leading edge and nothing else —
@@ -198,15 +229,28 @@ final class PracticeDeckViewController: NSViewController, NSTextFieldDelegate {
         titleLabel.widthAnchor.constraint(lessThanOrEqualTo: content.widthAnchor).isActive = true
         sizeTitleFieldToText(titleLabel.stringValue)
         timeline.widthAnchor.constraint(equalTo: content.widthAnchor).isActive = true
+        heroStack.widthAnchor.constraint(equalTo: content.widthAnchor).isActive = true
+        heroWaveformView.widthAnchor.constraint(equalTo: heroStack.widthAnchor).isActive = true
+        heroResizeHandle.widthAnchor.constraint(equalTo: heroStack.widthAnchor).isActive = true
 
         let pad = WindowUI.Metrics.padding
         Layout.pin(content, to: view, edges: [.top, .leading, .trailing], insets: NSEdgeInsets(top: pad, left: pad, bottom: 0, right: pad))
         contentStack = content
+        applyHeroWaveformVisibility()
     }
 
     private func setupBindings() {
         timeline.onSeek = { [weak self] time in
             self?.playbackEngine.seek(toSeconds: time)
+        }
+        heroWaveformView.onSeek = { [weak self] time in
+            self?.playbackEngine.seek(toSeconds: time)
+        }
+        heroWaveformView.onVisibleRangePanned = { [weak self] startTime in
+            self?.timeline.scrollVisibleWindow(toStartTime: startTime)
+        }
+        timeline.onViewportChanged = { [weak self] viewport in
+            self?.heroWaveformView.visibleRange = viewport.startTime...viewport.endTime
         }
         timeline.onLoopRangeChanged = { [weak self] range in
             guard let self else { return }
@@ -278,6 +322,8 @@ final class PracticeDeckViewController: NSViewController, NSTextFieldDelegate {
 
         let store = PeakStore(peaksFolder: libraryStore.peaksFolder(forClipID: clip.id))
         timeline.show(clipDuration: clip.durationSeconds, peakStore: store)
+        heroWaveformView.show(clipDuration: clip.durationSeconds, peakStore: store)
+        heroWaveformView.visibleRange = timeline.viewport.startTime...timeline.viewport.endTime
         applyBeatGrid(from: clip)
         updateTimelineHeight()
         backfillPeaksIfNeeded(for: clip)
@@ -390,6 +436,25 @@ final class PracticeDeckViewController: NSViewController, NSTextFieldDelegate {
         timelineHeightConstraint.constant = DeckTimelineView.height(forLaneCount: max(1, timeline.tracks.count))
     }
 
+    private func applyHeroWaveformVisibility() {
+        let enabled = preferences.heroWaveformEnabled
+        heroContainer?.isHidden = !enabled
+        heroToggleButton.state = enabled ? .on : .off
+        heroToggleButton.refreshStyle()
+    }
+
+    @objc private func toggleHeroWaveform() {
+        preferences.heroWaveformEnabled = heroToggleButton.state == .on
+        applyHeroWaveformVisibility()
+    }
+
+    private func heroResizeHandleDragged(byDeltaY deltaY: CGFloat) {
+        let proposed = heroHeightConstraint.constant + deltaY
+        let clamped = min(max(proposed, HeroWaveformView.minimumHeight), HeroWaveformView.maximumHeight)
+        heroHeightConstraint.constant = clamped
+        preferences.heroWaveformHeight = Double(clamped)
+    }
+
     func updateClip(_ updated: PracticeClip) {
         guard clip?.id == updated.id else { return }
         clip = updated
@@ -397,6 +462,7 @@ final class PracticeDeckViewController: NSViewController, NSTextFieldDelegate {
         // Separation has appended to the sidecars. The lane set may grow; the viewport must not
         // move — spec §7.
         timeline.refreshPeaks()
+        heroWaveformView.refreshPeaks()
         applyBeatGrid(from: updated)
         updateTimelineHeight()
 
@@ -513,6 +579,7 @@ final class PracticeDeckViewController: NSViewController, NSTextFieldDelegate {
     private func updatePlayhead(_ time: Double) {
         guard let clip else { return }
         timeline.setPlayheadTime(time)
+        heroWaveformView.playheadTime = time
         timeLabel.stringValue = "\(time.formattedAsDuration) / \(clip.durationSeconds.formattedAsDuration)"
     }
 
@@ -574,6 +641,9 @@ final class PracticeDeckViewController: NSViewController, NSTextFieldDelegate {
 
     /// The deck's own views are private; this is the one the timeline tests need to reach.
     var timelineForTesting: DeckTimelineView { timeline }
+
+    /// The hero waveform, for Task 8's layout test.
+    var heroWaveformViewForTesting: HeroWaveformView { heroWaveformView }
 
     /// The BPM/Tap toolbar, for the same reason.
     var toolbarForTesting: TimelineToolbarView { toolbar }
