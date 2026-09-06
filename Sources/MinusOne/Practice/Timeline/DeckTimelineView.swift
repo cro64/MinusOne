@@ -17,6 +17,7 @@ final class DeckTimelineView: NSView {
     var onStemMuteToggled: ((SeparationStem, Bool) -> Void)?
     var onStemSoloToggled: ((SeparationStem) -> Void)?
     var onStemExportRequested: ((SeparationStem) -> Void)?
+    var onViewportChanged: ((Viewport) -> Void)?
 
     /// Fired when the user sets the grid by hand — an edited tempo or a dragged downbeat. The deck
     /// persists it and sets `isBeatGridUserSet`, which stops detection ever overwriting it.
@@ -173,6 +174,7 @@ final class DeckTimelineView: NSView {
         guard next != viewport else { return }
         viewport = next
         propagateViewport()
+        onViewportChanged?(viewport)
     }
 
     private func propagateViewport() {
@@ -180,6 +182,13 @@ final class DeckTimelineView: NSView {
         overlay.viewport = viewport
         indicator.viewport = viewport
         for lane in lanes { lane.viewport = viewport }
+    }
+
+    /// Pans to an absolute start time without changing zoom — the hero waveform's minimap-drag
+    /// entry point (`HeroWaveformView.onVisibleRangePanned`), as opposed to `pan(byPoints:)`'s
+    /// relative, pointer-driven scroll.
+    func scrollVisibleWindow(toStartTime time: Double) {
+        apply(viewport.scrolled(toStartTime: time))
     }
 
     // MARK: - Lanes

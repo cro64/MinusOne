@@ -210,4 +210,40 @@ final class DeckTimelineGestureTests: XCTestCase {
         XCTAssertEqual(sought.count, 1)
         XCTAssertGreaterThanOrEqual(sought[0], 0)
     }
+
+    // MARK: - Hero waveform sync (Task 5)
+
+    func testOnViewportChangedFiresWhenPanningOrZooming() {
+        let view = timeline()
+        var seen: [Viewport] = []
+        view.onViewportChanged = { seen.append($0) }
+
+        view.zoom(by: 4, aroundX: 300)
+        view.pan(byPoints: 50)
+
+        XCTAssertEqual(seen.count, 2)
+        XCTAssertEqual(seen.last, view.viewport)
+    }
+
+    func testOnViewportChangedDoesNotFireWhenTheViewportDoesNotActuallyChange() {
+        let view = timeline()
+        view.zoom(by: 4, aroundX: 300)
+        var seen: [Viewport] = []
+        view.onViewportChanged = { seen.append($0) }
+
+        view.apply(view.viewport) // identical viewport — `apply` already no-ops on this
+
+        XCTAssertTrue(seen.isEmpty)
+    }
+
+    func testScrollVisibleWindowMovesTheStartTimeWithoutChangingZoom() {
+        let view = timeline()
+        view.zoom(by: 4, aroundX: 300)
+        let durationBefore = view.viewport.visibleDuration
+
+        view.scrollVisibleWindow(toStartTime: 30)
+
+        XCTAssertEqual(view.viewport.startTime, 30, accuracy: 0.01)
+        XCTAssertEqual(view.viewport.visibleDuration, durationBefore, accuracy: 1e-9)
+    }
 }
