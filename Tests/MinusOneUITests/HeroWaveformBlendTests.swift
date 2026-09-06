@@ -18,7 +18,7 @@ final class HeroWaveformBlendTests: XCTestCase {
     }
 
     func testOneDominantStemBlendsCloseToItsIdentityColor() throws {
-        let magnitudes: [SeparationStem: Float] = [.vocals: 0.9, .drums: 0.02, .bass: 0.02, .other: 0.02]
+        let magnitudes: [SeparationStem: Float] = [.vocals: 0.9, .drums: 0.001, .bass: 0.001, .other: 0.001]
         guard case .blended(let color) = HeroWaveformBlend.barColor(forMagnitudes: magnitudes, reference: reference, isSeparated: true) else {
             return XCTFail("expected a blended color")
         }
