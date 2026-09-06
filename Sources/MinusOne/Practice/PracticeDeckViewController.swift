@@ -277,16 +277,16 @@ final class PracticeDeckViewController: NSViewController, NSTextFieldDelegate {
         timeline.onStemMuteToggled = { [weak self] stem, muted in
             self?.playbackEngine.setStemMuted(muted, for: stem)
         }
-        timeline.onStemSoloToggled = { [weak self] stem in
-            self?.playbackEngine.toggleStemSolo(stem)
+        timeline.onStemIsolateRequested = { [weak self] stem in
+            self?.playbackEngine.isolateStem(stem)
             self?.refreshMixerButtonStates()
         }
         timeline.onStemExportRequested = { [weak self] stem in
             self?.exportStem(stem)
         }
         timeline.mixerState = { [weak self] stem in
-            guard let mixer = self?.playbackEngine.mixer else { return (1, false, false) }
-            return (mixer.volume(for: stem), mixer.isMuted(stem), mixer.isSoloed(stem))
+            guard let mixer = self?.playbackEngine.mixer else { return (1, false) }
+            return (mixer.volume(for: stem), mixer.isMuted(stem))
         }
         playbackEngine.onPlayheadUpdate = { [weak self] time in
             self?.updatePlayhead(time)
@@ -784,8 +784,10 @@ final class PracticeDeckViewController: NSViewController, NSTextFieldDelegate {
         }
     }
 
+    /// Isolating a stem mutes every other one, so every lane's mute switch needs to be told the
+    /// new state — not just the lane that was clicked.
     private func refreshMixerButtonStates() {
-        timeline.setSoloedStem(playbackEngine.mixer.soloedStem)
+        timeline.applyMixerState()
     }
 
 }

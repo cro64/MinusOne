@@ -167,8 +167,8 @@ final class PracticePlaybackEngine {
         applyVolumes()
     }
 
-    func toggleStemSolo(_ stem: SeparationStem) {
-        mixer.toggleSolo(stem)
+    func isolateStem(_ stem: SeparationStem) {
+        mixer.isolateStem(stem)
         applyVolumes()
     }
 

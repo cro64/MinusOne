@@ -131,7 +131,7 @@ final class PracticeDeckTests: XCTestCase {
         controller.view.layoutSubtreeIfNeeded()
         controller.playbackEngineForTesting.setStemMuted(true, for: .drums)
         controller.playbackEngineForTesting.setStemVolume(0.25, for: .bass)
-        controller.playbackEngineForTesting.toggleStemSolo(.vocals)
+        controller.playbackEngineForTesting.isolateStem(.vocals)
 
         controller.show(clip: second)
         controller.view.layoutSubtreeIfNeeded()
@@ -139,10 +139,14 @@ final class PracticeDeckTests: XCTestCase {
         func descendants(of view: NSView) -> [NSView] { view.subviews + view.subviews.flatMap(descendants) }
         let headers = descendants(of: controller.view).compactMap { $0 as? LaneHeaderView }
         XCTAssertEqual(headers.count, SeparationStem.allCases.count)
-        // Assert against the engine rather than remembered literals.
+        // Assert against the engine rather than remembered literals. isolateStem(.vocals) mutes
+        // every other stem and unmutes vocals — including the drums mute set just before it,
+        // which isolate's "mute everyone else" reassigns rather than preserves.
         let mixer = controller.playbackEngineForTesting.mixer
+        XCTAssertFalse(mixer.isMuted(.vocals))
         XCTAssertTrue(mixer.isMuted(.drums))
-        XCTAssertTrue(mixer.isSoloed(.vocals))
+        XCTAssertTrue(mixer.isMuted(.bass))
+        XCTAssertTrue(mixer.isMuted(.other))
         XCTAssertEqual(mixer.volume(for: .bass), 0.25, accuracy: 0.001)
 
         // The half that actually fails without the fix: the rebuilt UI must match the mixer, not
@@ -154,7 +158,6 @@ final class PracticeDeckTests: XCTestCase {
                 continue
             }
             XCTAssertEqual(header.isMutedForTesting, mixer.isMuted(stem), "\(stem) mute UI")
-            XCTAssertEqual(header.isSoloedForTesting, mixer.isSoloed(stem), "\(stem) solo UI")
             XCTAssertEqual(header.volumeForTesting, mixer.volume(for: stem), accuracy: 0.001, "\(stem) volume UI")
         }
     }

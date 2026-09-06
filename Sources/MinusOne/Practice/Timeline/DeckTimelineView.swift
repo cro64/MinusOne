@@ -15,7 +15,7 @@ final class DeckTimelineView: NSView {
     var onLoopRangeChanged: ((ClosedRange<Double>) -> Void)?
     var onStemVolumeChanged: ((SeparationStem, Float) -> Void)?
     var onStemMuteToggled: ((SeparationStem, Bool) -> Void)?
-    var onStemSoloToggled: ((SeparationStem) -> Void)?
+    var onStemIsolateRequested: ((SeparationStem) -> Void)?
     var onStemExportRequested: ((SeparationStem) -> Void)?
     var onViewportChanged: ((Viewport) -> Void)?
 
@@ -30,7 +30,7 @@ final class DeckTimelineView: NSView {
     /// controls start at their defaults. Without this a stem muted on one clip stays silent on the
     /// next with nothing in the UI to say so. Set once; every rebuild re-reads it, so no caller has
     /// to remember to push after a rebuild.
-    var mixerState: ((SeparationStem) -> (volume: Float, muted: Bool, soloed: Bool))?
+    var mixerState: ((SeparationStem) -> (volume: Float, muted: Bool))?
 
     private(set) var viewport: Viewport
     private(set) var tracks: [PeakTrack] = []
@@ -144,12 +144,6 @@ final class DeckTimelineView: NSView {
         overlay.playheadTime = time
     }
 
-    func setSoloedStem(_ stem: SeparationStem?) {
-        for (candidate, header) in headers {
-            header.setSoloed(candidate == stem)
-        }
-    }
-
     func setExportEnabled(_ enabled: Bool) {
         for header in headers.values { header.setExportEnabled(enabled) }
     }
@@ -230,7 +224,7 @@ final class DeckTimelineView: NSView {
             header.translatesAutoresizingMaskIntoConstraints = true
             header.onVolumeChanged = { [weak self] in self?.onStemVolumeChanged?(stem, $0) }
             header.onMuteToggled = { [weak self] in self?.onStemMuteToggled?(stem, $0) }
-            header.onSoloToggled = { [weak self] in self?.onStemSoloToggled?(stem) }
+            header.onIsolateRequested = { [weak self] in self?.onStemIsolateRequested?(stem) }
             header.onExportRequested = { [weak self] in self?.onStemExportRequested?(stem) }
             headers[stem] = header
             headerViews.append(header)
@@ -240,13 +234,14 @@ final class DeckTimelineView: NSView {
         applyMixerState()
     }
 
-    private func applyMixerState() {
+    /// Not private: `PracticeDeckViewController` re-runs this after an isolate request, since
+    /// isolating one stem changes every lane's mute state, not just the one that was clicked.
+    func applyMixerState() {
         guard let mixerState else { return }
         for (stem, header) in headers {
             let state = mixerState(stem)
             header.setVolume(state.volume)
             header.setMuted(state.muted)
-            header.setSoloed(state.soloed)
         }
     }
 

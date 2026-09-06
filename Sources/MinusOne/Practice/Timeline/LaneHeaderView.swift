@@ -1,27 +1,25 @@
 import AppKit
 
-/// One lane's controls: name, fader, mute, solo, export.
+/// One lane's controls: name, fader, mute (Cmd-click to isolate), export.
 ///
-/// This is `MixerRowView` rebuilt for a 132×72 box — the same four callbacks reaching the same
+/// This is `MixerRowView` rebuilt for a 132×72 box — the same callbacks reaching the same
 /// `StemMixerController`, stacked vertically instead of strung across the deck's full width.
 /// Spec §3: a lane *is* a mixer row, which is why the separate "Stems" section goes away.
 final class LaneHeaderView: NSView {
     var onVolumeChanged: ((Float) -> Void)?
     var onMuteToggled: ((Bool) -> Void)?
-    var onSoloToggled: (() -> Void)?
+    var onIsolateRequested: (() -> Void)?
     var onExportRequested: (() -> Void)?
 
     private let nameLabel: NSTextField
     private let slider: NSSlider
-    private let soloButton: FlatButton
-    private let muteButton: FlatButton
+    private let muteToggle: MuteToggleView
     private let exportButton: FlatButton
 
     init(stem: SeparationStem) {
         nameLabel = SharedUI.fieldLabel(stem.displayName)
         slider = NSSlider(value: 1, minValue: 0, maxValue: 1, target: nil, action: nil)
-        soloButton = Self.laneIconButton(symbolName: "headphones", label: "Solo \(stem.displayName)", target: nil, action: nil)
-        muteButton = Self.laneIconButton(symbolName: "speaker.slash.fill", label: "Mute \(stem.displayName)", target: nil, action: nil)
+        muteToggle = MuteToggleView(label: "Mute \(stem.displayName)")
         exportButton = Self.laneIconButton(symbolName: "square.and.arrow.up", label: "Export \(stem.displayName)", target: nil, action: nil)
         super.init(frame: .zero)
 
@@ -38,22 +36,19 @@ final class LaneHeaderView: NSView {
         slider.target = self
         slider.action = #selector(sliderChanged(_:))
 
-        muteButton.engagedFillColorOverride = .systemRed
-        soloButton.target = self
-        soloButton.action = #selector(soloClicked)
-        muteButton.target = self
-        muteButton.action = #selector(muteClicked)
+        muteToggle.onMuteToggled = { [weak self] in self?.onMuteToggled?($0) }
+        muteToggle.onIsolateRequested = { [weak self] in self?.onIsolateRequested?() }
+
         exportButton.setButtonType(.momentaryPushIn)
         exportButton.reflectsState = false
         exportButton.target = self
         exportButton.action = #selector(exportClicked)
         exportButton.isEnabled = false
 
-        // Name + state toggles on top, fader + the export action below — two roomy rows instead of
-        // three cramped ones (name / fader / a three-icon row), and solo/mute no longer carry a
-        // permanent border (see `laneIconButton`), so an inert lane reads as a name and a fader,
-        // not three boxed controls.
-        let topRow = Layout.horizontalStack([nameLabel, Layout.flexibleSpacer(), soloButton, muteButton], spacing: 4)
+        // Name + the mute switch on top, fader + the export action below — two roomy rows instead
+        // of three cramped ones, and the mute switch no longer carries a permanent border (see
+        // `laneIconButton`), so an inert lane reads as a name and a fader, not boxed controls.
+        let topRow = Layout.horizontalStack([nameLabel, Layout.flexibleSpacer(), muteToggle], spacing: 4)
         let bottomRow = Layout.horizontalStack([slider, exportButton], spacing: 6)
         let stack = Layout.verticalStack([topRow, bottomRow], spacing: 8)
         Layout.pin(stack, to: self, insets: NSEdgeInsets(top: 8, left: 8, bottom: 8, right: 8))
@@ -69,11 +64,10 @@ final class LaneHeaderView: NSView {
         fatalError("init(coder:) has not been implemented")
     }
 
-    /// A borderless icon button for the lane header — solo, mute and export all use this now.
-    /// Three individually outlined 26×20 boxes read as three separate controls even when none of
-    /// them are engaged; dropping the border (kept only as `FlatButton.engagedFillColorOverride`'s
-    /// solid fill, which still shows when a toggle is on) leaves a lane with nothing engaged
-    /// reading as a name and a fader, with icons that light up rather than a row of boxes.
+    /// A borderless icon button for the lane header — export still uses this. Dropping the border
+    /// (kept only as `FlatButton.engagedFillColorOverride`'s solid fill, which still shows when a
+    /// toggle is on) leaves a lane with nothing engaged reading as a name and a fader, with icons
+    /// that light up rather than a row of boxes.
     ///
     /// `cornerStyle = .capsule` makes a 20×20 button's engaged fill a circle rather than a rounded
     /// square — `FlatButton.layout()` re-derives the radius from the bounds on every layout pass,
@@ -99,18 +93,12 @@ final class LaneHeaderView: NSView {
         return button
     }
 
-    func setSoloed(_ soloed: Bool) {
-        soloButton.state = soloed ? .on : .off
-        soloButton.refreshStyle()
-    }
-
     func setVolume(_ volume: Float) {
         slider.doubleValue = Double(volume)
     }
 
     func setMuted(_ muted: Bool) {
-        muteButton.state = muted ? .on : .off
-        muteButton.refreshStyle()
+        muteToggle.setMuted(muted)
     }
 
     /// Disabled until separation has written the whole stem, exactly as the old mixer row was.
@@ -124,15 +112,6 @@ final class LaneHeaderView: NSView {
         onVolumeChanged?(Float(sender.doubleValue))
     }
 
-    @objc private func soloClicked() {
-        onSoloToggled?()
-    }
-
-    @objc private func muteClicked() {
-        muteButton.refreshStyle()
-        onMuteToggled?(muteButton.state == .on)
-    }
-
     @objc private func exportClicked() {
         onExportRequested?()
     }
@@ -142,8 +121,7 @@ final class LaneHeaderView: NSView {
     // Driving `NSControl` actions through synthesised events proves less about this view than
     // calling what the event would call, and costs a window to do it in.
     var nameColorForTesting: NSColor? { nameLabel.textColor }
-    var isSoloedForTesting: Bool { soloButton.state == .on }
-    var isMutedForTesting: Bool { muteButton.state == .on }
+    var isMutedForTesting: Bool { muteToggle.isMuted }
     var volumeForTesting: Float { Float(slider.doubleValue) }
     var isExportEnabledForTesting: Bool { exportButton.isEnabled }
 
@@ -153,11 +131,10 @@ final class LaneHeaderView: NSView {
     }
 
     func toggleMuteForTesting() {
-        muteButton.state = muteButton.state == .on ? .off : .on
-        muteClicked()
+        muteToggle.simulateClickForTesting()
     }
 
-    func toggleSoloForTesting() {
-        soloClicked()
+    func isolateForTesting() {
+        muteToggle.simulateCmdClickForTesting()
     }
 }

@@ -32,18 +32,19 @@ final class LaneHeaderViewTests: XCTestCase {
         XCTAssertEqual(reported, [true, false])
     }
 
-    func testSoloReportsAndReflectsState() {
+    /// There is no separate solo state to reflect — isolating is cross-lane (it mutes every other
+    /// stem too), so the header only requests it and waits to be told the resulting mute state,
+    /// the same "told, not asked" contract `setMuted(_:)` already has.
+    func testIsolateRequestsWithoutPredictingLocalMuteState() {
         let header = LaneHeaderView(stem: .vocals)
         var count = 0
-        header.onSoloToggled = { count += 1 }
-        header.toggleSoloForTesting()
+        header.onIsolateRequested = { count += 1 }
+        header.isolateForTesting()
         XCTAssertEqual(count, 1)
+        XCTAssertFalse(header.isMutedForTesting, "isolate must not locally flip mute before being told")
 
-        // The engine owns solo state (only one stem can hold it), so the header is told, not asked.
-        header.setSoloed(true)
-        XCTAssertTrue(header.isSoloedForTesting)
-        header.setSoloed(false)
-        XCTAssertFalse(header.isSoloedForTesting)
+        header.setMuted(true)
+        XCTAssertTrue(header.isMutedForTesting)
     }
 
     /// Same rule as today's mixer row: no exporting a stem separation hasn't finished writing.
