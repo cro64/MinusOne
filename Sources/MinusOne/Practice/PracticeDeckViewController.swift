@@ -646,6 +646,9 @@ final class PracticeDeckViewController: NSViewController, NSTextFieldDelegate {
     /// The hero waveform, for Task 8's layout test.
     var heroWaveformViewForTesting: HeroWaveformView { heroWaveformView }
 
+    /// The hero height constraint, for Task 8's layout test to override with maximum height.
+    var heroHeightConstraintForTesting: NSLayoutConstraint { heroHeightConstraint }
+
     /// The BPM/Tap toolbar, for the same reason.
     var toolbarForTesting: TimelineToolbarView { toolbar }
 

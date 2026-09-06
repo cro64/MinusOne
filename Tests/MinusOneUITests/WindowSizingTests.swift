@@ -78,6 +78,46 @@ final class WindowSizingTests: XCTestCase {
         )
     }
 
+    /// The hero waveform adds height to the same vertical stack `testTheDeckFitsTheMinimumWindowHeight`
+    /// measures. This re-runs that measurement with the hero pinned to its resize-handle maximum —
+    /// the worst case a user can actually reach — rather than only its 64pt default, since the
+    /// default alone would not catch a max clamp that was set too generously.
+    func testTheDeckStillFitsTheMinimumWindowHeightWithTheHeroAtItsMaximum() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("WindowSizing-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let controller = PracticeDeckViewController(
+            libraryStore: ClipLibraryStore(rootURL: root),
+            playbackEngine: PracticePlaybackEngine()
+        )
+        controller.loadView()
+        controller.heroHeightConstraintForTesting.isActive = false
+        controller.heroWaveformViewForTesting.heightAnchor.constraint(
+            equalToConstant: HeroWaveformView.maximumHeight
+        ).isActive = true
+        controller.view.frame = NSRect(x: 0, y: 0, width: 860, height: 900)
+        controller.view.layoutSubtreeIfNeeded()
+
+        var stacks: [NSStackView] = []
+        func walk(_ view: NSView) {
+            if let stack = view as? NSStackView, stack.orientation == .vertical { stacks.append(stack) }
+            view.subviews.forEach(walk)
+        }
+        walk(controller.view)
+        let deckContent = try XCTUnwrap(stacks.map(\.fittingSize.height).max())
+
+        let headerStrip: CGFloat = 52
+        let needed = deckContent + WindowUI.Metrics.padding + headerStrip
+        print("MEASURED deck height with hero at max: stack \(deckContent) + padding \(WindowUI.Metrics.padding) "
+              + "+ header \(headerStrip) = \(needed)pt against a \(WindowSizing.minimum.height)pt floor")
+        XCTAssertLessThanOrEqual(
+            needed, WindowSizing.minimum.height,
+            "the deck needs \(needed)pt but the floor is \(WindowSizing.minimum.height)pt"
+        )
+    }
+
     /// Width companion to `testTheDeckFitsTheMinimumWindowHeight`: at `WindowSizing.minimum` the
     /// sidebar claims its `minimumThickness` (`PracticeSplitViewController.swift:15`) and the deck
     /// pane is padded on both sides, so whatever is left over is the control bar's real budget.
