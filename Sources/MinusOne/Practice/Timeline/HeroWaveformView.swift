@@ -242,11 +242,20 @@ final class HeroWaveformView: NSView {
     }
     private var dragMode: DragMode?
 
+    /// Tracks whether `continueDrag(toX:)` actually ran during the current `.panningVisibleRange`
+    /// gesture. At default (fully zoomed out) viewports the visible-range box spans the whole band,
+    /// so a plain click almost always lands inside it and takes this branch instead of `.seeking` —
+    /// without this flag such a click would pan (a no-op) and never seek. Only meaningful while
+    /// `dragMode` is `.panningVisibleRange`; irrelevant for `.seeking`, which always seeks from
+    /// `beginDrag(atX:)` itself.
+    private var hasDraggedDuringGesture = false
+
     func beginDrag(atX x: CGFloat) {
         let time = time(forX: x)
         if let rect = visibleRangeRect(), rect.contains(NSPoint(x: x, y: rect.midY)) {
             let boxStartTime = self.time(forX: rect.minX)
             dragMode = .panningVisibleRange(anchorOffset: time - boxStartTime)
+            hasDraggedDuringGesture = false
         } else {
             dragMode = .seeking
             seekAndRecenter(toTime: time)
@@ -256,6 +265,7 @@ final class HeroWaveformView: NSView {
     func continueDrag(toX x: CGFloat) {
         switch dragMode {
         case .panningVisibleRange(let anchorOffset):
+            hasDraggedDuringGesture = true
             onVisibleRangePanned?(clampedStart(time(forX: x) - anchorOffset))
         case .seeking:
             seekAndRecenter(toTime: time(forX: x))
@@ -264,12 +274,23 @@ final class HeroWaveformView: NSView {
         }
     }
 
-    /// Deliberately does *not* re-process `x` — `continueDrag(toX:)` already ran for every
-    /// intermediate position during a real drag (AppKit delivers `mouseDragged` up to the release
-    /// point), and for a plain click (no `mouseDragged` at all) `beginDrag(atX:)` already fired the
-    /// seek once. Re-processing here would double-fire a click's seek at the same x.
-    func endDrag(atX _: CGFloat) {
+    /// For `.seeking`, deliberately does *not* re-process `x` — `continueDrag(toX:)` already ran for
+    /// every intermediate position during a real drag (AppKit delivers `mouseDragged` up to the
+    /// release point), and for a plain click (no `mouseDragged` at all) `beginDrag(atX:)` already
+    /// fired the seek once. Re-processing here would double-fire a click's seek at the same x.
+    ///
+    /// For `.panningVisibleRange`, the situation is the opposite: that branch never seeks from
+    /// `beginDrag(atX:)`, so if `continueDrag(toX:)` never ran either (a plain click that happened to
+    /// land inside a visible-range box covering the whole track, e.g. at the deck's default fully
+    /// zoomed-out viewport), no seek has fired yet for this gesture at all. This is the one place
+    /// that can happen, so it's the one legitimate use of `x` here — a first and only seek, not a
+    /// reprocessing of one that already fired.
+    func endDrag(atX x: CGFloat) {
+        if case .panningVisibleRange = dragMode, !hasDraggedDuringGesture {
+            seekAndRecenter(toTime: time(forX: x))
+        }
         dragMode = nil
+        hasDraggedDuringGesture = false
     }
 
     private func seekAndRecenter(toTime time: Double) {
