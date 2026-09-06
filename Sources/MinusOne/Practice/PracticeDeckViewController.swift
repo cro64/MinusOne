@@ -124,9 +124,9 @@ final class PracticeDeckViewController: NSViewController, NSTextFieldDelegate {
         heroHeightConstraint.isActive = true
         // 4pt, not a rounder 8: `HeroWaveformView.maximumHeight` (80) was sized against the
         // measured 103pt spare margin at `WindowSizing.minimum` assuming exactly this height for
-        // the handle plus the 16pt section-spacing gap above the hero (80 + 4 + 16 = 100 ≤ 103) —
-        // see that constant's doc comment. Widening this strip without also lowering
-        // `maximumHeight` reopens that margin.
+        // the handle plus the 16pt section-spacing gap below the hero, between heroStack and
+        // timeline (80 + 4 + 16 = 100 ≤ 103) — see that constant's doc comment. Widening this
+        // strip without also lowering `maximumHeight` reopens that margin.
         heroResizeHandle.heightAnchor.constraint(equalToConstant: 4).isActive = true
 
         playPauseButton.target = self
@@ -232,6 +232,7 @@ final class PracticeDeckViewController: NSViewController, NSTextFieldDelegate {
         heroStack.widthAnchor.constraint(equalTo: content.widthAnchor).isActive = true
         heroWaveformView.widthAnchor.constraint(equalTo: heroStack.widthAnchor).isActive = true
         heroResizeHandle.widthAnchor.constraint(equalTo: heroStack.widthAnchor).isActive = true
+        titleRow.widthAnchor.constraint(lessThanOrEqualTo: content.widthAnchor).isActive = true
 
         let pad = WindowUI.Metrics.padding
         Layout.pin(content, to: view, edges: [.top, .leading, .trailing], insets: NSEdgeInsets(top: pad, left: pad, bottom: 0, right: pad))
