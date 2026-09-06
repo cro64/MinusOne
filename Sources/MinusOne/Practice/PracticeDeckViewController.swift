@@ -367,6 +367,7 @@ final class PracticeDeckViewController: NSViewController, NSTextFieldDelegate {
                 libraryStore.update(current)
                 self.clip = current
                 self.timeline.refreshPeaks()
+                self.heroWaveformView.refreshPeaks()
                 self.applyBeatGrid(from: current)
                 self.updateTimelineHeight()
             }
