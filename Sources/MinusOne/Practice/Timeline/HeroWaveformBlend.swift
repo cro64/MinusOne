@@ -5,8 +5,15 @@ import AppKit
 /// gray when the bar predates full separation. Pure and stateless so it is unit-testable without a
 /// view, a window, or a `PeakStore`.
 enum HeroWaveformBlend: Equatable {
-    /// Same tone `StemLaneView` draws its own unseparated tail in.
-    static let tailColor = NSColor.tertiaryLabelColor.withAlphaComponent(0.5)
+    /// Same tone `StemLaneView` draws its own unseparated tail in. Computed, not `static let`: this
+    /// is the documented AppKit dynamic-color trap — `withAlphaComponent` on a dynamic system color
+    /// returns a plain, fixed `NSColor`, so caching the result in a `static let` would freeze it to
+    /// whichever appearance (light/dark) was active on first access, for the rest of the process's
+    /// lifetime. A computed property re-resolves `.tertiaryLabelColor` fresh on every access, and
+    /// this is only ever read from `HeroWaveformView.drawBars()` during an active draw pass, so it
+    /// always reflects the appearance that's actually current. Mirrors `StemLaneView.drawBars()`'s
+    /// identical workaround for its own `tailColor`.
+    static var tailColor: NSColor { NSColor.tertiaryLabelColor.withAlphaComponent(0.5) }
     /// "The mix isn't a fifth instrument" — the same rule `StemLaneView.identityColor` applies to
     /// the mix track's own color governs what a genuinely silent bar renders as here too.
     static let silenceColor = NSColor.secondaryLabelColor
