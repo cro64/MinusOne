@@ -168,7 +168,66 @@ final class HeroWaveformView: NSView {
         }
     }
 
-    /// Overridden by Task 3 to draw the visible-range box, playhead and hover cursor over the
-    /// cached bars. Empty here so this file's own tests exercise bars in isolation.
-    func drawOverlay() {}
+    // MARK: - Minimap overlay
+
+    var visibleRange: ClosedRange<Double>? {
+        didSet { if visibleRange != oldValue { needsDisplay = true } }
+    }
+
+    var playheadTime: Double? {
+        didSet { if playheadTime != oldValue { needsDisplay = true } }
+    }
+
+    /// Where the pointer is over the hero, or `nil` when it is elsewhere.
+    var hoverTime: Double? {
+        didSet { if hoverTime != oldValue { needsDisplay = true } }
+    }
+
+    private static let playheadWidth: CGFloat = 1.5
+
+    func visibleRangeRect() -> NSRect? {
+        guard let visibleRange else { return nil }
+        let start = x(forTime: visibleRange.lowerBound)
+        let end = x(forTime: visibleRange.upperBound)
+        return NSRect(x: start, y: 0, width: max(1, end - start), height: bounds.height)
+    }
+
+    func playheadX() -> CGFloat? {
+        guard let playheadTime else { return nil }
+        return x(forTime: playheadTime)
+    }
+
+    /// Suppressed under the playhead — see `PlayheadOverlayView.hoverX()`'s identical rule.
+    func hoverX() -> CGFloat? {
+        guard let hoverTime, hoverTime != playheadTime else { return nil }
+        return TimelineMetrics.devicePixelAligned(x(forTime: hoverTime), scale: window?.backingScaleFactor ?? 2)
+    }
+
+    func drawOverlay() {
+        guard let context = NSGraphicsContext.current?.cgContext, bounds.width > 0 else { return }
+
+        if let rangeRect = visibleRangeRect() {
+            NSColor.labelColor.withAlphaComponent(0.05).setFill()
+            rangeRect.fill()
+            NSColor.labelColor.withAlphaComponent(0.35).setStroke()
+            let outline = NSBezierPath(rect: rangeRect.insetBy(dx: 0.5, dy: 0.5))
+            outline.lineWidth = 1
+            outline.stroke()
+        }
+
+        if let hoverX = hoverX() {
+            NSColor.tertiaryLabelColor.setFill()
+            NSRect(x: hoverX, y: 0, width: 1, height: bounds.height).fill()
+        }
+
+        if let x = playheadX() {
+            // Not pixel-snapped, like `PlayheadOverlayView`'s own playhead: this moves during
+            // playback, and half-pixel positioning is what keeps that motion smooth.
+            context.setStrokeColor(NSColor.labelColor.cgColor)
+            context.setLineWidth(Self.playheadWidth)
+            context.move(to: CGPoint(x: x, y: 0))
+            context.addLine(to: CGPoint(x: x, y: bounds.height))
+            context.strokePath()
+        }
+    }
 }
