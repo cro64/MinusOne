@@ -16,14 +16,14 @@ final class PreferencesTests: XCTestCase {
         XCTAssertFalse(preferences.heroWaveformEnabled)
     }
 
-    func testHeroWaveformHeightDefaultsToSixtyFour() {
-        XCTAssertEqual(freshPreferences().heroWaveformHeight, 64, accuracy: 0.01)
+    func testHeroWaveformHeightDefaultsToFortyFive() {
+        XCTAssertEqual(freshPreferences().heroWaveformHeight, 45, accuracy: 0.01)
     }
 
     func testHeroWaveformHeightRoundTrips() {
         let preferences = freshPreferences()
-        preferences.heroWaveformHeight = 70
-        XCTAssertEqual(preferences.heroWaveformHeight, 70, accuracy: 0.01)
+        preferences.heroWaveformHeight = 50
+        XCTAssertEqual(preferences.heroWaveformHeight, 50, accuracy: 0.01)
     }
 
     func testHeroWaveformHeightClampsToTheHeroViewsRange() {

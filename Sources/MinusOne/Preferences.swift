@@ -38,7 +38,11 @@ final class Preferences {
             Key.appearance: AppAppearance.system.rawValue,
             Key.recordingSource: RecordingSource.systemAudio.storedValue,
             Key.heroWaveformEnabled: true,
-            Key.heroWaveformHeight: Double(64)
+            // 45, not the original 64: `WindowSizingTests
+            // .testTheDeckFitsTheMinimumWindowHeightAtDefaultHeroHeightWithStatusVisible` measures the
+            // deck with `statusLabel` visible (a clip still separating — a common state, not an edge
+            // case) and 64 left only ~1pt of margin at `WindowSizing.minimum.height`. 45 leaves ~20pt.
+            Key.heroWaveformHeight: Double(45)
         ])
     }
 

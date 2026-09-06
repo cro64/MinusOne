@@ -6,12 +6,16 @@ import AppKit
 /// Bars are cached exactly like `StemLaneView`'s — the minimap overlay (Task 3) and interaction
 /// (Task 4) are added on top of this file without touching the cache.
 final class HeroWaveformView: NSView {
-    /// Resize-handle clamp. See the design spec's "Resize" section for why 80, not a rounder
-    /// number: it is the largest fixed cap that still fits `TimelineMetrics`'s measured 103pt spare
-    /// margin at `WindowSizing.minimum` once the resize handle's own 4pt strip and the
-    /// section-spacing gap above the hero are both counted (80 + 4 + 16 = 100 ≤ 103).
+    /// Resize-handle clamp. The original 80 was sized against a margin measured with `statusLabel`
+    /// (`PracticeDeckViewController`'s "Separating in the background…" line) hidden — but that label
+    /// is visible for as long as a clip is still separating, a common state, not an edge case, and
+    /// once `WindowSizingTests` measured the real deck with it visible, 80 overflowed
+    /// `WindowSizing.minimum.height` (600pt) by 15pt. 53 is `WindowSizingTests
+    /// .testTheDeckStillFitsTheMinimumWindowHeightWithTheHeroAtItsMaximumAndStatusVisible`'s measured
+    /// safe ceiling: it leaves ~12pt of real margin at the minimum window height with the status
+    /// label visible (measured need 588pt against the 600pt floor), rather than a hand-estimated one.
     static let minimumHeight: CGFloat = 32
-    static let maximumHeight: CGFloat = 80
+    static let maximumHeight: CGFloat = 53
 
     private var peakStore: PeakStore?
     private(set) var clipDuration: Double = 0

@@ -118,6 +118,90 @@ final class WindowSizingTests: XCTestCase {
         )
     }
 
+    /// Companion to `testTheDeckStillFitsTheMinimumWindowHeightWithTheHeroAtItsMaximum`: that test
+    /// (and `testTheDeckFitsTheMinimumWindowHeight` before it) measures with `statusLabel` at its
+    /// construction-time `isHidden = true` — but `refreshForCurrentClip()` makes it visible with
+    /// real text ("Separating in the background…") for as long as a clip is still separating, which
+    /// is a common state, not an edge case. This re-measures the hero-at-maximum case with the
+    /// status label visible, the way the app actually shows it.
+    func testTheDeckStillFitsTheMinimumWindowHeightWithTheHeroAtItsMaximumAndStatusVisible() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("WindowSizing-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let controller = PracticeDeckViewController(
+            libraryStore: ClipLibraryStore(rootURL: root),
+            playbackEngine: PracticePlaybackEngine()
+        )
+        controller.loadView()
+        controller.heroHeightConstraintForTesting.isActive = false
+        controller.heroWaveformViewForTesting.heightAnchor.constraint(
+            equalToConstant: HeroWaveformView.maximumHeight
+        ).isActive = true
+        controller.statusLabelForTesting.stringValue = "Separating in the background… 1:00 ready of 4:00"
+        controller.statusLabelForTesting.isHidden = false
+        controller.view.frame = NSRect(x: 0, y: 0, width: 860, height: 900)
+        controller.view.layoutSubtreeIfNeeded()
+
+        var stacks: [NSStackView] = []
+        func walk(_ view: NSView) {
+            if let stack = view as? NSStackView, stack.orientation == .vertical { stacks.append(stack) }
+            view.subviews.forEach(walk)
+        }
+        walk(controller.view)
+        let deckContent = try XCTUnwrap(stacks.map(\.fittingSize.height).max())
+
+        let headerStrip: CGFloat = 52
+        let needed = deckContent + WindowUI.Metrics.padding + headerStrip
+        print("MEASURED deck height with hero at max, status visible: stack \(deckContent) + padding "
+              + "\(WindowUI.Metrics.padding) + header \(headerStrip) = \(needed)pt against a "
+              + "\(WindowSizing.minimum.height)pt floor")
+        XCTAssertLessThanOrEqual(
+            needed, WindowSizing.minimum.height,
+            "the deck needs \(needed)pt but the floor is \(WindowSizing.minimum.height)pt"
+        )
+    }
+
+    /// Same companion, but at the hero's *default* height rather than its resize-handle maximum —
+    /// the reviewer's estimate suggested even the default might be razor-thin once `statusLabel` is
+    /// accounted for, so this measures that combination directly rather than assuming the default
+    /// is automatically safe because it is smaller than the maximum.
+    func testTheDeckFitsTheMinimumWindowHeightAtDefaultHeroHeightWithStatusVisible() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("WindowSizing-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let controller = PracticeDeckViewController(
+            libraryStore: ClipLibraryStore(rootURL: root),
+            playbackEngine: PracticePlaybackEngine()
+        )
+        controller.loadView()
+        controller.statusLabelForTesting.stringValue = "Separating in the background… 1:00 ready of 4:00"
+        controller.statusLabelForTesting.isHidden = false
+        controller.view.frame = NSRect(x: 0, y: 0, width: 860, height: 900)
+        controller.view.layoutSubtreeIfNeeded()
+
+        var stacks: [NSStackView] = []
+        func walk(_ view: NSView) {
+            if let stack = view as? NSStackView, stack.orientation == .vertical { stacks.append(stack) }
+            view.subviews.forEach(walk)
+        }
+        walk(controller.view)
+        let deckContent = try XCTUnwrap(stacks.map(\.fittingSize.height).max())
+
+        let headerStrip: CGFloat = 52
+        let needed = deckContent + WindowUI.Metrics.padding + headerStrip
+        print("MEASURED deck height at default hero height, status visible: stack \(deckContent) + padding "
+              + "\(WindowUI.Metrics.padding) + header \(headerStrip) = \(needed)pt against a "
+              + "\(WindowSizing.minimum.height)pt floor")
+        XCTAssertLessThanOrEqual(
+            needed, WindowSizing.minimum.height,
+            "the deck needs \(needed)pt but the floor is \(WindowSizing.minimum.height)pt"
+        )
+    }
+
     /// Width companion to `testTheDeckFitsTheMinimumWindowHeight`: at `WindowSizing.minimum` the
     /// sidebar claims its `minimumThickness` (`PracticeSplitViewController.swift:15`) and the deck
     /// pane is padded on both sides, so whatever is left over is the control bar's real budget.

@@ -122,11 +122,11 @@ final class PracticeDeckViewController: NSViewController, NSTextFieldDelegate {
         heroResizeHandle.translatesAutoresizingMaskIntoConstraints = false
         heroResizeHandle.onDrag = { [weak self] delta in self?.heroResizeHandleDragged(byDeltaY: delta) }
         heroHeightConstraint.isActive = true
-        // 4pt, not a rounder 8: `HeroWaveformView.maximumHeight` (80) was sized against the
-        // measured 103pt spare margin at `WindowSizing.minimum` assuming exactly this height for
-        // the handle plus the 16pt section-spacing gap below the hero, between heroStack and
-        // timeline (80 + 4 + 16 = 100 ≤ 103) — see that constant's doc comment. Widening this
-        // strip without also lowering `maximumHeight` reopens that margin.
+        // 4pt, not a rounder 8: `HeroWaveformView.maximumHeight` (53) was sized against the deck's
+        // real measured layout at `WindowSizing.minimum` with this handle at exactly this height —
+        // see that constant's doc comment, which also covers why the budget now accounts for
+        // `statusLabel` being visible, not just hidden. Widening this strip without also lowering
+        // `maximumHeight` reopens that margin.
         heroResizeHandle.heightAnchor.constraint(equalToConstant: 4).isActive = true
 
         playPauseButton.target = self
@@ -648,6 +648,11 @@ final class PracticeDeckViewController: NSViewController, NSTextFieldDelegate {
 
     /// The hero height constraint, for Task 8's layout test to override with maximum height.
     var heroHeightConstraintForTesting: NSLayoutConstraint { heroHeightConstraint }
+
+    /// The status label above the timeline, so a window-sizing test can make it visible with real
+    /// content the way `refreshForCurrentClip()` does whenever a clip is still separating — the
+    /// state the fixed-height layout budget must actually account for.
+    var statusLabelForTesting: NSTextField { statusLabel }
 
     /// The BPM/Tap toolbar, for the same reason.
     var toolbarForTesting: TimelineToolbarView { toolbar }
