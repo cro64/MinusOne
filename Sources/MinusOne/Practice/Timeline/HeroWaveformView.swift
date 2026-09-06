@@ -203,6 +203,17 @@ final class HeroWaveformView: NSView {
         return NSRect(x: start, y: 0, width: max(1, end - start), height: bounds.height)
     }
 
+    /// Whether the visible-range box is narrow enough to be worth drawing. Every clip opens at
+    /// `visibleRange == 0...clipDuration` (`Viewport.init` sets `visibleDuration = clipDuration`), so
+    /// the box spans the whole band at the deck's default zoom — drawing it there reads as a stray
+    /// border around the entire hero rather than a "here's what's zoomed in" cue. Deliberately doesn't
+    /// affect `beginDrag(atX:)`'s hit-test, which still uses `visibleRangeRect()` directly regardless
+    /// of whether it's drawn — clicking/panning at the default zoom keeps working exactly as before.
+    func isVisibleRangeBoxDrawn() -> Bool {
+        guard let visibleRange else { return false }
+        return visibleRange.upperBound - visibleRange.lowerBound < clipDuration - 1e-6
+    }
+
     func playheadX() -> CGFloat? {
         guard let playheadTime else { return nil }
         return x(forTime: playheadTime)
@@ -217,7 +228,7 @@ final class HeroWaveformView: NSView {
     func drawOverlay() {
         guard let context = NSGraphicsContext.current?.cgContext, bounds.width > 0 else { return }
 
-        if let rangeRect = visibleRangeRect() {
+        if isVisibleRangeBoxDrawn(), let rangeRect = visibleRangeRect() {
             NSColor.labelColor.withAlphaComponent(0.05).setFill()
             rangeRect.fill()
             NSColor.labelColor.withAlphaComponent(0.35).setStroke()

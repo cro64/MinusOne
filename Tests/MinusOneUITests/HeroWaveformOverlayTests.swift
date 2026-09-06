@@ -38,4 +38,26 @@ final class HeroWaveformOverlayTests: XCTestCase {
         view.hoverTime = 31
         XCTAssertNotNil(view.hoverX())
     }
+
+    /// Every clip opens at this exact range (`Viewport.init` sets `visibleDuration = clipDuration`).
+    /// Drawing the box there covers the whole band, which reads as a stray border around the entire
+    /// hero rather than a "here's what's zoomed in" cue — so it's suppressed until the timeline is
+    /// actually zoomed in. The rect itself must still exist, since `beginDrag(atX:)`'s hit-test relies
+    /// on `visibleRangeRect()` regardless of whether it's drawn.
+    func testTheBoxIsNotDrawnAtTheFullyZoomedOutDefaultRange() {
+        let view = hero(width: 900, clipDuration: 60)
+        view.visibleRange = 0...60
+        XCTAssertFalse(view.isVisibleRangeBoxDrawn())
+        XCTAssertNotNil(view.visibleRangeRect())
+    }
+
+    func testTheBoxIsDrawnOnceTheTimelineIsZoomedIn() {
+        let view = hero(width: 900, clipDuration: 60)
+        view.visibleRange = 10...20
+        XCTAssertTrue(view.isVisibleRangeBoxDrawn())
+    }
+
+    func testTheBoxIsNotDrawnWhenNoVisibleRangeIsSet() {
+        XCTAssertFalse(hero().isVisibleRangeBoxDrawn())
+    }
 }
