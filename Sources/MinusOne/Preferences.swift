@@ -17,6 +17,8 @@ final class Preferences {
         static let appearance = "appearance"
         static let recordingSource = "recordingSource"
         static let stemExportFormat = "stemExportFormat"
+        static let heroWaveformEnabled = "heroWaveformEnabled"
+        static let heroWaveformHeight = "heroWaveformHeight"
     }
 
     private let defaults: UserDefaults
@@ -34,7 +36,9 @@ final class Preferences {
             Key.captureScope: CaptureScope.allApps.rawValue,
             Key.selectedAppBundleIDs: [String](),
             Key.appearance: AppAppearance.system.rawValue,
-            Key.recordingSource: RecordingSource.systemAudio.storedValue
+            Key.recordingSource: RecordingSource.systemAudio.storedValue,
+            Key.heroWaveformEnabled: true,
+            Key.heroWaveformHeight: Double(64)
         ])
     }
 
@@ -56,6 +60,19 @@ final class Preferences {
     var lastReductionEnabled: Bool {
         get { defaults.bool(forKey: Key.lastReductionEnabled) }
         set { defaults.set(newValue, forKey: Key.lastReductionEnabled) }
+    }
+
+    var heroWaveformEnabled: Bool {
+        get { defaults.bool(forKey: Key.heroWaveformEnabled) }
+        set { defaults.set(newValue, forKey: Key.heroWaveformEnabled) }
+    }
+
+    /// Clamped to `HeroWaveformView`'s own resize-handle range, so a value written before that
+    /// range ever changes (or corrupted by hand-editing defaults) can't hand back a height the view
+    /// wasn't built to draw at.
+    var heroWaveformHeight: Double {
+        get { Double(clamp(Float(defaults.double(forKey: Key.heroWaveformHeight)), Float(HeroWaveformView.minimumHeight), Float(HeroWaveformView.maximumHeight))) }
+        set { defaults.set(Double(clamp(Float(newValue), Float(HeroWaveformView.minimumHeight), Float(HeroWaveformView.maximumHeight))), forKey: Key.heroWaveformHeight) }
     }
 
     var hasCompletedOnboarding: Bool {
