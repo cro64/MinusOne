@@ -257,6 +257,10 @@ final class HeroWaveformView: NSView {
 
     var onSeek: ((Double) -> Void)?
     var onVisibleRangePanned: ((Double) -> Void)?
+    /// Factor, then the time under the pointer — not a canvas x, since the hero's whole-track
+    /// coordinate space has a different points-per-second ratio than the deck timeline's zoomed
+    /// canvas it drives (see `DeckTimelineView.zoom(by:aroundTime:)`).
+    var onZoom: ((Double, Double) -> Void)?
 
     private enum DragMode {
         case panningVisibleRange(anchorOffset: Double)
@@ -329,6 +333,13 @@ final class HeroWaveformView: NSView {
         return min(max(0, start), max(0, clipDuration - duration))
     }
 
+    /// Converts a gesture's pixel anchor to a time before firing `onZoom` — separated from the
+    /// `scrollWheel`/`magnify` overrides so it's callable directly in tests without synthesizing an
+    /// `NSEvent`, matching this file's other gesture methods.
+    func zoomGesture(byFactor factor: Double, atX x: CGFloat) {
+        onZoom?(factor, time(forX: x))
+    }
+
     // MARK: - Mouse events
 
     override func mouseDown(with event: NSEvent) {
@@ -349,6 +360,19 @@ final class HeroWaveformView: NSView {
 
     override func mouseExited(with event: NSEvent) {
         hoverTime = nil
+    }
+
+    /// ⌘+scroll zooms, mirroring `DeckTimelineView.scrollWheel(with:)`'s exact factor formula so the
+    /// two feel identical regardless of which one the pointer happens to be over. Plain scroll is
+    /// left alone — panning is already covered by dragging the visible-range box.
+    override func scrollWheel(with event: NSEvent) {
+        guard event.modifierFlags.contains(.command) else { return }
+        let factor = pow(1.01, Double(event.scrollingDeltaY))
+        zoomGesture(byFactor: factor, atX: convert(event.locationInWindow, from: nil).x)
+    }
+
+    override func magnify(with event: NSEvent) {
+        zoomGesture(byFactor: 1 + event.magnification, atX: convert(event.locationInWindow, from: nil).x)
     }
 
     override func updateTrackingAreas() {

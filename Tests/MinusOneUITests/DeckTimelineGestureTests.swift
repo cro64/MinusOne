@@ -54,6 +54,22 @@ final class DeckTimelineGestureTests: XCTestCase {
         XCTAssertEqual(view.viewport.time(forX: anchor), instant, accuracy: 1e-6)
     }
 
+    /// `zoom(by:aroundTime:)` is the hero waveform's entry point — it hands over a time, not a pixel,
+    /// since the hero and the timeline use different coordinate spaces (whole-track vs. zoomed
+    /// viewport). It must be an exact wrapper: zooming around a time equals zooming around that
+    /// time's current pixel position.
+    func testZoomByTimeMatchesZoomingAtThatTimesCurrentPixelPosition() {
+        let byPixel = timeline()
+        let byTime = timeline()
+        let anchorTime = 20.0
+        let anchorX = byPixel.viewport.x(forTime: anchorTime)
+
+        byPixel.zoom(by: 4, aroundX: anchorX)
+        byTime.zoom(by: 4, aroundTime: anchorTime)
+
+        XCTAssertEqual(byTime.viewport, byPixel.viewport)
+    }
+
     func testZoomingOutStopsAtTheWholeClip() {
         let view = timeline()
         view.zoom(by: 8, aroundX: 300)

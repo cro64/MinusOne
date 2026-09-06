@@ -124,4 +124,25 @@ final class HeroWaveformGestureTests: XCTestCase {
         XCTAssertTrue(sought.isEmpty, "a real drag at the default zoomed-out viewport should pan, not seek")
         XCTAssertFalse(panned.isEmpty)
     }
+
+    // MARK: - Zoom
+
+    /// Scroll/pinch on the hero should zoom the same timeline the box tracks — reported as a factor
+    /// plus the TIME under the pointer, not a pixel x, since the hero's whole-track coordinate space
+    /// and the zoomed timeline's canvas use different points-per-second ratios.
+    func testZoomGestureFiresOnZoomWithTheTimeUnderThePointer() {
+        let view = hero()
+        var calls: [(factor: Double, time: Double)] = []
+        view.onZoom = { calls.append(($0, $1)) }
+
+        view.zoomGesture(byFactor: 2, atX: 450)
+
+        XCTAssertEqual(calls.count, 1)
+        XCTAssertEqual(calls[0].factor, 2, accuracy: 1e-9)
+        XCTAssertEqual(calls[0].time, view.time(forX: 450), accuracy: 1e-6)
+    }
+
+    func testZoomGestureWithNoHandlerDoesNotCrash() {
+        hero().zoomGesture(byFactor: 1.5, atX: 100)
+    }
 }

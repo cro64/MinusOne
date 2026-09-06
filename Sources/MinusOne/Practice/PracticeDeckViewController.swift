@@ -250,6 +250,9 @@ final class PracticeDeckViewController: NSViewController, NSTextFieldDelegate {
         heroWaveformView.onVisibleRangePanned = { [weak self] startTime in
             self?.timeline.scrollVisibleWindow(toStartTime: startTime)
         }
+        heroWaveformView.onZoom = { [weak self] factor, time in
+            self?.timeline.zoom(by: factor, aroundTime: time)
+        }
         timeline.onViewportChanged = { [weak self] viewport in
             self?.heroWaveformView.visibleRange = viewport.startTime...viewport.endTime
         }

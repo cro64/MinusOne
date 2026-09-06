@@ -305,6 +305,13 @@ final class DeckTimelineView: NSView {
         apply(viewport.zoomed(by: factor, around: canvasX))
     }
 
+    /// The hero waveform's zoom entry point. It only knows the time under the pointer, not a canvas
+    /// x — its whole-track coordinate space has a different points-per-second ratio than this
+    /// timeline's zoomed canvas — so it hands over a time and this converts it to the current local x.
+    func zoom(by factor: Double, aroundTime time: Double) {
+        zoom(by: factor, aroundX: viewport.x(forTime: time))
+    }
+
     func setHover(atX x: CGFloat?) {
         overlay.hoverTime = x.map { viewport.time(forX: $0) }
     }
