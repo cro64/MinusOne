@@ -230,4 +230,91 @@ final class HeroWaveformView: NSView {
             context.strokePath()
         }
     }
+
+    // MARK: - Interaction
+
+    var onSeek: ((Double) -> Void)?
+    var onVisibleRangePanned: ((Double) -> Void)?
+
+    private enum DragMode {
+        case panningVisibleRange(anchorOffset: Double)
+        case seeking
+    }
+    private var dragMode: DragMode?
+
+    func beginDrag(atX x: CGFloat) {
+        let time = time(forX: x)
+        if let rect = visibleRangeRect(), rect.contains(NSPoint(x: x, y: rect.midY)) {
+            let boxStartTime = self.time(forX: rect.minX)
+            dragMode = .panningVisibleRange(anchorOffset: time - boxStartTime)
+        } else {
+            dragMode = .seeking
+            seekAndRecenter(toTime: time)
+        }
+    }
+
+    func continueDrag(toX x: CGFloat) {
+        switch dragMode {
+        case .panningVisibleRange(let anchorOffset):
+            onVisibleRangePanned?(clampedStart(time(forX: x) - anchorOffset))
+        case .seeking:
+            seekAndRecenter(toTime: time(forX: x))
+        case nil:
+            break
+        }
+    }
+
+    /// Deliberately does *not* re-process `x` — `continueDrag(toX:)` already ran for every
+    /// intermediate position during a real drag (AppKit delivers `mouseDragged` up to the release
+    /// point), and for a plain click (no `mouseDragged` at all) `beginDrag(atX:)` already fired the
+    /// seek once. Re-processing here would double-fire a click's seek at the same x.
+    func endDrag(atX _: CGFloat) {
+        dragMode = nil
+    }
+
+    private func seekAndRecenter(toTime time: Double) {
+        let clamped = min(max(0, time), clipDuration)
+        onSeek?(clamped)
+        guard let visibleRange else { return }
+        let duration = visibleRange.upperBound - visibleRange.lowerBound
+        onVisibleRangePanned?(clampedStart(clamped - duration / 2))
+    }
+
+    private func clampedStart(_ start: Double) -> Double {
+        guard let visibleRange else { return min(max(0, start), clipDuration) }
+        let duration = visibleRange.upperBound - visibleRange.lowerBound
+        return min(max(0, start), max(0, clipDuration - duration))
+    }
+
+    // MARK: - Mouse events
+
+    override func mouseDown(with event: NSEvent) {
+        beginDrag(atX: convert(event.locationInWindow, from: nil).x)
+    }
+
+    override func mouseDragged(with event: NSEvent) {
+        continueDrag(toX: convert(event.locationInWindow, from: nil).x)
+    }
+
+    override func mouseUp(with event: NSEvent) {
+        endDrag(atX: convert(event.locationInWindow, from: nil).x)
+    }
+
+    override func mouseMoved(with event: NSEvent) {
+        hoverTime = time(forX: convert(event.locationInWindow, from: nil).x)
+    }
+
+    override func mouseExited(with event: NSEvent) {
+        hoverTime = nil
+    }
+
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        trackingAreas.forEach(removeTrackingArea)
+        addTrackingArea(NSTrackingArea(
+            rect: bounds,
+            options: [.mouseMoved, .mouseEnteredAndExited, .activeInKeyWindow, .inVisibleRect],
+            owner: self
+        ))
+    }
 }
