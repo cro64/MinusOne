@@ -58,6 +58,13 @@ final class HeroWaveformView: NSView {
     func show(clipDuration: Double, peakStore: PeakStore) {
         self.clipDuration = clipDuration
         self.peakStore = peakStore
+        // Both hold absolute seconds, not a fraction of the clip — mirrors
+        // `DeckTimelineView.show(clipDuration:peakStore:)`'s identical reset of its own overlay:
+        // without this, a playhead or hover position left over from the previous clip could sit at
+        // a nonsensical spot (or even past the end) of the new one until the engine happens to emit
+        // a fresh tick or the pointer moves again.
+        playheadTime = nil
+        hoverTime = nil
         invalidatePeaks()
     }
 
