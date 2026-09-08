@@ -37,6 +37,7 @@ final class ClipSidebarViewController: NSViewController, NSTableViewDataSource, 
     private let searchField = NSSearchField()
     private var allClips: [PracticeClip] = []
     private var filteredClips: [PracticeClip] = []
+    private var playingClipID: UUID?
 
     var onSelectClip: ((PracticeClip) -> Void)?
     var onDropFiles: (([URL]) -> Void)?
@@ -134,6 +135,22 @@ final class ClipSidebarViewController: NSViewController, NSTableViewDataSource, 
         tableView.selectRowIndexes(IndexSet(integer: row), byExtendingSelection: false)
     }
 
+    /// Reflects the deck's play state onto the row of whichever clip is (or was) playing.
+    ///
+    /// Updates only the two rows that can actually change — the previously-playing one and the
+    /// newly-playing one — rather than `reloadData()`, which would tear down and rebuild every
+    /// visible `ClipRowView` (dropping in-place rename state) on every play/pause/clip-switch tick.
+    func setPlayingClip(id: UUID?) {
+        guard id != playingClipID else { return }
+        let previousID = playingClipID
+        playingClipID = id
+        for changedID in [previousID, id] {
+            guard let changedID, let row = filteredClips.firstIndex(where: { $0.id == changedID }) else { continue }
+            (tableView.view(atColumn: 0, row: row, makeIfNecessary: false) as? ClipRowView)?
+                .setPlaying(changedID == playingClipID)
+        }
+    }
+
     @objc private func searchChanged() {
         applyFilter(preserveSelection: true)
     }
@@ -156,7 +173,7 @@ final class ClipSidebarViewController: NSViewController, NSTableViewDataSource, 
 
     func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
         guard let clip = filteredClips[safe: row] else { return nil }
-        let view = ClipRowView(clip: clip)
+        let view = ClipRowView(clip: clip, isPlaying: clip.id == playingClipID)
         view.onRenameCommitted = { [weak self] id, newTitle in
             self?.commitRename(clipID: id, newTitle: newTitle)
         }
@@ -229,13 +246,14 @@ private extension Array {
 private final class ClipRowView: NSView, NSTextFieldDelegate {
     private let clipID: UUID
     private let titleField: NSTextField
+    private let nowPlayingIcon = NSImageView()
     private var titleBeforeEditing: String
     private var isEditingTitle = false
 
     /// Called with the committed title. The sidebar owns persistence — the row only reports.
     var onRenameCommitted: ((UUID, String) -> Void)?
 
-    init(clip: PracticeClip) {
+    init(clip: PracticeClip, isPlaying: Bool) {
         clipID = clip.id
         titleField = NSTextField(labelWithString: clip.title)
         titleBeforeEditing = clip.title
@@ -248,6 +266,23 @@ private final class ClipRowView: NSView, NSTextFieldDelegate {
         titleField.cell?.usesSingleLineMode = true
         titleField.cell?.wraps = false
         titleField.cell?.isScrollable = true
+
+        // Trailing glyph rather than a background/border on the whole row: the row already
+        // conveys selection via the table's own selection highlight, so "playing" needs a signal
+        // that reads independently of — and survives scrolling past — that selection state.
+        nowPlayingIcon.image = NSImage(systemSymbolName: "speaker.wave.2.fill", accessibilityDescription: "Playing")?
+            .withSymbolConfiguration(.init(pointSize: 10, weight: .semibold))
+        nowPlayingIcon.contentTintColor = .brandAccentDeep
+        nowPlayingIcon.imageScaling = .scaleProportionallyUpOrDown
+        nowPlayingIcon.translatesAutoresizingMaskIntoConstraints = false
+        nowPlayingIcon.setContentHuggingPriority(.required, for: .horizontal)
+        // Explicit, not left to intrinsic content size: `speaker.wave.2.fill`'s drawn wave arcs
+        // extend past the symbol's reported intrinsic width at this point size, so an
+        // intrinsically-sized `NSImageView` clipped the outer arc (measured in an offscreen
+        // render — visibly cut mid-arc). A frame a few points wider than that intrinsic size
+        // gives the glyph room to draw in full.
+        nowPlayingIcon.widthAnchor.constraint(equalToConstant: 16).isActive = true
+        nowPlayingIcon.heightAnchor.constraint(equalToConstant: 14).isActive = true
 
         let subtitle = clip.processingFailed
             ? "Processing failed"
@@ -263,13 +298,17 @@ private final class ClipRowView: NSView, NSTextFieldDelegate {
         waveform.translatesAutoresizingMaskIntoConstraints = false
 
         addSubview(titleField)
+        addSubview(nowPlayingIcon)
         addSubview(subtitleField)
         addSubview(waveform)
 
         NSLayoutConstraint.activate([
             titleField.topAnchor.constraint(equalTo: topAnchor, constant: 6),
             titleField.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 10),
-            titleField.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -10),
+            titleField.trailingAnchor.constraint(lessThanOrEqualTo: nowPlayingIcon.leadingAnchor, constant: -4),
+
+            nowPlayingIcon.centerYAnchor.constraint(equalTo: titleField.centerYAnchor),
+            nowPlayingIcon.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -10),
 
             subtitleField.topAnchor.constraint(equalTo: titleField.bottomAnchor, constant: 1),
             subtitleField.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 10),
@@ -281,6 +320,16 @@ private final class ClipRowView: NSView, NSTextFieldDelegate {
             waveform.heightAnchor.constraint(equalToConstant: 18),
             waveform.bottomAnchor.constraint(lessThanOrEqualTo: bottomAnchor, constant: -4)
         ])
+
+        setPlaying(isPlaying)
+    }
+
+    /// Toggles the trailing "now playing" glyph. Called both at row creation (from the sidebar's
+    /// currently-tracked `playingClipID`) and afterwards as playback state changes, so a row
+    /// scrolled into view mid-playback still shows the right state without a full table reload.
+    func setPlaying(_ isPlaying: Bool) {
+        nowPlayingIcon.isHidden = !isPlaying
+        titleField.textColor = isPlaying ? .brandAccentDeep : .labelColor
     }
 
     @available(*, unavailable)

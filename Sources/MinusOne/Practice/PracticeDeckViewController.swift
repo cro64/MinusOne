@@ -9,7 +9,15 @@ final class PracticeDeckViewController: NSViewController, NSTextFieldDelegate {
     private let playbackEngine: PracticePlaybackEngine
 
     private var clip: PracticeClip?
-    private var isEngineLoaded = false
+    /// The clip whose stems are actually loaded into `playbackEngine` right now — distinct from
+    /// `clip` (the one the deck is *showing*), which can outrun it: selecting a clip still
+    /// separating, or just browsing past whatever is currently playing, leaves the engine holding
+    /// a different clip's audio until this one is explicitly loaded. `onPlaybackStateChanged`/
+    /// `notifyPlaybackState()` report this, not `clip`, so the library's "now playing" indicator
+    /// tracks whichever clip's audio is really making sound — and `show(clip:)` compares against
+    /// it directly (`loadedClipID == clip.id`) rather than a separately-tracked "is loaded" flag,
+    /// which had drifted out of sync with this the moment a clip was merely browsed past and back.
+    private var loadedClipID: UUID?
     private var lastReloadedReadySeconds: Double = 0
     /// Clips whose peak backfill is already running. `show(clip:)` can be called twice in a row
     /// for the same clip (the import path selects the row *and* shows it), and two concurrent
@@ -51,6 +59,9 @@ final class PracticeDeckViewController: NSViewController, NSTextFieldDelegate {
 
     /// Fired after a rename made here has been persisted, so the sidebar row re-titles too.
     var onClipRenamed: ((PracticeClip) -> Void)?
+    /// Fired whenever the deck's play state changes — a manual toggle, a clip finishing, or a clip
+    /// switch that resumes or resets playback — so the library can show which clip is playing.
+    var onPlaybackStateChanged: ((UUID?, Bool) -> Void)?
 
     init(libraryStore: ClipLibraryStore, playbackEngine: PracticePlaybackEngine) {
         self.libraryStore = libraryStore
@@ -242,10 +253,12 @@ final class PracticeDeckViewController: NSViewController, NSTextFieldDelegate {
 
     private func setupBindings() {
         timeline.onSeek = { [weak self] time in
-            self?.playbackEngine.seek(toSeconds: time)
+            guard let self, self.ensureEngineLoaded() else { return }
+            self.playbackEngine.seek(toSeconds: time)
         }
         heroWaveformView.onSeek = { [weak self] time in
-            self?.playbackEngine.seek(toSeconds: time)
+            guard let self, self.ensureEngineLoaded() else { return }
+            self.playbackEngine.seek(toSeconds: time)
         }
         heroWaveformView.onVisibleRangePanned = { [weak self] startTime in
             self?.timeline.scrollVisibleWindow(toStartTime: startTime)
@@ -258,6 +271,13 @@ final class PracticeDeckViewController: NSViewController, NSTextFieldDelegate {
         }
         timeline.onLoopRangeChanged = { [weak self] range in
             guard let self else { return }
+            // Deliberately *not* `ensureEngineLoaded()`: a loop can be drawn on a clip that hasn't
+            // loaded yet (still separating, or simply not loaded because nothing has played it
+            // yet) — it just configures state the engine picks up whenever this clip does load.
+            // The one thing to guard against is a *different* clip actually playing right now:
+            // without this check, drawing a loop here would `seek` — and so audibly jump — that
+            // other clip's live players instead of doing nothing to this not-yet-loaded one.
+            guard !self.playbackEngine.isPlaying || self.loadedClipID == self.clip?.id else { return }
             // Trusted to be inside the clip: `DeckTimelineView` clamps a drag's x to the canvas
             // before it becomes a time, and `setLoopRange` stores whatever it is handed.
             self.playbackEngine.setLoopRange(range)
@@ -293,6 +313,7 @@ final class PracticeDeckViewController: NSViewController, NSTextFieldDelegate {
         }
         playbackEngine.onPlaybackFinished = { [weak self] in
             self?.showPlayGlyph(true)
+            self?.notifyPlaybackState()
         }
         timeline.onBeatGridEdited = { [weak self] grid in
             self?.persistEditedBeatGrid(grid)
@@ -318,11 +339,19 @@ final class PracticeDeckViewController: NSViewController, NSTextFieldDelegate {
     // MARK: - Clip lifecycle
 
     func show(clip: PracticeClip) {
+        // A row re-click, a re-import of the clip already loaded, or switching back to a clip that
+        // was left playing while another was only being browsed — nothing to (re)load here.
+        let isAlreadyLoadedClip = loadedClipID == clip.id
+
         self.clip = clip
-        isEngineLoaded = false
-        lastReloadedReadySeconds = 0
+        if !isAlreadyLoadedClip {
+            lastReloadedReadySeconds = 0
+            // A loop belongs to the clip it was drawn on (see `clearLoop()`'s own doc) — only drop
+            // it on an actual switch, not a re-select of the clip already loaded here, which would
+            // otherwise wipe out a loop the user is mid-practice with for no reason.
+            clearLoop()
+        }
         showEmptyState(false)
-        clearLoop()
 
         let store = PeakStore(peaksFolder: libraryStore.peaksFolder(forClipID: clip.id))
         timeline.show(clipDuration: clip.durationSeconds, peakStore: store)
@@ -333,6 +362,21 @@ final class PracticeDeckViewController: NSViewController, NSTextFieldDelegate {
         backfillPeaksIfNeeded(for: clip)
 
         refreshForCurrentClip()
+
+        if isAlreadyLoadedClip {
+            // Nothing to load — just resync this clip's own transport with the engine's real state,
+            // in case it was left showing "Play" while a different clip was being browsed to and
+            // this one kept playing untouched in the background.
+            showPlayGlyph(!playbackEngine.isPlaying)
+            return
+        }
+
+        // Browsing the library must not interrupt whatever is currently playing — this only loads
+        // the newly-shown clip into the engine (and so only stops another clip's audio) when
+        // nothing else is playing. If something else *is* playing, the transport here starts
+        // reset to "Play": loading (and cutting the other clip off) happens lazily, the moment the
+        // user actually presses play/seeks/skips on this clip — see `ensureEngineLoaded()`.
+        showPlayGlyph(true)
         loadPlaybackIfPossible()
     }
 
@@ -471,7 +515,7 @@ final class PracticeDeckViewController: NSViewController, NSTextFieldDelegate {
         applyBeatGrid(from: updated)
         updateTimelineHeight()
 
-        if !isEngineLoaded {
+        if loadedClipID != updated.id {
             loadPlaybackIfPossible()
         } else if updated.readyDurationSeconds - lastReloadedReadySeconds > 2 || updated.isFullyProcessed {
             do {
@@ -483,15 +527,47 @@ final class PracticeDeckViewController: NSViewController, NSTextFieldDelegate {
         }
     }
 
+    /// Loads the shown clip into the engine only if doing so wouldn't cut off something else that's
+    /// currently playing — the automatic path, called from `show(clip:)` and from `updateClip(_:)`
+    /// when a clip finishes separating enough to load for the first time. Both of those can fire
+    /// with no user action on *this* clip at all (browsing the library, or a background separation
+    /// tick), so neither may tear down another clip's audio just because this one became loadable.
+    /// An explicit action on this clip instead goes through `ensureEngineLoaded()`, which loads
+    /// unconditionally.
     private func loadPlaybackIfPossible() {
         guard let clip, clip.readyDurationSeconds > 0, !clip.processingFailed else { return }
+        guard !playbackEngine.isPlaying || loadedClipID == clip.id else { return }
+        loadClipIntoEngine(clip)
+    }
+
+    /// Loads the shown clip into the engine right now if it isn't already there, unconditionally —
+    /// for the controls that are themselves the explicit request to hear or scrub *this* clip
+    /// (play/pause, seek, skip, drawing a loop). Returns whether the engine now holds this clip
+    /// (false if it isn't playable yet), so callers can bail out rather than acting on a clip that
+    /// never loaded.
+    @discardableResult
+    private func ensureEngineLoaded() -> Bool {
+        guard let clip, clip.readyDurationSeconds > 0, !clip.processingFailed else { return false }
+        guard loadedClipID != clip.id else { return true }
+        loadClipIntoEngine(clip)
+        return loadedClipID == clip.id
+    }
+
+    /// The one place that actually calls `PracticePlaybackEngine.load(clip:)` — which always tears
+    /// down whatever was loaded before, silently stopping its audio. Only `loadPlaybackIfPossible()`
+    /// and `ensureEngineLoaded()` may call this, since they're what decide *when* that's acceptable.
+    private func loadClipIntoEngine(_ clip: PracticeClip) {
         do {
             try playbackEngine.load(clip: clip, libraryStore: libraryStore)
-            isEngineLoaded = true
+            loadedClipID = clip.id
             lastReloadedReadySeconds = clip.readyDurationSeconds
             playPauseButton.isEnabled = true
             skipBackButton.isEnabled = true
             skipForwardButton.isEnabled = true
+            // A fresh load never autoplays — see this method's callers' docs on why loading must
+            // never itself be the thing that starts audio the user didn't ask to hear.
+            showPlayGlyph(true)
+            notifyPlaybackState()
         } catch {
             AppLogger.shared.warning("Practice deck load failed: \(error.localizedDescription)")
         }
@@ -538,6 +614,10 @@ final class PracticeDeckViewController: NSViewController, NSTextFieldDelegate {
     // MARK: - Actions
 
     @objc private func togglePlayPause() {
+        // Loads this clip first if it isn't already the one in the engine — e.g. another clip was
+        // playing while this one was only being browsed. After this call `playbackEngine.isPlaying`
+        // is guaranteed to describe *this* clip, not whatever was playing before.
+        guard ensureEngineLoaded() else { return }
         if playbackEngine.isPlaying {
             playbackEngine.pause()
             showPlayGlyph(true)
@@ -545,6 +625,7 @@ final class PracticeDeckViewController: NSViewController, NSTextFieldDelegate {
             playbackEngine.play()
             showPlayGlyph(false)
         }
+        notifyPlaybackState()
     }
 
     /// The one place the play/pause glyph is chosen, so the icon can't drift out of step with the
@@ -552,6 +633,12 @@ final class PracticeDeckViewController: NSViewController, NSTextFieldDelegate {
     private func showPlayGlyph(_ showPlay: Bool) {
         playPauseButton.setIcon(showPlay ? "play.fill" : "pause.fill", label: showPlay ? "Play" : "Pause")
         playPauseButton.isOn = !showPlay
+    }
+
+    /// Single point that reports the deck's play state outward, so the library's "now playing"
+    /// indicator can't drift from what the transport actually shows.
+    private func notifyPlaybackState() {
+        onPlaybackStateChanged?(loadedClipID, playbackEngine.isPlaying)
     }
 
     @objc private func skipBackward() {
@@ -565,7 +652,7 @@ final class PracticeDeckViewController: NSViewController, NSTextFieldDelegate {
     /// `seek(toSeconds:)` clamps to the clip, and keeps playing if it already was, so a nudge off
     /// either end lands on the boundary rather than stopping.
     private func skip(by seconds: Double) {
-        guard clip != nil, isEngineLoaded else { return }
+        guard ensureEngineLoaded() else { return }
         playbackEngine.seek(toSeconds: playbackEngine.currentTime() + seconds)
     }
 
