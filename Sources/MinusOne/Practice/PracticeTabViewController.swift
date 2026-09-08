@@ -15,6 +15,9 @@ final class PracticeTabViewController: NSViewController {
     /// Running elapsed readout, shown only while a recording is in flight. Clicking it returns to
     /// the Record page — going back doesn't stop the take, so there has to be a way forward again.
     let recordElapsedButton = WindowUI.linkButton(title: "")
+    /// The one way to bring the library sidebar back after dragging its divider shut collapses
+    /// it — a collapsed divider has no width left to grab, so this is not just a convenience.
+    private let sidebarToggleButton = FlatButton(title: "", kind: .secondary, target: nil, action: nil)
 
     private let splitViewController: PracticeSplitViewController
 
@@ -55,8 +58,19 @@ final class PracticeTabViewController: NSViewController {
         recordElapsedButton.toolTip = "Back to the recording"
         recordElapsedButton.setAccessibilityLabel("Back to the recording")
 
+        sidebarToggleButton.cornerStyle = .capsule
+        sidebarToggleButton.imagePosition = .imageOnly
+        sidebarToggleButton.imageScaling = .scaleProportionallyDown
+        sidebarToggleButton.setIcon("sidebar.leading", pointSize: 13, label: "Toggle Sidebar")
+        sidebarToggleButton.constrainSize(width: 32, height: 32)
+        sidebarToggleButton.toolTip = "Show/Hide Sidebar"
+        sidebarToggleButton.target = self
+        sidebarToggleButton.action = #selector(sidebarToggleClicked)
+
+        // Leftmost, directly above the sidebar it controls — Import/Record stay together on the
+        // pane they act on either way.
         let actionRow = Layout.horizontalStack(
-            [importActionButton, recordActionButton, recordElapsedButton],
+            [sidebarToggleButton, importActionButton, recordActionButton, recordElapsedButton],
             spacing: WindowUI.Metrics.rowSpacing
         )
         // Only pinned by leading+top below, with no height/bottom of its own — nothing stops
@@ -78,6 +92,10 @@ final class PracticeTabViewController: NSViewController {
         // buttons 14pt above the clip search field — the spacing the row had before `FlatButton`'s
         // alignment-rect fix stopped its 33.5pt paint from overlapping the gap.
         splitView.topAnchor.constraint(equalTo: actionRow.bottomAnchor, constant: 4).isActive = true
+    }
+
+    @objc private func sidebarToggleClicked() {
+        splitViewController.toggleSidebar()
     }
 
     /// Reflects the shared recorder's state in the action row. A recording started from the Record
