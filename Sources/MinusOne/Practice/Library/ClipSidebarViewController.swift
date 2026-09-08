@@ -39,10 +39,18 @@ final class ClipSidebarViewController: NSViewController, NSTableViewDataSource, 
     private var filteredClips: [PracticeClip] = []
     private var playingClipID: UUID?
 
+    /// Icon-only: a labelled pair costs ~180pt of a sidebar that can be dragged to 220pt wide,
+    /// which would leave no usable search field. `setIcon` carries the dropped titles into the
+    /// tooltip and the accessibility name.
+    let importButton = FlatButton(title: "", kind: .ghost, target: nil, action: nil)
+    let recordButton = FlatButton(title: "", kind: .ghost, target: nil, action: nil)
+
     var onSelectClip: ((PracticeClip) -> Void)?
     var onDropFiles: (([URL]) -> Void)?
     /// Fired after a rename has been persisted, so the deck showing the same clip re-titles too.
     var onRenameClip: ((PracticeClip) -> Void)?
+    var onImportClicked: (() -> Void)?
+    var onRecordClicked: (() -> Void)?
 
     init(libraryStore: ClipLibraryStore) {
         self.libraryStore = libraryStore
@@ -73,6 +81,27 @@ final class ClipSidebarViewController: NSViewController, NSTableViewDataSource, 
         searchField.placeholderString = "Search clips"
         searchField.target = self
         searchField.action = #selector(searchChanged)
+        searchField.setContentHuggingPriority(.defaultLow, for: .horizontal)
+
+        // Ghost, not `.secondary`: `refreshStyle` only consults `textColorOverride` on the ghost
+        // branch, so a coral Record glyph would otherwise mean changing shared `FlatButton`
+        // behaviour. Ghost also reads quieter beside the bordered search field — these two
+        // actions should not out-weigh the list they sit above. Same recipe as the title bar's
+        // `backButton`/`appearanceButton`.
+        for button in [importButton, recordButton] {
+            button.cornerStyle = .capsule
+            button.imagePosition = .imageOnly
+            button.imageScaling = .scaleProportionallyDown
+            button.constrainSize(width: 24, height: 24)
+            button.target = self
+        }
+        importButton.textColorOverride = .secondaryLabelColor
+        importButton.setIcon("square.and.arrow.down", pointSize: 12, label: "Import")
+        importButton.action = #selector(importClicked)
+        // No `textColorOverride`: ghost's default tint is `.brandAccent`, and Record is the one
+        // place in this pane that spends the accent.
+        recordButton.setIcon("record.circle", pointSize: 12, label: "Record")
+        recordButton.action = #selector(recordClicked)
 
         let column = NSTableColumn(identifier: .init("clip"))
         column.width = 240
@@ -111,9 +140,10 @@ final class ClipSidebarViewController: NSViewController, NSTableViewDataSource, 
         scrollView.hasVerticalScroller = true
         scrollView.drawsBackground = false
 
-        Layout.pin(searchField, to: root, edges: [.top, .leading, .trailing], insets: NSEdgeInsets(top: 10, left: 10, bottom: 0, right: 10))
+        let header = Layout.horizontalStack([importButton, recordButton, searchField], spacing: 6)
+        Layout.pin(header, to: root, edges: [.top, .leading, .trailing], insets: NSEdgeInsets(top: 10, left: 10, bottom: 0, right: 10))
         Layout.pin(scrollView, to: root, edges: [.leading, .trailing, .bottom])
-        scrollView.topAnchor.constraint(equalTo: searchField.bottomAnchor, constant: 8).isActive = true
+        scrollView.topAnchor.constraint(equalTo: header.bottomAnchor, constant: 8).isActive = true
     }
 
     func reloadClips() {
@@ -154,6 +184,10 @@ final class ClipSidebarViewController: NSViewController, NSTableViewDataSource, 
     @objc private func searchChanged() {
         applyFilter(preserveSelection: true)
     }
+
+    @objc private func importClicked() { onImportClicked?() }
+
+    @objc private func recordClicked() { onRecordClicked?() }
 
     private func applyFilter(preserveSelection: Bool) {
         let selectedID = preserveSelection && tableView.selectedRow >= 0 ? filteredClips[safe: tableView.selectedRow]?.id : nil
@@ -230,6 +264,8 @@ final class ClipSidebarViewController: NSViewController, NSTableViewDataSource, 
         item.representedObject = clip.id
         menu.addItem(item)
     }
+
+    var searchFieldForTesting: NSSearchField { searchField }
 }
 
 private extension Array {
