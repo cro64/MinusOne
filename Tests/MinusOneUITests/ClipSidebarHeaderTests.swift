@@ -64,4 +64,34 @@ final class ClipSidebarHeaderTests: XCTestCase {
         XCTAssertEqual(imported, 1)
         XCTAssertEqual(recorded, 1)
     }
+
+    func testTheElapsedReadoutTakesOverTheSearchFieldWhileRecording() {
+        XCTAssertTrue(sidebar.elapsedButtonForTesting.isHidden, "no readout before a take starts")
+        XCTAssertFalse(sidebar.searchFieldForTesting.isHidden)
+
+        sidebar.setRecordingState(true)
+
+        XCTAssertFalse(sidebar.elapsedButtonForTesting.isHidden)
+        XCTAssertTrue(sidebar.searchFieldForTesting.isHidden, "the readout replaces the field rather than adding a row")
+        // Seeded rather than blank, so the first frame isn't an empty control.
+        XCTAssertEqual(sidebar.elapsedButtonForTesting.title, "●  0:00")
+        XCTAssertEqual(sidebar.recordButton.toolTip, "Stop")
+    }
+
+    func testTheSearchQuerySurvivesARecording() {
+        sidebar.searchFieldForTesting.stringValue = "leaves"
+        sidebar.setRecordingState(true)
+        sidebar.updateRecordingElapsed(24)
+        XCTAssertEqual(sidebar.elapsedButtonForTesting.title, "●  0:24")
+
+        sidebar.setRecordingState(false)
+
+        XCTAssertFalse(sidebar.searchFieldForTesting.isHidden)
+        XCTAssertTrue(sidebar.elapsedButtonForTesting.isHidden)
+        XCTAssertEqual(
+            sidebar.searchFieldForTesting.stringValue, "leaves",
+            "the query was cleared by the swap"
+        )
+        XCTAssertEqual(sidebar.recordButton.toolTip, "Record")
+    }
 }

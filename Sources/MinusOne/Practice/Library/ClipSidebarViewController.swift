@@ -45,12 +45,20 @@ final class ClipSidebarViewController: NSViewController, NSTableViewDataSource, 
     let importButton = FlatButton(title: "", kind: .ghost, target: nil, action: nil)
     let recordButton = FlatButton(title: "", kind: .ghost, target: nil, action: nil)
 
+    /// Running elapsed readout, shown only while a take is in flight, in place of the search
+    /// field. Clicking it returns to the Record page — leaving that page doesn't stop the take,
+    /// so there has to be a way forward again.
+    private let elapsedButton = WindowUI.linkButton(title: "")
+
     var onSelectClip: ((PracticeClip) -> Void)?
     var onDropFiles: (([URL]) -> Void)?
     /// Fired after a rename has been persisted, so the deck showing the same clip re-titles too.
     var onRenameClip: ((PracticeClip) -> Void)?
     var onImportClicked: (() -> Void)?
     var onRecordClicked: (() -> Void)?
+    var onRecordElapsedClicked: (() -> Void)?
+
+    var elapsedButtonForTesting: FlatButton { elapsedButton }
 
     init(libraryStore: ClipLibraryStore) {
         self.libraryStore = libraryStore
@@ -103,6 +111,15 @@ final class ClipSidebarViewController: NSViewController, NSTableViewDataSource, 
         recordButton.setIcon("record.circle", pointSize: 12, label: "Record")
         recordButton.action = #selector(recordClicked)
 
+        elapsedButton.isHidden = true
+        elapsedButton.textColorOverride = .brandAccentDeep
+        // A running time reads as a label, so its one affordance is spelled out rather than left
+        // to be discovered by clicking.
+        elapsedButton.toolTip = "Back to the recording"
+        elapsedButton.setAccessibilityLabel("Back to the recording")
+        elapsedButton.target = self
+        elapsedButton.action = #selector(recordElapsedClicked)
+
         let column = NSTableColumn(identifier: .init("clip"))
         column.width = 240
         tableView.addTableColumn(column)
@@ -140,7 +157,7 @@ final class ClipSidebarViewController: NSViewController, NSTableViewDataSource, 
         scrollView.hasVerticalScroller = true
         scrollView.drawsBackground = false
 
-        let header = Layout.horizontalStack([importButton, recordButton, searchField], spacing: 6)
+        let header = Layout.horizontalStack([importButton, recordButton, searchField, elapsedButton], spacing: 6)
         Layout.pin(header, to: root, edges: [.top, .leading, .trailing], insets: NSEdgeInsets(top: 10, left: 10, bottom: 0, right: 10))
         Layout.pin(scrollView, to: root, edges: [.leading, .trailing, .bottom])
         scrollView.topAnchor.constraint(equalTo: header.bottomAnchor, constant: 8).isActive = true
@@ -188,6 +205,30 @@ final class ClipSidebarViewController: NSViewController, NSTableViewDataSource, 
     @objc private func importClicked() { onImportClicked?() }
 
     @objc private func recordClicked() { onRecordClicked?() }
+
+    /// Reflects the shared recorder's state in the header. A recording started from the Record
+    /// page (or the menu bar) keeps running after you navigate back here, so Record has to become
+    /// the way to stop it — otherwise the only stop control is on a page you've left.
+    func setRecordingState(_ recording: Bool) {
+        recordButton.setIcon(
+            recording ? "stop.fill" : "record.circle",
+            pointSize: 12,
+            label: recording ? "Stop" : "Record"
+        )
+        elapsedButton.isHidden = !recording
+        // Hidden rather than removed: the query is still in the field when the take ends.
+        searchField.isHidden = recording
+        // Seeded rather than left blank until the first progress tick ~100ms later, which would
+        // otherwise show an empty button for a frame.
+        elapsedButton.title = recording ? "●  0:00" : ""
+    }
+
+    func updateRecordingElapsed(_ seconds: Double) {
+        guard !elapsedButton.isHidden else { return }
+        elapsedButton.title = "●  \(seconds.formattedAsDuration)"
+    }
+
+    @objc private func recordElapsedClicked() { onRecordElapsedClicked?() }
 
     private func applyFilter(preserveSelection: Bool) {
         let selectedID = preserveSelection && tableView.selectedRow >= 0 ? filteredClips[safe: tableView.selectedRow]?.id : nil
