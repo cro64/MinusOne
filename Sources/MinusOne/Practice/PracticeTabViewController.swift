@@ -1,28 +1,24 @@
 import AppKit
 
-/// Hosts Practice's Import/Record action row above the sidebar+deck split view.
+/// Hosts the Practice tab's sidebar+deck split view.
 ///
-/// The previous shape built this as a bare `NSView` holding `practiceSplitViewController.view`
-/// as a plain subview, with the split view controller never added via `addChild(_:)` anywhere in
-/// the app. `NSSplitViewController` computes its divider/holding-priority layout expecting the
-/// normal view-controller lifecycle (`viewWillAppear`/`viewDidAppear`) to fire; skipping
-/// containment is what produced the "gap above the button row, content pinned to the bottom of
-/// the window" bug — the split view's initial layout was baked in against a not-yet-final frame
-/// with no later pass to correct it. Wrapping it in a real parent view controller fixes that.
+/// This wrapper looks redundant now that it carries no chrome of its own, and it is not.
+/// `NSSplitViewController` computes its divider/holding-priority layout expecting the normal
+/// view-controller lifecycle (`viewWillAppear`/`viewDidAppear`) to fire, and an earlier shape that
+/// held `practiceSplitViewController.view` as a plain subview — never adding the controller via
+/// `addChild(_:)` anywhere in the app — is what produced the "gap above the button row, content
+/// pinned to the bottom of the window" bug. The containment below is the fix; do not inline it.
+///
+/// The Import/Record row this class used to own now lives in the sidebar's own header, and its
+/// sidebar toggle in the window's title bar row. See
+/// `docs/superpowers/specs/2026-09-07-practice-action-row-design.md`.
 final class PracticeTabViewController: NSViewController {
-    let importActionButton = WindowUI.toolbarActionButton(title: "Import", symbolName: "square.and.arrow.down", symbolPointSize: 12, target: nil, action: nil)
-    let recordActionButton = WindowUI.toolbarActionButton(title: "Record", symbolName: "record.circle", symbolPointSize: 12, target: nil, action: nil)
-    /// Running elapsed readout, shown only while a recording is in flight. Clicking it returns to
-    /// the Record page — going back doesn't stop the take, so there has to be a way forward again.
-    let recordElapsedButton = WindowUI.linkButton(title: "")
-    /// The one way to bring the library sidebar back after dragging its divider shut collapses
-    /// it — a collapsed divider has no width left to grab, so this is not just a convenience.
-    private let sidebarToggleButton = FlatButton(title: "", kind: .secondary, target: nil, action: nil)
-
     private let splitViewController: PracticeSplitViewController
+    private let sidebar: ClipSidebarViewController
 
-    init(splitViewController: PracticeSplitViewController) {
+    init(splitViewController: PracticeSplitViewController, sidebar: ClipSidebarViewController) {
         self.splitViewController = splitViewController
+        self.sidebar = sidebar
         super.init(nibName: nil, bundle: nil)
     }
 
@@ -34,89 +30,17 @@ final class PracticeTabViewController: NSViewController {
     override func loadView() {
         let root = AutoLayoutView()
         view = root
-
-        // `toolbarActionButton`'s default sizing (14pt/.black title + FlatButton's own +28.8w/
-        // +16h padding) is tuned for a single prominent CTA (e.g. onboarding's "Download Neural
-        // Model"), not a compact action row — left as-is it dwarfs the sidebar/deck below it. The
-        // matching 12pt symbol size is passed at construction, above.
-        for button in [importActionButton, recordActionButton] {
-            button.pointSize = 12
-            // 32, not 26. `FlatButton` used to inherit `NSButton`'s alignment rect insets, so a
-            // 26pt constraint painted a 33.5pt box — this row's proportions were tuned against
-            // that. Now that the constraint produces the size it says, the number has to be the
-            // one that was always being drawn, or the buttons come out 7.5pt shorter.
-            button.heightAnchor.constraint(equalToConstant: 32).isActive = true
-            // Matches the title bar's Live/Practice pill sitting directly above this row — at the
-            // same 26pt height the two read as one family instead of two button languages.
-            button.cornerStyle = .capsule
-        }
-
-        recordElapsedButton.isHidden = true
-        recordElapsedButton.textColorOverride = .brandAccentDeep
-        // A running time reads as a label, so its one affordance is spelled out rather than left to
-        // be discovered by clicking.
-        recordElapsedButton.toolTip = "Back to the recording"
-        recordElapsedButton.setAccessibilityLabel("Back to the recording")
-
-        sidebarToggleButton.cornerStyle = .capsule
-        sidebarToggleButton.imagePosition = .imageOnly
-        sidebarToggleButton.imageScaling = .scaleProportionallyDown
-        sidebarToggleButton.setIcon("sidebar.leading", pointSize: 13, label: "Toggle Sidebar")
-        sidebarToggleButton.constrainSize(width: 32, height: 32)
-        sidebarToggleButton.toolTip = "Show/Hide Sidebar"
-        sidebarToggleButton.target = self
-        sidebarToggleButton.action = #selector(sidebarToggleClicked)
-
-        // Leftmost, directly above the sidebar it controls — Import/Record stay together on the
-        // pane they act on either way.
-        let actionRow = Layout.horizontalStack(
-            [sidebarToggleButton, importActionButton, recordActionButton, recordElapsedButton],
-            spacing: WindowUI.Metrics.rowSpacing
-        )
-        // Only pinned by leading+top below, with no height/bottom of its own — nothing stops
-        // Auto Layout from stretching it to soak up whatever height `splitView` doesn't claim
-        // (confirmed via direct frame logging: actionRow measured 374pt tall, not ~26pt, exactly
-        // filling the gap between the button row's real height and wherever splitView ended up).
-        // A hard height, matching the buttons it holds, removes it as a possible slack-absorber.
-        actionRow.heightAnchor.constraint(equalToConstant: 32).isActive = true
-
         addChild(splitViewController)
-        let splitView = splitViewController.view
-
-        let pad = WindowUI.Metrics.padding
-        Layout.pin(actionRow, to: root, edges: [.leading, .top], insets: NSEdgeInsets(top: WindowUI.Metrics.rowSpacing, left: pad, bottom: 0, right: 0))
-        Layout.pin(splitView, to: root, edges: [.leading, .trailing, .bottom])
-        // 4, not the full 8pt row spacing: both panes below already carry their own top padding
-        // (10pt to the sidebar's search field, 24pt to the deck's content), so a full token gap
-        // here stacks on top of that and reads as a hole under the buttons. Measured, this puts the
-        // buttons 14pt above the clip search field — the spacing the row had before `FlatButton`'s
-        // alignment-rect fix stopped its 33.5pt paint from overlapping the gap.
-        splitView.topAnchor.constraint(equalTo: actionRow.bottomAnchor, constant: 4).isActive = true
+        Layout.pin(splitViewController.view, to: root)
     }
 
-    @objc private func sidebarToggleClicked() {
-        splitViewController.toggleSidebar()
-    }
-
-    /// Reflects the shared recorder's state in the action row. A recording started from the Record
-    /// page (or the menu bar) keeps running after you navigate back here, so Record has to become
-    /// the way to stop it — otherwise the only stop control is on a page you've left.
+    /// Forwarded to the sidebar, which owns the header these now live in. Kept on this class so
+    /// `MainWindowController`'s existing call sites don't have to reach past it.
     func setRecordingState(_ recording: Bool) {
-        recordActionButton.title = recording ? "Stop" : "Record"
-        // Via `setSymbol`, not a bare `image =` — see its doc comment.
-        recordActionButton.setSymbol(
-            recording ? "stop.fill" : "record.circle",
-            pointSize: 12,
-            accessibilityDescription: recording ? "Stop" : "Record"
-        )
-        recordElapsedButton.isHidden = !recording
-        // Seeded rather than left blank until the first progress tick ~100ms later, which would
-        // otherwise show an empty button for a frame.
-        recordElapsedButton.title = recording ? "●  0:00" : ""
+        sidebar.setRecordingState(recording)
     }
 
     func updateRecordingElapsed(_ seconds: Double) {
-        guard !recordElapsedButton.isHidden else { return }
-        recordElapsedButton.title = "●  \(seconds.formattedAsDuration)"
+        sidebar.updateRecordingElapsed(seconds)
     }
 }

@@ -116,7 +116,10 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         sidebar = ClipSidebarViewController(libraryStore: libraryStore)
         deck = PracticeDeckViewController(libraryStore: libraryStore, playbackEngine: playbackEngine)
         practiceSplitViewController = PracticeSplitViewController(sidebar: sidebar, detail: deck)
-        practiceTabViewController = PracticeTabViewController(splitViewController: practiceSplitViewController)
+        practiceTabViewController = PracticeTabViewController(
+            splitViewController: practiceSplitViewController,
+            sidebar: sidebar
+        )
 
         let defaultContentSize = WindowSizing.defaultContent
         let window = NSWindow(
@@ -444,18 +447,16 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
     private func configurePracticeTab() {
         _ = practiceTabViewController.view
 
-        let importActionButton = practiceTabViewController.importActionButton
-        let recordActionButton = practiceTabViewController.recordActionButton
+        sidebar.onImportClicked = { [weak self] in self?.importButtonClicked() }
+        sidebar.onRecordClicked = { [weak self] in
+            guard let self else { return }
+            self.recordButtonClicked(self)
+        }
+        sidebar.onRecordElapsedClicked = { [weak self] in self?.recordElapsedClicked() }
 
-        importActionButton.target = self
-        importActionButton.action = #selector(importButtonClicked)
-        recordActionButton.target = self
-        recordActionButton.action = #selector(recordButtonClicked(_:))
-        practiceTabViewController.recordElapsedButton.target = self
-        practiceTabViewController.recordElapsedButton.action = #selector(recordElapsedClicked)
         if #unavailable(macOS 14.2) {
-            recordActionButton.isEnabled = false
-            recordActionButton.toolTip = "Recording system audio requires macOS 14.2 or later"
+            sidebar.recordButton.isEnabled = false
+            sidebar.recordButton.toolTip = "Recording system audio requires macOS 14.2 or later"
         }
     }
 
