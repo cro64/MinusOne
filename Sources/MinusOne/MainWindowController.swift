@@ -14,6 +14,15 @@ enum WindowSizing {
     static let minimum = NSSize(width: 900, height: 600)
 }
 
+/// The title bar's leading slot holds either the back button or the sidebar toggle, never both:
+/// the back button only appears on takeover pages, where the split view the toggle acts on is not
+/// on screen. Extracted as a pure rule so it can be tested without building a window.
+enum HeaderChrome {
+    static func showsSidebarToggle(showsBack: Bool, onPractice: Bool) -> Bool {
+        !showsBack && onPractice
+    }
+}
+
 /// Owns the desktop window: a Live / Practice segmented switch in a content-area header, and the
 /// two tabs' content. Live embeds `LiveTabViewController`, a full-width window-filling view (REDESIGN.md
 /// §3); Practice embeds the existing sidebar + deck split view, reused as-is per REDESIGN.md §1.
@@ -78,6 +87,11 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
     private let appearanceButton = FlatButton(title: "", kind: .ghost)
     /// Leading-edge `<`. Only visible on takeover pages, where there's no tab switch to leave by.
     private let backButton = FlatButton(title: "", kind: .ghost)
+    /// The one way to bring the library sidebar back after dragging its divider shut collapses it
+    /// — a collapsed divider has no width left to grab, so this is not just a convenience. It
+    /// lives up here rather than beside the deck's title because it is window chrome, not a clip
+    /// action: it has to outlive the pane it hides.
+    private let sidebarToggleButton = FlatButton(title: "", kind: .ghost, target: nil, action: nil)
     private var currentPage: Page = .tab(.live)
     /// The tab to return to when a takeover page is dismissed.
     private var currentTab: Tab = .live
@@ -229,9 +243,11 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
     /// (onboarding, Record) can't drift apart on what they hide.
     private func applyHeaderChrome(showsBack: Bool) {
         let isTab = !showsBack && currentPage != .onboarding
+        let onPractice = currentPage == .tab(.practice)
         backButton.isHidden = !showsBack
         segmentedControl.isHidden = !isTab
-        liveStatusDot.isHidden = currentPage != .tab(.practice)
+        liveStatusDot.isHidden = !onPractice
+        sidebarToggleButton.isHidden = !HeaderChrome.showsSidebarToggle(showsBack: showsBack, onPractice: onPractice)
     }
 
     /// Reflects a clip recorded (or still separating) via the menu bar's Record toggle into the
@@ -252,6 +268,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
 
         configureAppearanceButton()
         configureBackButton()
+        configureSidebarToggleButton()
 
         // Theme switch first, then the dot, then the switch itself. The dot annotates the
         // Live/Practice control (it reports that Live is still running while Practice is showing),
@@ -272,13 +289,19 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         let cluster = Layout.horizontalStack([appearanceButton, liveStatusDot, segmentedControl], spacing: 8)
         headerRow.addSubview(cluster)
         headerRow.addSubview(backButton)
+        headerRow.addSubview(sidebarToggleButton)
         NSLayoutConstraint.activate([
             // Trailing-aligned, matching the padding the tab content below uses, so the switch
             // lines up with the right edge of the Live tab's card grid.
             cluster.trailingAnchor.constraint(equalTo: headerRow.trailingAnchor, constant: -WindowUI.Metrics.padding),
             cluster.centerYAnchor.constraint(equalTo: headerRow.centerYAnchor),
             backButton.leadingAnchor.constraint(equalTo: headerRow.leadingAnchor, constant: Self.backButtonLeadingInset),
-            backButton.centerYAnchor.constraint(equalTo: headerRow.centerYAnchor)
+            backButton.centerYAnchor.constraint(equalTo: headerRow.centerYAnchor),
+            // Same slot as `backButton`, which is never visible at the same time. The 80pt inset is
+            // load-bearing: with `.fullSizeContentView` the traffic lights float inside `headerRow`
+            // (14×14 at x=9/32/55), and 80 clears the zoom button by 11pt.
+            sidebarToggleButton.leadingAnchor.constraint(equalTo: headerRow.leadingAnchor, constant: Self.backButtonLeadingInset),
+            sidebarToggleButton.centerYAnchor.constraint(equalTo: headerRow.centerYAnchor)
         ])
 
         Layout.pin(headerRow, to: contentContainer, edges: [.leading, .trailing, .top])
@@ -330,6 +353,26 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
     @objc private func backButtonClicked() {
         showTab(currentTab)
     }
+
+    /// Same recipe as `backButton` and `appearanceButton` — capsule ghost, secondary tint, 24×24 —
+    /// so it reads as title bar chrome rather than as an action inside the page below it.
+    private func configureSidebarToggleButton() {
+        sidebarToggleButton.cornerStyle = .capsule
+        sidebarToggleButton.imagePosition = .imageOnly
+        sidebarToggleButton.imageScaling = .scaleProportionallyDown
+        sidebarToggleButton.textColorOverride = .secondaryLabelColor
+        sidebarToggleButton.setIcon("sidebar.leading", pointSize: 12, label: "Show/Hide Sidebar")
+        sidebarToggleButton.constrainSize(width: 24, height: 24)
+        sidebarToggleButton.isHidden = true
+        sidebarToggleButton.target = self
+        sidebarToggleButton.action = #selector(sidebarToggleClicked)
+    }
+
+    @objc private func sidebarToggleClicked() {
+        practiceSplitViewController.toggleSidebar()
+    }
+
+    var sidebarToggleButtonForTesting: FlatButton { sidebarToggleButton }
 
     /// Escape leaves a takeover page, same as the `<`. Handled here rather than on the page's own
     /// view controller because the window controller is reliably in the responder chain even when
