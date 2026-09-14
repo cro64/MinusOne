@@ -242,9 +242,10 @@ final class FlatButton: NSButton {
         /// Fixed `WindowUI.Metrics.buttonCornerRadius` — the default for buttons sitting in a
         /// card's form rhythm, where a capsule would fight the square-ish chrome around it.
         case rounded
-        /// Fully round ends, radius tracking half the button's height. Used by Practice's
-        /// Import/Record row, which sits directly under the title bar's capsule Live/Practice
-        /// switch and reads as part of that same band of controls.
+        /// Fully round ends, radius tracking half the button's height. Used by the title bar's
+        /// chrome buttons (back/appearance/sidebar toggle), which sit directly under the title
+        /// bar's capsule Live/Practice switch, and by the sidebar's Import/Record row — all read
+        /// as the same band of round controls.
         case capsule
     }
 
@@ -439,7 +440,7 @@ final class FlatButton: NSButton {
     /// top 4, bottom 3.5, right 0.5). Auto Layout constrains the *alignment rect*, not the frame,
     /// so those insets silently inflate the painted box — a `constrainSize(24, 24)` produced a
     /// 24.5×31.5 layer, which rendered the capsule hover as a vertical oval rather than a circle,
-    /// and made the 26pt Import/Record buttons paint 33.5pt tall inside a 26pt row.
+    /// and would inflate the sidebar's 24×24 Import/Record buttons past the 24pt row they sit in.
     ///
     /// `FlatButton` sets `isBordered = false` and paints its own fill, border and corner radius
     /// into its layer from `bounds`, so there is no bezel for the insets to describe. Zeroing them

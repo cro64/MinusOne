@@ -2,8 +2,8 @@ import AppKit
 
 /// Practice deck's empty state (REDESIGN.md §4): the logo's waveform mark over a short prompt.
 ///
-/// This used to carry its own Import / Record buttons duplicating the action row above the clip
-/// list. Two live copies of the same pair, a few hundred points apart, read as two different
+/// This used to carry its own Import / Record buttons duplicating the pair in the sidebar's
+/// header. Two live copies of the same pair, a few hundred points apart, read as two different
 /// features rather than one — so the buttons live in exactly one place now, and the subtitle
 /// points at them.
 final class PracticeEmptyStateView: NSView {

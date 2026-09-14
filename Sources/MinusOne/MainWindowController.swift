@@ -473,8 +473,8 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
     @available(macOS 14.2, *)
     func attachRecorder(_ recorder: ClipRecorder) {
         clipRecorderBox = recorder
-        // The window can be built while a menu-bar recording is already running, so the toolbar
-        // starts from the recorder's state rather than assuming idle.
+        // The window can be built while a menu-bar recording is already running, so the sidebar
+        // header starts from the recorder's state rather than assuming idle.
         practiceTabViewController.setRecordingState(recorder.isRecording)
         if recorder.isRecording {
             practiceTabViewController.updateRecordingElapsed(recorder.elapsedSeconds())
@@ -510,7 +510,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
     }
 
     /// Forwarded from `AppDelegate` off the recorder's ~10Hz progress callback. Both surfaces are
-    /// fed unconditionally — the Practice toolbar's readout guards on its own visibility, and the
+    /// fed unconditionally — the sidebar header's readout guards on its own visibility, and the
     /// record page's on being loaded — so navigating between them never leaves one stale.
     func updateRecordingProgress(peaks: [Float], elapsed: Double) {
         practiceTabViewController.updateRecordingElapsed(elapsed)
