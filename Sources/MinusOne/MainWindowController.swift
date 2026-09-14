@@ -14,6 +14,15 @@ enum WindowSizing {
     static let minimum = NSSize(width: 900, height: 600)
 }
 
+/// The title bar's leading slot holds either the back button or the sidebar toggle, never both:
+/// the back button only appears on takeover pages, where the split view the toggle acts on is not
+/// on screen. Extracted as a pure rule so it can be tested without building a window.
+enum HeaderChrome {
+    static func showsSidebarToggle(showsBack: Bool, onPractice: Bool) -> Bool {
+        !showsBack && onPractice
+    }
+}
+
 /// Owns the desktop window: a Live / Practice segmented switch in a content-area header, and the
 /// two tabs' content. Live embeds `LiveTabViewController`, a full-width window-filling view (REDESIGN.md
 /// §3); Practice embeds the existing sidebar + deck split view, reused as-is per REDESIGN.md §1.
@@ -51,7 +60,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
     /// Height reserved at the top of the content for the header. With `.fullSizeContentView` the
     /// traffic lights float over the content rather than sitting in a strip of their own, so this
     /// has to stay tall enough to clear them — they occupy roughly the top 20pt.
-    private static let headerHeight: CGFloat = 38
+    static let headerHeight: CGFloat = 38
 
     /// Leading inset for the header's `<`. `headerRow`'s leading edge is not free space — with
     /// `.fullSizeContentView` the traffic lights float inside it. Measured on a window built with
@@ -78,6 +87,11 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
     private let appearanceButton = FlatButton(title: "", kind: .ghost)
     /// Leading-edge `<`. Only visible on takeover pages, where there's no tab switch to leave by.
     private let backButton = FlatButton(title: "", kind: .ghost)
+    /// The one way to bring the library sidebar back after dragging its divider shut collapses it
+    /// — a collapsed divider has no width left to grab, so this is not just a convenience. It
+    /// lives up here rather than beside the deck's title because it is window chrome, not a clip
+    /// action: it has to outlive the pane it hides.
+    private let sidebarToggleButton = FlatButton(title: "", kind: .ghost, target: nil, action: nil)
     private var currentPage: Page = .tab(.live)
     /// The tab to return to when a takeover page is dismissed.
     private var currentTab: Tab = .live
@@ -102,7 +116,10 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         sidebar = ClipSidebarViewController(libraryStore: libraryStore)
         deck = PracticeDeckViewController(libraryStore: libraryStore, playbackEngine: playbackEngine)
         practiceSplitViewController = PracticeSplitViewController(sidebar: sidebar, detail: deck)
-        practiceTabViewController = PracticeTabViewController(splitViewController: practiceSplitViewController)
+        practiceTabViewController = PracticeTabViewController(
+            splitViewController: practiceSplitViewController,
+            sidebar: sidebar
+        )
 
         let defaultContentSize = WindowSizing.defaultContent
         let window = NSWindow(
@@ -229,9 +246,11 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
     /// (onboarding, Record) can't drift apart on what they hide.
     private func applyHeaderChrome(showsBack: Bool) {
         let isTab = !showsBack && currentPage != .onboarding
+        let onPractice = currentPage == .tab(.practice)
         backButton.isHidden = !showsBack
         segmentedControl.isHidden = !isTab
-        liveStatusDot.isHidden = currentPage != .tab(.practice)
+        liveStatusDot.isHidden = !onPractice
+        sidebarToggleButton.isHidden = !HeaderChrome.showsSidebarToggle(showsBack: showsBack, onPractice: onPractice)
     }
 
     /// Reflects a clip recorded (or still separating) via the menu bar's Record toggle into the
@@ -252,6 +271,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
 
         configureAppearanceButton()
         configureBackButton()
+        configureSidebarToggleButton()
 
         // Theme switch first, then the dot, then the switch itself. The dot annotates the
         // Live/Practice control (it reports that Live is still running while Practice is showing),
@@ -272,13 +292,19 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         let cluster = Layout.horizontalStack([appearanceButton, liveStatusDot, segmentedControl], spacing: 8)
         headerRow.addSubview(cluster)
         headerRow.addSubview(backButton)
+        headerRow.addSubview(sidebarToggleButton)
         NSLayoutConstraint.activate([
             // Trailing-aligned, matching the padding the tab content below uses, so the switch
             // lines up with the right edge of the Live tab's card grid.
             cluster.trailingAnchor.constraint(equalTo: headerRow.trailingAnchor, constant: -WindowUI.Metrics.padding),
             cluster.centerYAnchor.constraint(equalTo: headerRow.centerYAnchor),
             backButton.leadingAnchor.constraint(equalTo: headerRow.leadingAnchor, constant: Self.backButtonLeadingInset),
-            backButton.centerYAnchor.constraint(equalTo: headerRow.centerYAnchor)
+            backButton.centerYAnchor.constraint(equalTo: headerRow.centerYAnchor),
+            // Same slot as `backButton`, which is never visible at the same time. The 80pt inset is
+            // load-bearing: with `.fullSizeContentView` the traffic lights float inside `headerRow`
+            // (14×14 at x=9/32/55), and 80 clears the zoom button by 11pt.
+            sidebarToggleButton.leadingAnchor.constraint(equalTo: headerRow.leadingAnchor, constant: Self.backButtonLeadingInset),
+            sidebarToggleButton.centerYAnchor.constraint(equalTo: headerRow.centerYAnchor)
         ])
 
         Layout.pin(headerRow, to: contentContainer, edges: [.leading, .trailing, .top])
@@ -329,6 +355,24 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
 
     @objc private func backButtonClicked() {
         showTab(currentTab)
+    }
+
+    /// Same recipe as `backButton` and `appearanceButton` — capsule ghost, secondary tint, 24×24 —
+    /// so it reads as title bar chrome rather than as an action inside the page below it.
+    private func configureSidebarToggleButton() {
+        sidebarToggleButton.cornerStyle = .capsule
+        sidebarToggleButton.imagePosition = .imageOnly
+        sidebarToggleButton.imageScaling = .scaleProportionallyDown
+        sidebarToggleButton.textColorOverride = .secondaryLabelColor
+        sidebarToggleButton.setIcon("sidebar.leading", pointSize: 12, label: "Show/Hide Sidebar")
+        sidebarToggleButton.constrainSize(width: 24, height: 24)
+        sidebarToggleButton.isHidden = true
+        sidebarToggleButton.target = self
+        sidebarToggleButton.action = #selector(sidebarToggleClicked)
+    }
+
+    @objc private func sidebarToggleClicked() {
+        practiceSplitViewController.toggleSidebar()
     }
 
     /// Escape leaves a takeover page, same as the `<`. Handled here rather than on the page's own
@@ -401,22 +445,17 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
     private func configurePracticeTab() {
         _ = practiceTabViewController.view
 
-        let importActionButton = practiceTabViewController.importActionButton
-        let recordActionButton = practiceTabViewController.recordActionButton
+        sidebar.onImportClicked = { [weak self] in self?.importButtonClicked() }
+        sidebar.onRecordClicked = { [weak self] in self?.recordButtonClicked() }
+        sidebar.onRecordElapsedClicked = { [weak self] in self?.recordElapsedClicked() }
 
-        importActionButton.target = self
-        importActionButton.action = #selector(importButtonClicked)
-        recordActionButton.target = self
-        recordActionButton.action = #selector(recordButtonClicked(_:))
-        practiceTabViewController.recordElapsedButton.target = self
-        practiceTabViewController.recordElapsedButton.action = #selector(recordElapsedClicked)
         if #unavailable(macOS 14.2) {
-            recordActionButton.isEnabled = false
-            recordActionButton.toolTip = "Recording system audio requires macOS 14.2 or later"
+            sidebar.recordButton.isEnabled = false
+            sidebar.recordButton.toolTip = "Recording system audio requires macOS 14.2 or later"
         }
     }
 
-    @objc private func importButtonClicked() {
+    private func importButtonClicked() {
         importService.presentOpenPanel(in: window) { [weak self] url in
             guard let self, let url else { return }
             self.handleImport(url: url)
@@ -429,8 +468,8 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
     @available(macOS 14.2, *)
     func attachRecorder(_ recorder: ClipRecorder) {
         clipRecorderBox = recorder
-        // The window can be built while a menu-bar recording is already running, so the toolbar
-        // starts from the recorder's state rather than assuming idle.
+        // The window can be built while a menu-bar recording is already running, so the sidebar
+        // header starts from the recorder's state rather than assuming idle.
         practiceTabViewController.setRecordingState(recorder.isRecording)
         if recorder.isRecording {
             practiceTabViewController.updateRecordingElapsed(recorder.elapsedSeconds())
@@ -466,7 +505,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
     }
 
     /// Forwarded from `AppDelegate` off the recorder's ~10Hz progress callback. Both surfaces are
-    /// fed unconditionally — the Practice toolbar's readout guards on its own visibility, and the
+    /// fed unconditionally — the sidebar header's readout guards on its own visibility, and the
     /// record page's on being loaded — so navigating between them never leaves one stale.
     func updateRecordingProgress(peaks: [Float], elapsed: Double) {
         practiceTabViewController.updateRecordingElapsed(elapsed)
@@ -475,7 +514,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         }
     }
 
-    @objc private func recordButtonClicked(_ sender: Any) {
+    private func recordButtonClicked() {
         guard #available(macOS 14.2, *) else { return }
         guard let clipRecorder else {
             // Only reachable if `attachRecorder` was never called — a wiring mistake, not a state
@@ -495,7 +534,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         showRecordPage()
     }
 
-    @objc private func recordElapsedClicked() {
+    private func recordElapsedClicked() {
         guard #available(macOS 14.2, *) else { return }
         showRecordPage()
     }

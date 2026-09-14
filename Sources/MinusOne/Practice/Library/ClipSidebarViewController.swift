@@ -35,14 +35,38 @@ final class ClipSidebarViewController: NSViewController, NSTableViewDataSource, 
     private let libraryStore: ClipLibraryStore
     private let tableView = NSTableView()
     private let searchField = NSSearchField()
+    private let scrollView = NSScrollView()
     private var allClips: [PracticeClip] = []
     private var filteredClips: [PracticeClip] = []
     private var playingClipID: UUID?
+
+    /// Icon-only: a labelled pair costs ~180pt of a sidebar that can be dragged to 220pt wide,
+    /// which would leave no usable search field. `setIcon` carries the dropped titles into the
+    /// tooltip and the accessibility name.
+    let importButton = FlatButton(title: "", kind: .ghost, target: nil, action: nil)
+    let recordButton = FlatButton(title: "", kind: .ghost, target: nil, action: nil)
+
+    /// Running elapsed readout, shown only while a take is in flight, in place of the search
+    /// field. Clicking it returns to the Record page — leaving that page doesn't stop the take,
+    /// so there has to be a way forward again.
+    /// Constrained to the same 24pt as `importButton`/`recordButton`/`searchField`: `WindowUI.linkButton`
+    /// returns a titled `FlatButton`, and `FlatButton.intrinsicContentSize` adds 8pt of vertical
+    /// padding to *titled* buttons (the icon-only header buttons skip that branch), which otherwise
+    /// makes this 30pt tall against the row's 24pt — measured as a 6pt jump in the scroll view's
+    /// position every time a recording starts or stops, since the scroll view is pinned to the
+    /// header's bottom.
+    private let elapsedButton = WindowUI.linkButton(title: "")
 
     var onSelectClip: ((PracticeClip) -> Void)?
     var onDropFiles: (([URL]) -> Void)?
     /// Fired after a rename has been persisted, so the deck showing the same clip re-titles too.
     var onRenameClip: ((PracticeClip) -> Void)?
+    var onImportClicked: (() -> Void)?
+    var onRecordClicked: (() -> Void)?
+    var onRecordElapsedClicked: (() -> Void)?
+
+    var elapsedButtonForTesting: FlatButton { elapsedButton }
+    var scrollViewForTesting: NSScrollView { scrollView }
 
     init(libraryStore: ClipLibraryStore) {
         self.libraryStore = libraryStore
@@ -73,6 +97,37 @@ final class ClipSidebarViewController: NSViewController, NSTableViewDataSource, 
         searchField.placeholderString = "Search clips"
         searchField.target = self
         searchField.action = #selector(searchChanged)
+        searchField.setContentHuggingPriority(.defaultLow, for: .horizontal)
+
+        // Ghost, not `.secondary`: `refreshStyle` only consults `textColorOverride` on the ghost
+        // branch, so a coral Record glyph would otherwise mean changing shared `FlatButton`
+        // behaviour. Ghost also reads quieter beside the bordered search field — these two
+        // actions should not out-weigh the list they sit above. Same recipe as the title bar's
+        // `backButton`/`appearanceButton`.
+        for button in [importButton, recordButton] {
+            button.cornerStyle = .capsule
+            button.imagePosition = .imageOnly
+            button.imageScaling = .scaleProportionallyDown
+            button.constrainSize(width: 24, height: 24)
+            button.target = self
+        }
+        importButton.textColorOverride = .secondaryLabelColor
+        importButton.setIcon("square.and.arrow.down", pointSize: 12, label: "Import")
+        importButton.action = #selector(importClicked)
+        // No `textColorOverride`: ghost's default tint is `.brandAccent`, and Record is the one
+        // place in this pane that spends the accent.
+        recordButton.setIcon("record.circle", pointSize: 12, label: "Record")
+        recordButton.action = #selector(recordClicked)
+
+        elapsedButton.isHidden = true
+        elapsedButton.textColorOverride = .brandAccentDeep
+        // A running time reads as a label, so its one affordance is spelled out rather than left
+        // to be discovered by clicking.
+        elapsedButton.toolTip = "Back to the recording"
+        elapsedButton.setAccessibilityLabel("Back to the recording")
+        elapsedButton.target = self
+        elapsedButton.action = #selector(recordElapsedClicked)
+        elapsedButton.heightAnchor.constraint(equalToConstant: 24).isActive = true
 
         let column = NSTableColumn(identifier: .init("clip"))
         column.width = 240
@@ -106,14 +161,14 @@ final class ClipSidebarViewController: NSViewController, NSTableViewDataSource, 
         menu.delegate = self
         tableView.menu = menu
 
-        let scrollView = NSScrollView()
         scrollView.documentView = tableView
         scrollView.hasVerticalScroller = true
         scrollView.drawsBackground = false
 
-        Layout.pin(searchField, to: root, edges: [.top, .leading, .trailing], insets: NSEdgeInsets(top: 10, left: 10, bottom: 0, right: 10))
+        let header = Layout.horizontalStack([importButton, recordButton, searchField, elapsedButton], spacing: 6)
+        Layout.pin(header, to: root, edges: [.top, .leading, .trailing], insets: NSEdgeInsets(top: 10, left: 10, bottom: 0, right: 10))
         Layout.pin(scrollView, to: root, edges: [.leading, .trailing, .bottom])
-        scrollView.topAnchor.constraint(equalTo: searchField.bottomAnchor, constant: 8).isActive = true
+        scrollView.topAnchor.constraint(equalTo: header.bottomAnchor, constant: 8).isActive = true
     }
 
     func reloadClips() {
@@ -154,6 +209,34 @@ final class ClipSidebarViewController: NSViewController, NSTableViewDataSource, 
     @objc private func searchChanged() {
         applyFilter(preserveSelection: true)
     }
+
+    @objc private func importClicked() { onImportClicked?() }
+
+    @objc private func recordClicked() { onRecordClicked?() }
+
+    /// Reflects the shared recorder's state in the header. A recording started from the Record
+    /// page (or the menu bar) keeps running after you navigate back here, so Record has to become
+    /// the way to stop it — otherwise the only stop control is on a page you've left.
+    func setRecordingState(_ recording: Bool) {
+        recordButton.setIcon(
+            recording ? "stop.fill" : "record.circle",
+            pointSize: 12,
+            label: recording ? "Stop" : "Record"
+        )
+        elapsedButton.isHidden = !recording
+        // Hidden rather than removed: the query is still in the field when the take ends.
+        searchField.isHidden = recording
+        // Seeded rather than left blank until the first progress tick ~100ms later, which would
+        // otherwise show an empty button for a frame.
+        elapsedButton.title = recording ? "●  0:00" : ""
+    }
+
+    func updateRecordingElapsed(_ seconds: Double) {
+        guard !elapsedButton.isHidden else { return }
+        elapsedButton.title = "●  \(seconds.formattedAsDuration)"
+    }
+
+    @objc private func recordElapsedClicked() { onRecordElapsedClicked?() }
 
     private func applyFilter(preserveSelection: Bool) {
         let selectedID = preserveSelection && tableView.selectedRow >= 0 ? filteredClips[safe: tableView.selectedRow]?.id : nil
@@ -230,6 +313,8 @@ final class ClipSidebarViewController: NSViewController, NSTableViewDataSource, 
         item.representedObject = clip.id
         menu.addItem(item)
     }
+
+    var searchFieldForTesting: NSSearchField { searchField }
 }
 
 private extension Array {
