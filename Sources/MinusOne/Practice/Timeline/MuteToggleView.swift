@@ -1,12 +1,15 @@
 import AppKit
 
-/// A stem's mute switch: a white knob on a track that is grey with the knob left when audible, and
-/// solid coral with the knob right when muted — the same on/off colours as `ToggleSwitchView`, so
-/// the state reads from the colour and not only from which side the knob sits. There is no separate
-/// icon for solo, because there is no separate solo state: a plain click toggles this stem's own
-/// mute; Cmd-click isolates it (mutes every other stem, unmutes this one) — the old solo gesture,
-/// folded into the mute control instead of a second visible button. See
+/// A stem's on/off switch, where on means the stem is playing: a solid coral track with the knob on
+/// the right while it plays, and a grey track with the knob on the left once muted — the same colours
+/// and knob sides as `ToggleSwitchView`, so "coral" means "on" everywhere in the app. There is no
+/// separate icon for solo, because there is no separate solo state: a plain click toggles this stem's
+/// own mute; Cmd-click isolates it (mutes every other stem, unmutes this one) — the old solo gesture,
+/// folded into this control instead of a second visible button. See
 /// `StemMixerController.isolateStem(_:)` for why one flag is enough to represent both.
+///
+/// The state it holds is still `isMuted`, because that is the engine's vocabulary; only what it draws
+/// and tells VoiceOver is phrased as "playing".
 final class MuteToggleView: NSView {
     var onMuteToggled: ((Bool) -> Void)?
     var onIsolateRequested: (() -> Void)?
@@ -17,13 +20,16 @@ final class MuteToggleView: NSView {
     private static let height: CGFloat = 18
     private static let knobInset: CGFloat = 2
 
+    /// `label` is the stem's name. It is the accessibility label as it stands: the switch is a checkbox
+    /// that is checked while the stem plays, so "Drums, checked" is right where "Mute Drums, checked"
+    /// would say the opposite of what is happening.
     init(label: String) {
         super.init(frame: NSRect(x: 0, y: 0, width: Self.width, height: Self.height))
         wantsLayer = true
         translatesAutoresizingMaskIntoConstraints = false
         widthAnchor.constraint(equalToConstant: Self.width).isActive = true
         heightAnchor.constraint(equalToConstant: Self.height).isActive = true
-        toolTip = "\(label) — ⌘-click to hear only this stem"
+        toolTip = "\(label) — click to mute or unmute, ⌘-click to hear only this stem"
         setAccessibilityLabel(label)
     }
 
@@ -34,7 +40,7 @@ final class MuteToggleView: NSView {
 
     override var isFlipped: Bool { true }
 
-    /// The audible track is `flatDivider`, which inverts between appearances, so a theme switch has to
+    /// The muted track is `flatDivider`, which inverts between appearances, so a theme switch has to
     /// repaint — the same guard `ToggleSwitchView` carries. Not unit-tested: `needsDisplay` doesn't
     /// report redraw requests reliably outside a real on-screen window (measured across windowless,
     /// undisplayed and displayed hosts), so the check is switching the theme and looking.
@@ -43,11 +49,11 @@ final class MuteToggleView: NSView {
         needsDisplay = true
     }
 
-    // A checkbox whose value is the muted state, so VoiceOver reads "Mute Drums, checked" rather
-    // than the same "button" in both states. `ToggleSwitchView` reports itself the same way.
+    // A checkbox that is checked while the stem plays, matching the picture. `ToggleSwitchView` reports
+    // itself the same way.
     override func isAccessibilityElement() -> Bool { true }
     override func accessibilityRole() -> NSAccessibility.Role? { .checkBox }
-    override func accessibilityValue() -> Any? { isMuted }
+    override func accessibilityValue() -> Any? { !isMuted }
 
     /// Externally-driven update (the engine owns the real state after an isolate touches every
     /// lane) — mirrors `LaneHeaderView.setMuted(_:)`'s existing "the header is told, not asked"
@@ -61,14 +67,16 @@ final class MuteToggleView: NSView {
 
     override func draw(_ dirtyRect: NSRect) {
         super.draw(dirtyRect)
+        let isPlaying = !isMuted
         let track = NSBezierPath(roundedRect: bounds, xRadius: bounds.height / 2, yRadius: bounds.height / 2)
-        // Muted is the "on" state: solid coral, like `ToggleSwitchView` on. Audible is off: neutral
-        // grey. Both states once shared one faint coral tint, leaving the knob's side as the only cue.
-        (isMuted ? NSColor.brandAccent : NSColor.flatDivider).setFill()
+        // On is playing: solid coral with the knob right, like `ToggleSwitchView` on. Off is muted:
+        // neutral grey with the knob left. This once drew muted as the coral "on" state, which lit up
+        // exactly the stems that were silent.
+        (isPlaying ? NSColor.brandAccent : NSColor.flatDivider).setFill()
         track.fill()
 
         let knobDiameter = bounds.height - Self.knobInset * 2
-        let knobX = isMuted ? bounds.width - Self.knobInset - knobDiameter : Self.knobInset
+        let knobX = isPlaying ? bounds.width - Self.knobInset - knobDiameter : Self.knobInset
         let knobRect = NSRect(x: knobX, y: Self.knobInset, width: knobDiameter, height: knobDiameter)
         NSColor.white.setFill()
         NSBezierPath(ovalIn: knobRect).fill()

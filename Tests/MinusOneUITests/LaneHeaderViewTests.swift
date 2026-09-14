@@ -55,6 +55,17 @@ final class LaneHeaderViewTests: XCTestCase {
         XCTAssertTrue(header.isExportEnabledForTesting)
     }
 
+    /// The switch reads as a checkbox that is checked while the stem plays, so its label is the stem's
+    /// name. "Mute Drums, checked" would tell a VoiceOver user the opposite of what is happening.
+    func testTheSwitchIsLabelledWithTheStemNameAlone() throws {
+        func descendants(of view: NSView) -> [NSView] { view.subviews + view.subviews.flatMap(descendants) }
+        for stem in SeparationStem.allCases {
+            let header = LaneHeaderView(stem: stem)
+            let toggle = try XCTUnwrap(descendants(of: header).compactMap { $0 as? MuteToggleView }.first, "\(stem) has no switch")
+            XCTAssertEqual(toggle.accessibilityLabel(), stem.displayName, "\(stem)")
+        }
+    }
+
     /// The 13pt-label contrast rule DesignColors records: the fill hue is for the fader, the text
     /// variant is for the name.
     func testTheNameUsesTheTextVariantOfTheIdentityColor() {

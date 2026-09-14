@@ -19,7 +19,7 @@ final class LaneHeaderView: NSView {
     init(stem: SeparationStem) {
         nameLabel = SharedUI.fieldLabel(stem.displayName)
         slider = NSSlider(value: 1, minValue: 0, maxValue: 1, target: nil, action: nil)
-        muteToggle = MuteToggleView(label: "Mute \(stem.displayName)")
+        muteToggle = MuteToggleView(label: stem.displayName)
         exportButton = Self.laneIconButton(symbolName: "square.and.arrow.up", label: "Export \(stem.displayName)", target: nil, action: nil)
         super.init(frame: .zero)
 
