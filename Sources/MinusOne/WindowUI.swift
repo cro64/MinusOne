@@ -142,33 +142,6 @@ enum WindowUI {
         return button
     }
 
-    /// Shared style for window-scale toolbar actions (Practice tab's Import/Record) so both use
-    /// one button language instead of mixing a plain toolbar item with a custom-styled button.
-    /// `symbolPointSize` is taken here rather than left to the caller to re-apply afterwards: the
-    /// icon/title gap is baked into the image, so a later `button.image = button.image?
-    /// .withSymbolConfiguration(…)` would silently throw the spacing away.
-    static func toolbarActionButton(
-        title: String,
-        symbolName: String,
-        symbolPointSize: CGFloat = 14,
-        target: AnyObject?,
-        action: Selector?
-    ) -> FlatButton {
-        let button = FlatButton(title: title, kind: .primary, target: target, action: action)
-        button.setSymbol(symbolName, pointSize: symbolPointSize, accessibilityDescription: title)
-        button.imagePosition = .imageLeading
-        button.imageScaling = .scaleProportionallyDown
-        // Without this, `NSButtonCell` pins the image to the button's leading edge and then centers
-        // the title inside *all* the remaining width — measured on the 93pt Import button: image at
-        // x=0 (flush to the edge) with the title rect running to x=93, which reads as an icon stuck
-        // to the rim and a large gap before the label. `FlatButton` inflates `intrinsicContentSize`
-        // by 14.4pt a side, so there is always surplus width for that to go wrong in. Hugging keeps
-        // image and title together as one group and centers the pair: 16.5pt of padding on both
-        // sides, measured.
-        button.imageHugsTitle = true
-        return button
-    }
-
     /// Icon-only transport control (Practice deck's back/play/forward/loop). Same flat
     /// `.secondary` chrome as `toggleControlButton` — so a toggled Loop still fills solid accent —
     /// but sized as a square-ish glyph button instead of a text one. 32×28, not the deck's older
@@ -218,21 +191,9 @@ enum WindowUI {
 }
 
 extension FlatButton {
-    /// Sets an SF Symbol as the button's image with the icon/title gap baked in. The only correct
-    /// way to *change* a `toolbarActionButton`'s icon after construction: a plain `button.image = …`
-    /// loses `withTrailingPadding`, and the button silently reverts to the ~2pt gap `imageHugsTitle`
-    /// leaves on its own. Used by Practice's Record button, which swaps to a Stop glyph mid-session.
-    func setSymbol(_ symbolName: String, pointSize: CGFloat = 14, accessibilityDescription: String? = nil) {
-        image = NSImage(systemSymbolName: symbolName, accessibilityDescription: accessibilityDescription)?
-            .withSymbolConfiguration(.init(pointSize: pointSize, weight: .medium))?
-            .withTrailingPadding(WindowUI.Metrics.iconTitleSpacing)
-    }
-}
-
-extension FlatButton {
     /// Icon for an image-only button, plus the label a glyph can't carry on its own — the
     /// accessibility name and the tooltip both come from it, so a bare symbol is still
-    /// identifiable. Unlike `setSymbol`, no trailing padding: there is no title to sit beside.
+    /// identifiable.
     func setIcon(_ symbolName: String, pointSize: CGFloat = 13, label: String) {
         image = NSImage(systemSymbolName: symbolName, accessibilityDescription: label)?
             .withSymbolConfiguration(.init(pointSize: pointSize, weight: .semibold))
