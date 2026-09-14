@@ -162,4 +162,53 @@ final class LoopSnappingTests: XCTestCase {
         XCTAssertGreaterThanOrEqual(range.lowerBound, 0)
         XCTAssertLessThanOrEqual(range.upperBound, view.viewport.clipDuration)
     }
+
+    // MARK: - Time-based entry point
+    //
+    // The hero waveform draws loops in whole-track time, not in this timeline's zoomed canvas x, so
+    // it resolves a loop through `snappedLoopRange(fromTime:toTime:bypassSnapping:)`. Expected values
+    // below are worked by hand for 120 BPM from zero (one beat = 0.5s) on the 60s fixture clip:
+    // `nearestBeat` rounds `t / 0.5` to the nearest integer.
+
+    func testTimeBasedRangeSnapsBothEdgesToTheNearestBeat() {
+        let view = timeline(grid: grid)
+        // 10.2 / 0.5 = 20.4 → 20 → 10.0;  14.9 / 0.5 = 29.8 → 30 → 15.0
+        XCTAssertEqual(view.snappedLoopRange(fromTime: 10.2, toTime: 14.9, bypassSnapping: false), 10.0...15.0)
+    }
+
+    func testTimeBasedRangeIsTheSameWhicheverWayItIsDrawn() {
+        let view = timeline(grid: grid)
+        XCTAssertEqual(view.snappedLoopRange(fromTime: 14.9, toTime: 10.2, bypassSnapping: false), 10.0...15.0)
+    }
+
+    func testTimeBasedRangeHonoursTheSnappingBypass() {
+        let view = timeline(grid: grid)
+        XCTAssertEqual(view.snappedLoopRange(fromTime: 10.2, toTime: 14.9, bypassSnapping: true), 10.2...14.9)
+    }
+
+    func testTimeBasedRangeWithNoGridIsExactlyWhatWasDrawn() {
+        let view = timeline(grid: nil)
+        XCTAssertEqual(view.snappedLoopRange(fromTime: 10.2, toTime: 14.9, bypassSnapping: false), 10.2...14.9)
+    }
+
+    /// The hero hands over raw times from a pointer that can leave the view, so this entry point has
+    /// to clamp to the clip itself — there is no canvas x to clamp first, as the drag path has.
+    func testTimeBasedRangeClampsToTheClipBeforeSnapping() {
+        let view = timeline(grid: grid)
+        XCTAssertEqual(view.snappedLoopRange(fromTime: -3, toTime: 75, bypassSnapping: false), 0.0...60.0)
+    }
+
+    /// Both edges round to 10.0; a zero-length loop would stall playback, so it extends one beat
+    /// forward.
+    func testTimeBasedRangeInsideOneBeatExtendsForwardByABeat() {
+        let view = timeline(grid: grid)
+        XCTAssertEqual(view.snappedLoopRange(fromTime: 10.1, toTime: 10.2, bypassSnapping: false), 10.0...10.5)
+    }
+
+    /// Both edges round to 60.0, the clip's end; a beat forward would leave the clip, so it extends
+    /// one beat back instead.
+    func testTimeBasedRangeInsideTheLastBeatExtendsBackwardByABeat() {
+        let view = timeline(grid: grid)
+        XCTAssertEqual(view.snappedLoopRange(fromTime: 59.9, toTime: 59.95, bypassSnapping: false), 59.5...60.0)
+    }
 }
