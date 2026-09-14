@@ -357,10 +357,25 @@ final class DeckTimelineView: NSView {
     }
 
     private func range(from startX: CGFloat, to endX: CGFloat, bypassSnapping: Bool) -> ClosedRange<Double> {
-        let a = canvasTime(forX: min(startX, endX))
-        let b = canvasTime(forX: max(startX, endX))
-        guard let beatGrid, !bypassSnapping else { return min(a, b)...max(a, b) }
-        // Snapped after clamping, never before: `canvasTime` is what guarantees both ends are
+        snappedLoopRange(
+            fromTime: canvasTime(forX: startX),
+            toTime: canvasTime(forX: endX),
+            bypassSnapping: bypassSnapping
+        )
+    }
+
+    /// A loop between two clip times, ordered, clamped to the clip and snapped to `beatGrid`.
+    ///
+    /// The one implementation of loop snapping. Time-based rather than canvas-x-based because the
+    /// hero waveform draws loops in whole-track time, whose points-per-second ratio differs from
+    /// this timeline's zoomed canvas — the same reason `zoom(by:aroundTime:)` exists. The drag path
+    /// above arrives already clamped to the visible canvas, so the clamp here only does work for a
+    /// caller like the hero, whose pointer can leave its view.
+    func snappedLoopRange(fromTime: Double, toTime: Double, bypassSnapping: Bool) -> ClosedRange<Double> {
+        let a = min(max(0, min(fromTime, toTime)), viewport.clipDuration)
+        let b = min(max(0, max(fromTime, toTime)), viewport.clipDuration)
+        guard let beatGrid, !bypassSnapping else { return a...b }
+        // Snapped after clamping, never before: the clamp above is what guarantees both ends are
         // inside the clip, and a beat just outside it would undo that.
         let lower = min(max(0, beatGrid.nearestBeat(to: a)), viewport.clipDuration)
         let upper = min(max(0, beatGrid.nearestBeat(to: b)), viewport.clipDuration)

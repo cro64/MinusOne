@@ -189,6 +189,46 @@ final class PracticeDeckTests: XCTestCase {
                        "the engine still loops a range belonging to the previous clip")
         XCTAssertFalse(controller.isLoopButtonOnForTesting, "the Loop button still reads on")
         XCTAssertNil(controller.timelineForTesting.loopRange, "the loop band survived the switch")
+        XCTAssertNil(controller.heroWaveformViewForTesting.loopRange, "the hero's loop band survived the switch")
+    }
+
+    /// One loop, two views: a loop drawn on the lanes must also appear on the hero, or the hero shows
+    /// no loop while playback is wrapping.
+    func testALoopDrawnOnTheLanesAlsoShowsOnTheHero() throws {
+        let clip = try makeClip(withStemSidecars: true)
+        let controller = deck()
+        controller.show(clip: clip)
+        controller.view.layoutSubtreeIfNeeded()
+
+        drawLoop(on: controller)
+
+        let lanes = try XCTUnwrap(controller.timelineForTesting.loopRange, "the lane drag drew no band")
+        XCTAssertEqual(controller.heroWaveformViewForTesting.loopRange, lanes)
+    }
+
+    /// The other direction, through the hero's real drag seams: the loop must engage the engine the
+    /// same way a lane drag does, and appear on the lanes.
+    func testALoopDrawnOnTheHeroEngagesAndShowsOnTheLanes() throws {
+        let clip = try makeClip(withStemSidecars: true)
+        let controller = deck()
+        controller.show(clip: clip)
+        controller.view.layoutSubtreeIfNeeded()
+
+        let hero = controller.heroWaveformViewForTesting
+        let width = hero.bounds.width
+        XCTAssertGreaterThan(width, 0, "premise: the hero has no width to drag across")
+
+        hero.beginDrag(atX: width * 0.2)
+        hero.continueDrag(toX: width * 0.5)
+        hero.endDrag(atX: width * 0.5)
+
+        let heroLoop = try XCTUnwrap(hero.loopRange, "the hero drag drew no band")
+        XCTAssertTrue(controller.playbackEngineForTesting.isLoopEnabled, "the hero loop never engaged the engine")
+        XCTAssertTrue(controller.isLoopButtonOnForTesting)
+        XCTAssertEqual(controller.timelineForTesting.loopRange, heroLoop, "the lanes don't show the hero's loop")
+        // 20% and 50% of a 60s clip. Within half a beat, in case a detected grid snapped the edges.
+        XCTAssertEqual(heroLoop.lowerBound, 12, accuracy: 0.5)
+        XCTAssertEqual(heroLoop.upperBound, 30, accuracy: 0.5)
     }
 
     /// The counterpart: a separation tick must *not* drop a loop the user just drew. `updateClip`
