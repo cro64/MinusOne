@@ -65,10 +65,9 @@ final class WindowSizingTests: XCTestCase {
             "the measured stack does not even contain the timeline — the wrong stack was found"
         )
 
-        // `MainWindowController.headerHeight`. Was 52 when the Practice tab also carried an
-        // Import/Record strip above the split view; that row was deleted, so the deck now sits
-        // directly under the title bar row.
-        let headerStrip: CGFloat = 38
+        // Was 52 when the Practice tab also carried an Import/Record strip above the split
+        // view; that row was deleted, so the deck now sits directly under the title bar row.
+        let headerStrip = MainWindowController.headerHeight
         let needed = deckContent + WindowUI.Metrics.padding + headerStrip
         // Printed because `TimelineMetrics.laneHeight`'s docstring quotes this figure as the reason
         // the compress-then-scroll path in spec §8 is unreachable. A quoted number nobody can
@@ -111,10 +110,9 @@ final class WindowSizingTests: XCTestCase {
         walk(controller.view)
         let deckContent = try XCTUnwrap(stacks.map(\.fittingSize.height).max())
 
-        // `MainWindowController.headerHeight`. Was 52 when the Practice tab also carried an
-        // Import/Record strip above the split view; that row was deleted, so the deck now sits
-        // directly under the title bar row.
-        let headerStrip: CGFloat = 38
+        // Was 52 when the Practice tab also carried an Import/Record strip above the split
+        // view; that row was deleted, so the deck now sits directly under the title bar row.
+        let headerStrip = MainWindowController.headerHeight
         let needed = deckContent + WindowUI.Metrics.padding + headerStrip
         print("MEASURED deck height with hero at max: stack \(deckContent) + padding \(WindowUI.Metrics.padding) "
               + "+ header \(headerStrip) = \(needed)pt against a \(WindowSizing.minimum.height)pt floor")
@@ -158,10 +156,9 @@ final class WindowSizingTests: XCTestCase {
         walk(controller.view)
         let deckContent = try XCTUnwrap(stacks.map(\.fittingSize.height).max())
 
-        // `MainWindowController.headerHeight`. Was 52 when the Practice tab also carried an
-        // Import/Record strip above the split view; that row was deleted, so the deck now sits
-        // directly under the title bar row.
-        let headerStrip: CGFloat = 38
+        // Was 52 when the Practice tab also carried an Import/Record strip above the split
+        // view; that row was deleted, so the deck now sits directly under the title bar row.
+        let headerStrip = MainWindowController.headerHeight
         let needed = deckContent + WindowUI.Metrics.padding + headerStrip
         print("MEASURED deck height with hero at max, status visible: stack \(deckContent) + padding "
               + "\(WindowUI.Metrics.padding) + header \(headerStrip) = \(needed)pt against a "
@@ -200,10 +197,9 @@ final class WindowSizingTests: XCTestCase {
         walk(controller.view)
         let deckContent = try XCTUnwrap(stacks.map(\.fittingSize.height).max())
 
-        // `MainWindowController.headerHeight`. Was 52 when the Practice tab also carried an
-        // Import/Record strip above the split view; that row was deleted, so the deck now sits
-        // directly under the title bar row.
-        let headerStrip: CGFloat = 38
+        // Was 52 when the Practice tab also carried an Import/Record strip above the split
+        // view; that row was deleted, so the deck now sits directly under the title bar row.
+        let headerStrip = MainWindowController.headerHeight
         let needed = deckContent + WindowUI.Metrics.padding + headerStrip
         print("MEASURED deck height at default hero height, status visible: stack \(deckContent) + padding "
               + "\(WindowUI.Metrics.padding) + header \(headerStrip) = \(needed)pt against a "

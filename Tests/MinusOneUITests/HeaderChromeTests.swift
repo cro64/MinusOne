@@ -25,4 +25,9 @@ final class HeaderChromeTests: XCTestCase {
         // A takeover page (Record, onboarding) reached from Practice: back wins, toggle goes.
         XCTAssertFalse(HeaderChrome.showsSidebarToggle(showsBack: true, onPractice: true))
     }
+
+    func testTheToggleStaysHiddenOnATakeoverReachedFromLive() {
+        // A takeover page reached from Live: still no split view to toggle, so back wins here too.
+        XCTAssertFalse(HeaderChrome.showsSidebarToggle(showsBack: true, onPractice: false))
+    }
 }

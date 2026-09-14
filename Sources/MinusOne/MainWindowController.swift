@@ -60,7 +60,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
     /// Height reserved at the top of the content for the header. With `.fullSizeContentView` the
     /// traffic lights float over the content rather than sitting in a strip of their own, so this
     /// has to stay tall enough to clear them — they occupy roughly the top 20pt.
-    private static let headerHeight: CGFloat = 38
+    static let headerHeight: CGFloat = 38
 
     /// Leading inset for the header's `<`. `headerRow`'s leading edge is not free space — with
     /// `.fullSizeContentView` the traffic lights float inside it. Measured on a window built with
@@ -375,8 +375,6 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         practiceSplitViewController.toggleSidebar()
     }
 
-    var sidebarToggleButtonForTesting: FlatButton { sidebarToggleButton }
-
     /// Escape leaves a takeover page, same as the `<`. Handled here rather than on the page's own
     /// view controller because the window controller is reliably in the responder chain even when
     /// the first responder is the window itself (nothing inside the page focused). Recording is
@@ -448,10 +446,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         _ = practiceTabViewController.view
 
         sidebar.onImportClicked = { [weak self] in self?.importButtonClicked() }
-        sidebar.onRecordClicked = { [weak self] in
-            guard let self else { return }
-            self.recordButtonClicked(self)
-        }
+        sidebar.onRecordClicked = { [weak self] in self?.recordButtonClicked() }
         sidebar.onRecordElapsedClicked = { [weak self] in self?.recordElapsedClicked() }
 
         if #unavailable(macOS 14.2) {
@@ -460,7 +455,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         }
     }
 
-    @objc private func importButtonClicked() {
+    private func importButtonClicked() {
         importService.presentOpenPanel(in: window) { [weak self] url in
             guard let self, let url else { return }
             self.handleImport(url: url)
@@ -519,7 +514,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         }
     }
 
-    @objc private func recordButtonClicked(_ sender: Any) {
+    private func recordButtonClicked() {
         guard #available(macOS 14.2, *) else { return }
         guard let clipRecorder else {
             // Only reachable if `attachRecorder` was never called — a wiring mistake, not a state
@@ -539,7 +534,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         showRecordPage()
     }
 
-    @objc private func recordElapsedClicked() {
+    private func recordElapsedClicked() {
         guard #available(macOS 14.2, *) else { return }
         showRecordPage()
     }
