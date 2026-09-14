@@ -1,7 +1,8 @@
 import AppKit
 
-/// A stem's mute switch: a soft-tinted coral track with a white knob that slides to whichever
-/// side reflects the current state — left when audible, right when muted. There is no separate
+/// A stem's mute switch: a white knob on a track that is grey with the knob left when audible, and
+/// solid coral with the knob right when muted — the same on/off colours as `ToggleSwitchView`, so
+/// the state reads from the colour and not only from which side the knob sits. There is no separate
 /// icon for solo, because there is no separate solo state: a plain click toggles this stem's own
 /// mute; Cmd-click isolates it (mutes every other stem, unmutes this one) — the old solo gesture,
 /// folded into the mute control instead of a second visible button. See
@@ -24,7 +25,6 @@ final class MuteToggleView: NSView {
         heightAnchor.constraint(equalToConstant: Self.height).isActive = true
         toolTip = "\(label) — ⌘-click to hear only this stem"
         setAccessibilityLabel(label)
-        setAccessibilityRole(.button)
     }
 
     @available(*, unavailable)
@@ -33,6 +33,21 @@ final class MuteToggleView: NSView {
     }
 
     override var isFlipped: Bool { true }
+
+    /// The audible track is `flatDivider`, which inverts between appearances, so a theme switch has to
+    /// repaint — the same guard `ToggleSwitchView` carries. Not unit-tested: `needsDisplay` doesn't
+    /// report redraw requests reliably outside a real on-screen window (measured across windowless,
+    /// undisplayed and displayed hosts), so the check is switching the theme and looking.
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        needsDisplay = true
+    }
+
+    // A checkbox whose value is the muted state, so VoiceOver reads "Mute Drums, checked" rather
+    // than the same "button" in both states. `ToggleSwitchView` reports itself the same way.
+    override func isAccessibilityElement() -> Bool { true }
+    override func accessibilityRole() -> NSAccessibility.Role? { .checkBox }
+    override func accessibilityValue() -> Any? { isMuted }
 
     /// Externally-driven update (the engine owns the real state after an isolate touches every
     /// lane) — mirrors `LaneHeaderView.setMuted(_:)`'s existing "the header is told, not asked"
@@ -47,7 +62,9 @@ final class MuteToggleView: NSView {
     override func draw(_ dirtyRect: NSRect) {
         super.draw(dirtyRect)
         let track = NSBezierPath(roundedRect: bounds, xRadius: bounds.height / 2, yRadius: bounds.height / 2)
-        NSColor.brandAccent.withAlphaComponent(0.16).setFill()
+        // Muted is the "on" state: solid coral, like `ToggleSwitchView` on. Audible is off: neutral
+        // grey. Both states once shared one faint coral tint, leaving the knob's side as the only cue.
+        (isMuted ? NSColor.brandAccent : NSColor.flatDivider).setFill()
         track.fill()
 
         let knobDiameter = bounds.height - Self.knobInset * 2
