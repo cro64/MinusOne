@@ -65,6 +65,7 @@ final class HeroWaveformView: NSView {
         // a fresh tick or the pointer moves again.
         playheadTime = nil
         hoverTime = nil
+        loopRange = nil
         invalidatePeaks()
     }
 
@@ -203,12 +204,20 @@ final class HeroWaveformView: NSView {
         return NSRect(x: start, y: 0, width: max(1, end - start), height: bounds.height)
     }
 
+    /// The deck's loop, in clip seconds. Drawn as the same band `PlayheadOverlayView` draws across the
+    /// lanes, so a loop set on either view reads identically on both, and previewed here while a loop
+    /// is being dragged on the hero.
+    var loopRange: ClosedRange<Double>? {
+        didSet { if loopRange != oldValue { needsDisplay = true } }
+    }
+
     /// Whether the visible-range box is narrow enough to be worth drawing. Every clip opens at
     /// `visibleRange == 0...clipDuration` (`Viewport.init` sets `visibleDuration = clipDuration`), so
     /// the box spans the whole band at the deck's default zoom — drawing it there reads as a stray
-    /// border around the entire hero rather than a "here's what's zoomed in" cue. Deliberately doesn't
-    /// affect `beginDrag(atX:)`'s hit-test, which still uses `visibleRangeRect()` directly regardless
-    /// of whether it's drawn — clicking/panning at the default zoom keeps working exactly as before.
+    /// border around the entire hero rather than a "here's what's zoomed in" cue.
+    ///
+    /// Also `beginDrag(atX:)`'s hit-test. A box that isn't drawn can't be grabbed: at the default zoom
+    /// there is nothing visible to pan, so the whole band is free for drawing a loop.
     func isVisibleRangeBoxDrawn() -> Bool {
         guard let visibleRange else { return false }
         return visibleRange.upperBound - visibleRange.lowerBound < clipDuration - 1e-6
@@ -227,6 +236,15 @@ final class HeroWaveformView: NSView {
 
     func drawOverlay() {
         guard let context = NSGraphicsContext.current?.cgContext, bounds.width > 0 else { return }
+
+        // Under the zoom box and the playhead, in `PlayheadOverlayView`'s exact fill, so the band reads
+        // as the same loop on both views.
+        if let loopRange, clipDuration > 0 {
+            let start = x(forTime: loopRange.lowerBound)
+            let end = x(forTime: loopRange.upperBound)
+            NSColor.brandAccent.withAlphaComponent(0.14).setFill()
+            NSRect(x: start, y: 0, width: max(1, end - start), height: bounds.height).fill()
+        }
 
         if isVisibleRangeBoxDrawn(), let rangeRect = visibleRangeRect() {
             NSColor.labelColor.withAlphaComponent(0.05).setFill()
@@ -262,61 +280,98 @@ final class HeroWaveformView: NSView {
     /// canvas it drives (see `DeckTimelineView.zoom(by:aroundTime:)`).
     var onZoom: ((Double, Double) -> Void)?
 
+    var onLoopRangeChanged: ((ClosedRange<Double>) -> Void)?
+
+    /// Snaps a loop dragged on the hero — start time, end time, bypass snapping. Supplied by the deck
+    /// from `DeckTimelineView.snappedLoopRange(fromTime:toTime:bypassSnapping:)`: the beat grid lives
+    /// on the timeline, and a loop must land in the same place whichever view it was drawn on.
+    /// Handed times already clamped to the clip. With none set, the loop is exactly where it was drawn.
+    var loopRangeResolver: ((Double, Double, Bool) -> ClosedRange<Double>)?
+
+    /// A movement under this many points is a click, not a loop — `DeckTimelineView`'s own threshold,
+    /// so a click on the hero and a click on the lanes tolerate the same pointer jitter.
+    private static let dragThreshold: CGFloat = 3
+
     private enum DragMode {
         case panningVisibleRange(anchorOffset: Double)
-        case seeking
+        /// Pressed anywhere a drawn box isn't — which at the default zoom, where no box is drawn, is
+        /// the whole band. Undecided until release: within `dragThreshold` of `startX` it was a click
+        /// and seeks; past it, the gesture drew a loop.
+        case pressed(startX: CGFloat)
     }
     private var dragMode: DragMode?
 
-    /// Tracks whether `continueDrag(toX:)` actually ran during the current `.panningVisibleRange`
-    /// gesture. At default (fully zoomed out) viewports the visible-range box spans the whole band,
-    /// so a plain click almost always lands inside it and takes this branch instead of `.seeking` —
-    /// without this flag such a click would pan (a no-op) and never seek. Only meaningful while
-    /// `dragMode` is `.panningVisibleRange`; irrelevant for `.seeking`, which always seeks from
-    /// `beginDrag(atX:)` itself.
+    /// The loop as it stood when a press began, so a click — including a drag that wandered out and
+    /// came back — restores it instead of keeping a stray preview.
+    private var loopBeforeDrag: ClosedRange<Double>?
+
+    /// Whether `continueDrag(toX:)` actually ran during the current `.panningVisibleRange` gesture, so
+    /// a plain click inside a drawn box still seeks on release rather than panning by nothing. Only
+    /// meaningful while `dragMode` is `.panningVisibleRange`.
     private var hasDraggedDuringGesture = false
 
     func beginDrag(atX x: CGFloat) {
-        let time = time(forX: x)
-        if let rect = visibleRangeRect(), rect.contains(NSPoint(x: x, y: rect.midY)) {
-            let boxStartTime = self.time(forX: rect.minX)
-            dragMode = .panningVisibleRange(anchorOffset: time - boxStartTime)
+        if isVisibleRangeBoxDrawn(), let rect = visibleRangeRect(), rect.contains(NSPoint(x: x, y: rect.midY)) {
+            let boxStartTime = time(forX: rect.minX)
+            dragMode = .panningVisibleRange(anchorOffset: time(forX: x) - boxStartTime)
             hasDraggedDuringGesture = false
         } else {
-            dragMode = .seeking
-            seekAndRecenter(toTime: time)
+            // No seek yet: a press here is only a click once it's released without having moved.
+            dragMode = .pressed(startX: x)
+            loopBeforeDrag = loopRange
         }
     }
 
-    func continueDrag(toX x: CGFloat) {
+    func continueDrag(toX x: CGFloat, bypassSnapping: Bool = false) {
         switch dragMode {
         case .panningVisibleRange(let anchorOffset):
             hasDraggedDuringGesture = true
             onVisibleRangePanned?(clampedStart(time(forX: x) - anchorOffset))
-        case .seeking:
-            seekAndRecenter(toTime: time(forX: x))
+        case .pressed(let startX):
+            guard abs(x - startX) >= Self.dragThreshold else { return }
+            // Previewed already snapped, so the band does not jump on release.
+            loopRange = resolvedLoop(from: startX, to: x, bypassSnapping: bypassSnapping)
         case nil:
             break
         }
     }
 
-    /// For `.seeking`, deliberately does *not* re-process `x` — `continueDrag(toX:)` already ran for
-    /// every intermediate position during a real drag (AppKit delivers `mouseDragged` up to the
-    /// release point), and for a plain click (no `mouseDragged` at all) `beginDrag(atX:)` already
-    /// fired the seek once. Re-processing here would double-fire a click's seek at the same x.
+    /// Decides a `.pressed` gesture by where it ends, as `DeckTimelineView.endCanvasDrag` does: within
+    /// the threshold it was a click, even if the pointer wandered out and back in between.
     ///
-    /// For `.panningVisibleRange`, the situation is the opposite: that branch never seeks from
-    /// `beginDrag(atX:)`, so if `continueDrag(toX:)` never ran either (a plain click that happened to
-    /// land inside a visible-range box covering the whole track, e.g. at the deck's default fully
-    /// zoomed-out viewport), no seek has fired yet for this gesture at all. This is the one place
-    /// that can happen, so it's the one legitimate use of `x` here — a first and only seek, not a
-    /// reprocessing of one that already fired.
-    func endDrag(atX x: CGFloat) {
-        if case .panningVisibleRange = dragMode, !hasDraggedDuringGesture {
-            seekAndRecenter(toTime: time(forX: x))
+    /// For `.panningVisibleRange`, a release that never dragged was a click inside the box. No seek has
+    /// fired for it yet, so this is where its one seek happens.
+    func endDrag(atX x: CGFloat, bypassSnapping: Bool = false) {
+        defer {
+            dragMode = nil
+            hasDraggedDuringGesture = false
+            loopBeforeDrag = nil
         }
-        dragMode = nil
-        hasDraggedDuringGesture = false
+        switch dragMode {
+        case .panningVisibleRange:
+            if !hasDraggedDuringGesture { seekAndRecenter(toTime: time(forX: x)) }
+        case .pressed(let startX):
+            guard abs(x - startX) >= Self.dragThreshold else {
+                loopRange = loopBeforeDrag
+                seekAndRecenter(toTime: time(forX: x))
+                return
+            }
+            let loop = resolvedLoop(from: startX, to: x, bypassSnapping: bypassSnapping)
+            loopRange = loop
+            onLoopRangeChanged?(loop)
+        case nil:
+            break
+        }
+    }
+
+    /// `mouseDragged` and `mouseUp` keep arriving after the pointer leaves the view, and `time(forX:)`
+    /// extrapolates past both ends, so both edges are clamped to the clip here — before the resolver,
+    /// the band, or the engine can see an out-of-clip time.
+    private func resolvedLoop(from startX: CGFloat, to endX: CGFloat, bypassSnapping: Bool) -> ClosedRange<Double> {
+        let a = min(max(0, time(forX: startX)), clipDuration)
+        let b = min(max(0, time(forX: endX)), clipDuration)
+        if let loopRangeResolver { return loopRangeResolver(a, b, bypassSnapping) }
+        return min(a, b)...max(a, b)
     }
 
     private func seekAndRecenter(toTime time: Double) {
@@ -346,12 +401,20 @@ final class HeroWaveformView: NSView {
         beginDrag(atX: convert(event.locationInWindow, from: nil).x)
     }
 
+    /// ⌥ is read live, not latched at press, so pressing or releasing it mid-drag takes effect
+    /// immediately — `DeckTimelineView.mouseDragged(with:)`'s rule.
     override func mouseDragged(with event: NSEvent) {
-        continueDrag(toX: convert(event.locationInWindow, from: nil).x)
+        continueDrag(
+            toX: convert(event.locationInWindow, from: nil).x,
+            bypassSnapping: event.modifierFlags.contains(.option)
+        )
     }
 
     override func mouseUp(with event: NSEvent) {
-        endDrag(atX: convert(event.locationInWindow, from: nil).x)
+        endDrag(
+            atX: convert(event.locationInWindow, from: nil).x,
+            bypassSnapping: event.modifierFlags.contains(.option)
+        )
     }
 
     override func mouseMoved(with event: NSEvent) {

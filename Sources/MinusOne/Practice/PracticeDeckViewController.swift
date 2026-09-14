@@ -270,26 +270,16 @@ final class PracticeDeckViewController: NSViewController, NSTextFieldDelegate {
             self?.heroWaveformView.visibleRange = viewport.startTime...viewport.endTime
         }
         timeline.onLoopRangeChanged = { [weak self] range in
-            guard let self else { return }
-            // Deliberately *not* `ensureEngineLoaded()`: a loop can be drawn on a clip that hasn't
-            // loaded yet (still separating, or simply not loaded because nothing has played it
-            // yet) — it just configures state the engine picks up whenever this clip does load.
-            // The one thing to guard against is a *different* clip actually playing right now:
-            // without this check, drawing a loop here would `seek` — and so audibly jump — that
-            // other clip's live players instead of doing nothing to this not-yet-loaded one.
-            guard !self.playbackEngine.isPlaying || self.loadedClipID == self.clip?.id else { return }
-            // Trusted to be inside the clip: `DeckTimelineView` clamps a drag's x to the canvas
-            // before it becomes a time, and `setLoopRange` stores whatever it is handed.
-            self.playbackEngine.setLoopRange(range)
-            self.playbackEngine.isLoopEnabled = true
-            self.loopButton.state = .on
-            self.loopButton.refreshStyle()
-            // Jump to the top of the new loop. Without this the playhead stayed wherever it was —
-            // so drawing a loop while the clip was playing kept playing straight through the old
-            // position until it happened to reach the loop's end, which is the first moment
-            // `PracticePlaybackEngine`'s loop check does anything. Unconditional rather than only
-            // while playing: a loop drawn while paused should start from its own beginning too.
-            self.playbackEngine.seek(toSeconds: range.lowerBound)
+            self?.applyLoopRange(range)
+        }
+        heroWaveformView.onLoopRangeChanged = { [weak self] range in
+            self?.applyLoopRange(range)
+        }
+        // The hero snaps through the timeline, which owns the beat grid, so a loop lands in the same
+        // place whichever view it was drawn on.
+        heroWaveformView.loopRangeResolver = { [weak self] from, to, bypassSnapping in
+            guard let self else { return min(from, to)...max(from, to) }
+            return self.timeline.snappedLoopRange(fromTime: from, toTime: to, bypassSnapping: bypassSnapping)
         }
         timeline.onStemVolumeChanged = { [weak self] stem, value in
             self?.playbackEngine.setStemVolume(value, for: stem)
@@ -449,14 +439,41 @@ final class PracticeDeckViewController: NSViewController, NSTextFieldDelegate {
         self.libraryStore.update(clip)
     }
 
+    /// Commits a loop drawn on either the lanes or the hero waveform, and shows it on both.
+    private func applyLoopRange(_ range: ClosedRange<Double>) {
+        // Deliberately *not* `ensureEngineLoaded()`: a loop can be drawn on a clip that hasn't
+        // loaded yet (still separating, or simply not loaded because nothing has played it
+        // yet) — it just configures state the engine picks up whenever this clip does load.
+        // The one thing to guard against is a *different* clip actually playing right now:
+        // without this check, drawing a loop here would `seek` — and so audibly jump — that
+        // other clip's live players instead of doing nothing to this not-yet-loaded one.
+        guard !playbackEngine.isPlaying || loadedClipID == clip?.id else { return }
+        // Mirrored onto both views: the one the loop was drawn on already shows it, and the
+        // other would otherwise keep a stale band or none.
+        timeline.loopRange = range
+        heroWaveformView.loopRange = range
+        // Trusted to be inside the clip: both views clamp to the clip before a drag becomes a
+        // range, and `setLoopRange` stores whatever it is handed.
+        playbackEngine.setLoopRange(range)
+        playbackEngine.isLoopEnabled = true
+        loopButton.state = .on
+        loopButton.refreshStyle()
+        // Jump to the top of the new loop. Without this the playhead stayed wherever it was —
+        // so drawing a loop while the clip was playing kept playing straight through the old
+        // position until it happened to reach the loop's end, which is the first moment
+        // `PracticePlaybackEngine`'s loop check does anything. Unconditional rather than only
+        // while playing: a loop drawn while paused should start from its own beginning too.
+        playbackEngine.seek(toSeconds: range.lowerBound)
+    }
+
     /// Drops the loop when the deck moves to a different clip.
     ///
     /// A loop belongs to the clip it was drawn on. `PracticePlaybackEngine.tearDown()` resets the
     /// players, the playhead and `isPlaying`, but deliberately not `loopRangeSeconds` or
-    /// `isLoopEnabled` — and `DeckTimelineView.show(clipDuration:peakStore:)` clears the drawn band.
-    /// Without this the engine would keep wrapping at a time the new clip does not show: draw a loop
-    /// at 2:00 on a long clip, switch to a 30-second one, and playback still jumps with nothing on
-    /// screen to explain it.
+    /// `isLoopEnabled` — and the `show(clipDuration:peakStore:)` of both `DeckTimelineView` and
+    /// `HeroWaveformView` clears its drawn band. Without this the engine would keep wrapping at a
+    /// time the new clip does not show: draw a loop at 2:00 on a long clip, switch to a 30-second
+    /// one, and playback still jumps with nothing on screen to explain it.
     ///
     /// Deliberately here rather than in the engine's own teardown: `reload(clip:libraryStore:)` also
     /// tears down, and it runs on *every* separation tick, so clearing there would wipe a loop the
