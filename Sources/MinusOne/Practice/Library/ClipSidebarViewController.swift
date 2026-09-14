@@ -35,6 +35,7 @@ final class ClipSidebarViewController: NSViewController, NSTableViewDataSource, 
     private let libraryStore: ClipLibraryStore
     private let tableView = NSTableView()
     private let searchField = NSSearchField()
+    private let scrollView = NSScrollView()
     private var allClips: [PracticeClip] = []
     private var filteredClips: [PracticeClip] = []
     private var playingClipID: UUID?
@@ -48,6 +49,12 @@ final class ClipSidebarViewController: NSViewController, NSTableViewDataSource, 
     /// Running elapsed readout, shown only while a take is in flight, in place of the search
     /// field. Clicking it returns to the Record page — leaving that page doesn't stop the take,
     /// so there has to be a way forward again.
+    /// Constrained to the same 24pt as `importButton`/`recordButton`/`searchField`: `WindowUI.linkButton`
+    /// returns a titled `FlatButton`, and `FlatButton.intrinsicContentSize` adds 8pt of vertical
+    /// padding to *titled* buttons (the icon-only header buttons skip that branch), which otherwise
+    /// makes this 30pt tall against the row's 24pt — measured as a 6pt jump in the scroll view's
+    /// position every time a recording starts or stops, since the scroll view is pinned to the
+    /// header's bottom.
     private let elapsedButton = WindowUI.linkButton(title: "")
 
     var onSelectClip: ((PracticeClip) -> Void)?
@@ -59,6 +66,7 @@ final class ClipSidebarViewController: NSViewController, NSTableViewDataSource, 
     var onRecordElapsedClicked: (() -> Void)?
 
     var elapsedButtonForTesting: FlatButton { elapsedButton }
+    var scrollViewForTesting: NSScrollView { scrollView }
 
     init(libraryStore: ClipLibraryStore) {
         self.libraryStore = libraryStore
@@ -119,6 +127,7 @@ final class ClipSidebarViewController: NSViewController, NSTableViewDataSource, 
         elapsedButton.setAccessibilityLabel("Back to the recording")
         elapsedButton.target = self
         elapsedButton.action = #selector(recordElapsedClicked)
+        elapsedButton.heightAnchor.constraint(equalToConstant: 24).isActive = true
 
         let column = NSTableColumn(identifier: .init("clip"))
         column.width = 240
@@ -152,7 +161,6 @@ final class ClipSidebarViewController: NSViewController, NSTableViewDataSource, 
         menu.delegate = self
         tableView.menu = menu
 
-        let scrollView = NSScrollView()
         scrollView.documentView = tableView
         scrollView.hasVerticalScroller = true
         scrollView.drawsBackground = false

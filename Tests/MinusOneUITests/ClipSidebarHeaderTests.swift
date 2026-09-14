@@ -78,6 +78,29 @@ final class ClipSidebarHeaderTests: XCTestCase {
         XCTAssertEqual(sidebar.recordButton.toolTip, "Stop")
     }
 
+    /// The header's four controls (import/record icon buttons, search field, elapsed readout) must
+    /// share one height — otherwise the scroll view pinned to the header's bottom shifts the whole
+    /// clip list when recording starts or stops.
+    func testTheHeaderHeightDoesNotChangeWhileRecording() {
+        sidebar.view.frame = NSRect(x: 0, y: 0, width: 260, height: 500)
+        sidebar.view.layoutSubtreeIfNeeded()
+        let idleTop = sidebar.scrollViewForTesting.frame.maxY
+
+        sidebar.setRecordingState(true)
+        sidebar.view.layoutSubtreeIfNeeded()
+        XCTAssertEqual(
+            sidebar.scrollViewForTesting.frame.maxY, idleTop,
+            "the clip list shifted when recording started"
+        )
+
+        sidebar.setRecordingState(false)
+        sidebar.view.layoutSubtreeIfNeeded()
+        XCTAssertEqual(
+            sidebar.scrollViewForTesting.frame.maxY, idleTop,
+            "the clip list shifted when recording stopped"
+        )
+    }
+
     func testTheSearchQuerySurvivesARecording() {
         sidebar.searchFieldForTesting.stringValue = "leaves"
         sidebar.setRecordingState(true)
