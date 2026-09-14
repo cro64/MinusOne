@@ -17,11 +17,11 @@ enum TimelineMetrics {
     /// `WindowSizing.minimum`'s 600pt with room to spare.
     ///
     /// Measured, not derived, by `WindowSizingTests.testTheDeckFitsTheMinimumWindowHeight`, which
-    /// prints it: **497pt** against the 600pt floor, 103pt spare. That is the deck's vertical
+    /// prints it: **555pt** against the 600pt floor, 103pt spare. That is the deck's vertical
     /// stack (title, status, timeline, and the unified control bar — see
     /// `PracticeDeckViewController.buildContent`) at 421pt, of which
     /// `DeckTimelineView.height(forLaneCount: 4)` is 342 (22 ruler + 4 + 300 lanes + 4 + 12
-    /// indicator), plus 24pt of window padding and the 52pt header strip.
+    /// indicator), plus 24pt of window padding and the 38pt header strip.
     ///
     /// The BPM/Tap toolbar no longer has a row of its own: it is one of the arranged views inside
     /// the control bar alongside the transport and the speed slider, so there is no separate
