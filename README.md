@@ -1,6 +1,13 @@
+<p align="center">
+  <img src="Resources/MinusOneIcon.svg" width="96" alt="MinusOne" />
+</p>
+
 # MinusOne
 
 MinusOne is a macOS menu bar app for practicing along with music.
+
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+![Platform](https://img.shields.io/badge/platform-macOS%2014%2B-lightgrey)
 
 It has two parts:
 
