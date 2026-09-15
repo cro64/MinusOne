@@ -1,205 +1,215 @@
-<p align="center">
-  <img src="Resources/MinusOneIcon.svg" width="96" alt="MinusOne" />
-</p>
-
 # MinusOne
 
-**A macOS menu bar app that removes vocals from whatever is playing on your Mac, live.**
+MinusOne is a macOS menu bar app for practicing along with music.
 
-Runs quietly in the background. Nothing is ever recorded or saved. It just changes what you hear, in real time.
+It has two parts:
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-![Platform](https://img.shields.io/badge/platform-macOS%2014%2B-lightgrey)
+- **Live** removes the vocals from any audio playing on your Mac.
+- **Practice** splits a song into vocals, drums, bass, and other, so you can mute, loop, and slow down each part.
 
-Turn any song into an instant instrumental for karaoke or practice, right from your menu bar. No editing software, no waiting for a file to process and download.
+## Contents
 
----
-
-## Preview
-
-<p align="center">
-  <img src="Resources/MinusOneDropDown.png" width="280" alt="MinusOne settings panel, Neural mode with Custom app capture" />
-</p>
-
-## Table of Contents
-
-- [Preview](#preview)
-- [Modes](#modes)
-- [Quick Start](#quick-start)
 - [Requirements](#requirements)
-- [Controls](#controls)
-- [Neural model](#neural-model)
-- [How audio capture works](#how-audio-capture-works)
-- [Development](#development)
-- [Limits](#limits)
+- [Install](#install)
+- [Menu bar](#menu-bar)
+- [Live](#live)
+- [Practice](#practice)
+- [Appearance](#appearance)
+- [Build from source](#build-from-source)
+- [Credits](#credits)
 
-## Modes
+## Requirements
 
-Three modes, trading off speed for quality:
+- macOS 14 or later.
+- macOS 14.2 or later to record system audio or choose which apps Live affects.
+- The Demucs model (about 200 MB), downloaded on first launch.
+- [BlackHole 2ch](https://existential.audio/blackhole/), only on macOS versions before 14.2.
 
-| Mode | Latency | CPU load | How it works | Best for |
-|---|---|---|---|---|
-| **Direct** | Zero | Negligible | Passthrough, no processing | Verifying capture/routing is set up correctly |
-| **Center Cut** | Near-zero (~50 ms ramp on toggle) | Very light | Phase-cancels the mid (L+R) channel, which usually carries the lead vocal | Karaoke, quick on-the-fly removal |
-| **Neural** | ~10 s (one processing window) | Light (single-digit % on Apple Silicon) | Runs system audio through Demucs v4 (4-stem) in ~10 s overlapping windows | Cleanest vocal removal, non-real-time-critical listening |
+## Install
 
-**Neural** buffers audio into overlapping windows before running inference, so playback trails live audio by roughly one window's length. It only starts processing once you turn it on, not on app launch, and re-warms after track changes.
+1. Download the latest `MinusOne-*-macos.dmg` from [Releases](https://github.com/cro64/MinusOne/releases).
+2. Open the disk image and drag **MinusOne** into **Applications**.
+3. Open MinusOne from Applications.
+4. On the welcome screen, click **Download & Continue** to get the model.
 
-**Center Cut** relies on the vocal being panned dead-center, so it also suppresses other center-panned elements (kick, bass, lead guitar) and does nothing useful on mono sources.
+You can skip the download and get it later from the Live tab. Live and Practice both need the model.
 
-**Direct** passes audio through unmodified. Useful as a baseline to confirm the pipeline is wired up correctly.
+### If macOS blocks the app
 
-Capture uses a system-level audio tap on macOS 14.2+ (supports per-app selection), or [BlackHole](https://existential.audio/blackhole/) as a fallback. See [How audio capture works](#how-audio-capture-works).
+MinusOne is not notarized, so macOS may say it is damaged or cannot be opened.
 
-## Quick Start
+**Option A**
 
-### Download (recommended)
+1. Try to open the app once.
+2. Open **System Settings → Privacy & Security**.
+3. Click **Open Anyway** next to the MinusOne message.
 
-1. Grab the latest `MinusOne-*-macos.dmg` from [Releases](https://github.com/cro64/MinusOne/releases)
-2. Open the disk image and drag **MinusOne** onto **Applications**
-3. Open it from Applications
-4. On the welcome screen, download the Neural model (~200 MB) or skip and use Center Cut
-
-Left-click the waveform icon for settings; right-click any time to toggle vocal reduction.
-
-#### If macOS says the app is damaged or can’t be opened
-
-MinusOne isn’t notarized yet (that needs a paid Apple Developer ID), so Gatekeeper may block the download. Same workaround many open-source Mac apps document:
-
-**Option A — Privacy & Security**
-
-1. Try opening the app once (the warning is expected)
-2. Open **System Settings → Privacy & Security**
-3. Scroll to the message about MinusOne and click **Open Anyway**
-
-**Option B — Terminal (one time)**
+**Option B**
 
 ```bash
 xattr -cr /Applications/MinusOne.app
 open /Applications/MinusOne.app
 ```
 
-That only clears the download quarantine flag. It does not weaken system security permanently.
+## Menu bar
 
-### Build from source
+| Action | Result |
+|---|---|
+| Click the icon | Opens the menu |
+| Right-click or Control-click the icon | Turns Live on or off |
+| ⌘⌥M | Turns Live on or off |
 
-```bash
-Scripts/build-app.sh release          # → build/MinusOne.app
-Scripts/download-model.sh             # optional if you skip the welcome download
-```
+The menu has four items:
 
-Then open `build/MinusOne.app` (or copy it to Applications).
-
-## Requirements
-
-- macOS 14 or newer (14.2+ recommended)
-- [BlackHole 2ch](https://existential.audio/blackhole/), only if Process Tap is unavailable
-- Neural: one-time Demucs model download (not bundled)
-
-| Capture | Permission |
-|---------|------------|
-| Process Tap | System Audio Recording |
-| BlackHole | Microphone |
-
-## Controls
-
-| Action | What it does |
-|--------|----------------|
-| Left-click the icon | Open settings |
-| Right-click the icon | Turn vocal reduction on or off |
-| Settings → Scope → Custom → Apps | Choose which apps get processed |
-| ⌘⌥M | Turn vocal reduction on or off |
-
-### Settings
-
-A compact panel opens next to the icon:
-
-| Setting | What it does |
-|---------|----------------|
-| **Mode** | Direct · Center Cut · Neural |
-| **Intensity** | How much vocal removal to apply (0–100%) |
-| **Gain** | Loudness compensation after removal (0–12 dB, default 4.5) |
-| **Scope** | All Apps, or **Custom** (picked apps only) |
-
-Intensity and Gain apply to Center Cut and Neural only. Neural is grayed out until the model is installed.
-
-**Custom** only processes checked apps. FaceTime, Discord, and other unchecked apps play normally. Requires Process Tap (macOS 14.2+).
-
-### Status
-
-| What it says | What it means |
-|--------------|-----------------|
-| **Off** | Vocal reduction is off |
-| **On** | Reduction is active |
-| **Warming up** | Neural model is loading |
-| **Mono input** | Center Cut won't work with this audio |
-| **Permission needed** | Open System Settings to grant access |
-| **Error** | Tap the info icon for details |
+| Item | What it does |
+|---|---|
+| **Live** | Turns vocal removal on or off |
+| **Record** | Starts or stops recording system audio |
+| **Open MinusOne…** | Opens the main window |
+| **Quit** | Quits the app |
 
 ### Icon
 
-The waveform in the menu bar changes with status:
+| State | Meaning |
+| --- | --- |
+| **Off** | Live is off |
+| **On** | Vocals are being removed |
+| **Warming up** | The model is loading |
+| **Permission needed** | Grant access in System Settings |
+| **Error** | Something went wrong |
 
-| | State | Meaning |
-| :---: | --- | --- |
-| <img src="Resources/readme/icon-off.png" width="28" alt="Off" /> | **Off** | Idle / reduction off (menu-bar tint) |
-| <img src="Resources/readme/icon-on.png" width="28" alt="On" /> | **On** | Reduction active (accent) |
-| <img src="Resources/readme/icon-warming.png" width="28" alt="Warming up" /> | **Warming up** | Neural model loading |
-| <img src="Resources/readme/icon-mono.png" width="28" alt="Mono input" /> | **Mono input** | Center Cut unavailable |
-| <img src="Resources/readme/icon-permission.png" width="28" alt="Permission needed" /> | **Permission needed** | Grant access in System Settings |
-| <img src="Resources/readme/icon-error.png" width="28" alt="Error" /> | **Error** | Something went wrong |
+## Live
 
-## Neural model
+Live removes vocals from whatever is playing on your Mac. Nothing is recorded or saved.
 
-Neural mode uses **Demucs v4** (`htdemucs`), Meta's open-source 4-stem music separation model (vocals, drums, bass, other), converted to CoreML for Apple Silicon.
+Open the main window and choose the **Live** tab to change its settings.
+
+| Setting | What it does |
+|---|---|
+| **Intensity** | How much of the vocals to remove, from 0 to 100% |
+| **Gain** | Makes the result louder, from 0 to 12 dB (default 4.5 dB) |
+| **Scope** | **All Apps**, or **Custom** for only the apps you pick |
+| **Capture** | The list of apps to process when Scope is Custom |
+
+Things to know:
+
+- Audio plays about 10 seconds behind while Live is on.
+- Live warms up again after a track changes.
+- Custom scope needs macOS 14.2 or later.
+
+### Permissions
+
+| Setup | Permission to grant |
+|---|---|
+| macOS 14.2 or later | System Audio Recording |
+| BlackHole | Microphone |
+
+## Practice
+
+Open the main window and choose the **Practice** tab.
+
+The library of clips is on the left. The deck for the selected clip is on the right.
+
+### Add a clip
+
+| Way | How |
+|---|---|
+| Import | Click the import button above the search field |
+| Drag and drop | Drop an audio file onto the library |
+| Record | Click the record button above the search field |
+
+MinusOne opens MP3, WAV, AIFF, and M4A files.
+
+After you add a clip, MinusOne splits it into four stems in the background. You can play the clip while this runs.
+
+### Record
+
+| Setting | What it does |
+|---|---|
+| **Input source** | **System audio**, or any microphone or input device |
+| **Auto-stop** | Stops recording after the minutes and seconds you set |
+
+- You can also set the auto-stop time by dragging on the live waveform.
+- Recording keeps going if you leave the Record page.
+- While recording, a timer replaces the search field in the library. Click it to return to the Record page.
+- The record button turns into a stop button while recording.
+- Press Escape to leave the Record page.
+- The finished recording appears in your library.
+
+### Library
+
+| Action | How |
+|---|---|
+| Find a clip | Type in the search field |
+| Rename a clip | Double-click it, right-click and choose **Rename…**, or click its title in the deck |
+| See what is playing | Look for the speaker icon next to the clip |
+| Hide or show the library | Click the sidebar button in the title bar |
+
+### Deck
+
+| Control | What it does |
+|---|---|
+| Play / Pause | Starts or pauses the clip |
+| Back / Forward | Jumps 5 seconds |
+| Loop | Repeats the selected section |
+| Tempo slider | Slows the clip down, from 50 to 100% |
+| **BPM** | Shows the tempo, and you can type a new one |
+| **Tap** | Sets the tempo from your taps |
+| Waveform button | Shows or hides the overview waveform |
+
+### Timeline
+
+The timeline shows one lane per stem.
+
+| Action | Result |
+|---|---|
+| Click | Jumps to that point |
+| Drag | Selects a loop that snaps to the beat |
+| ⌥ + drag | Selects a loop without snapping |
+| Scroll sideways | Moves through the song |
+| ⌘ + scroll, or pinch | Zooms in and out |
+| Drag the downbeat marker on the ruler | Moves the beat grid |
+
+### Overview waveform
+
+The overview waveform shows the whole song above the timeline.
+
+| Action | Result |
+|---|---|
+| Click | Jumps to that point |
+| Drag | Selects a loop |
+| Drag inside the zoom box | Moves the zoomed view |
+| ⌘ + scroll, or pinch | Zooms the timeline |
+| Drag the bottom edge | Changes its height |
+
+### Stems
+
+Each lane has its own controls.
+
+| Control | What it does |
+|---|---|
+| Fader | Sets the stem's volume |
+| Switch | Coral means the stem plays. Grey means it is muted. |
+| ⌘ + click the switch | Plays only this stem |
+| Export button | Saves the stem as WAV, AIFF, or M4A |
+
+The export button turns on when the stem has finished processing.
+
+## Appearance
+
+Click the theme button in the title bar to switch between System, Light, and Dark.
+
+## Build from source
 
 ```bash
-Scripts/download-model.sh
+Scripts/build-app.sh release     # builds build/MinusOne.app
+Scripts/download-model.sh        # downloads the model without the welcome screen
 ```
 
-Downloads [HTDemucs FP16 CoreML](https://huggingface.co/dexxdean/htdemucs-coreml) (~200 MB) to `~/Library/Application Support/MinusOne/Models/`, compiles once (~20 s), and installs `htdemucs.mlmodelc`. The welcome screen can also download it on first launch.
+Logs are saved to `~/Library/Logs/MinusOne/MinusOne.log`.
 
-**Kudos:** MinusOne ships with the FP16 CoreML build by [dexxdean](https://huggingface.co/dexxdean/htdemucs-coreml). Original Demucs is by Meta ([facebookresearch/demucs](https://github.com/facebookresearch/demucs)).
+## Credits
 
-## How audio capture works
-
-**Process Tap (macOS 14.2+):** briefly hooks into system audio output, processes it, and restores your previous setup when you quit. Supports All Apps or Custom app lists.
-
-**BlackHole:** routes system audio through a free virtual device, processes it, and restores previous settings on quit. Processes all system audio, no per-app selection.
-
-Either way, nothing is saved or recorded.
-
-## Development
-
-```bash
-Scripts/build-app.sh          # debug build
-Scripts/build-app.sh release
-Scripts/package-dmg.sh        # → build/MinusOne-v*-macos.dmg (drag to Applications)
-Scripts/package-icon.sh       # only when editing Resources/MinusOne.icon (needs Xcode 26.6+)
-swift build --disable-sandbox # SPM only
-```
-
-```
-Sources/MinusOne/           App and UI
-Sources/MinusOne/Audio/     Engine, DSP, neural pipeline
-Sources/CAtomics/           Realtime primitives
-Resources/MinusOne.icon     App icon source (Icon Composer)
-Resources/Assets.car        Compiled icon catalog (checked in)
-Resources/MinusOne.icns     Finder icon fallback (checked in)
-Resources/MinusOneIcon.svg  Logo vector (active waveform)
-Resources/MinusOneDropDown.png  Settings panel preview
-Resources/readme/           Menu-bar icon states for README
-Scripts/build-app.sh
-Scripts/package-icon.sh
-Scripts/package-dmg.sh
-Scripts/download-model.sh
-```
-
-Logs: `~/Library/Logs/MinusOne/MinusOne.log`
-
-## Limits
-
-- Direct does not remove vocals; Center Cut needs stereo audio and won't work on mono sources.
-- Center Cut can also mute other centered instruments, not just vocals. Neural avoids that pattern but isn't perfect either.
-- Neural adds ~10 s delay and re-warms after track changes (dry audio until ready).
-- BlackHole processes all system audio. Custom app selection requires Process Tap.
+- The model is [Demucs](https://github.com/facebookresearch/demucs) by Meta.
+- MinusOne uses the CoreML build of Demucs by [dexxdean](https://huggingface.co/dexxdean/htdemucs-coreml).
+- MinusOne is released under the [MIT License](LICENSE).
