@@ -21,6 +21,7 @@ It has two parts:
 - [Menu bar](#menu-bar)
 - [Live](#live)
 - [Practice](#practice)
+- [Updates](#updates)
 - [Appearance](#appearance)
 - [Build from source](#build-from-source)
 - [Credits](#credits)
@@ -66,12 +67,13 @@ open /Applications/MinusOne.app
 | Right-click or Control-click the icon | Turns Live on or off |
 | ⌘⌥M | Turns Live on or off |
 
-The menu has four items:
+The menu has these items:
 
 | Item | What it does |
 |---|---|
 | **Live** | Turns vocal removal on or off |
 | **Record** | Starts or stops recording system audio |
+| **Update to …** | Opens the waiting update (only shown when there is one) |
 | **Open MinusOne…** | Opens the main window |
 | **Quit** | Quits the app |
 
@@ -84,6 +86,7 @@ The menu has four items:
 | **Warming up** | The model is loading |
 | **Permission needed** | Grant access in System Settings |
 | **Error** | Something went wrong |
+| **Dot in the corner** | An update is ready |
 
 ## Live
 
@@ -201,6 +204,17 @@ Each lane has its own controls.
 | Export button | Saves the stem as WAV, AIFF, or M4A |
 
 The export button turns on when the stem has finished processing.
+
+## Updates
+
+MinusOne checks for a new version once a day.
+
+- A dot on the menu bar icon means an update is ready.
+- Click **Update to …** in the menu, then **Install Update**. MinusOne restarts on the new version.
+- Choose **MinusOne → Check for Updates…** to check at any time.
+- If you are recording, MinusOne asks before restarting. **Stop & Install** saves the recording first.
+
+Updates work from version 0.7.0 onward.
 
 ## Appearance
 

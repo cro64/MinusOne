@@ -15,6 +15,7 @@ final class MenuBarController: NSObject {
     /// because `updateIcon()` reads it and isn't gated on macOS 14.2; `AppDelegate` pushes every
     /// change here through `updateRecordingState(_:)`, including recordings the window started.
     private var isRecording = false
+    private var pendingUpdateVersion: String?
     private var recorderBox: Any?
     private var dismissMonitor: Any?
     private var localDismissMonitor: Any?
@@ -22,6 +23,7 @@ final class MenuBarController: NSObject {
 
     var onOpenPracticeMode: (() -> Void)?
     var onClipRecorded: ((PracticeClip) -> Void)?
+    var onCheckForUpdates: (() -> Void)?
 
     init(preferences: Preferences, audioEngine: AudioEngine, importService: ClipImportService) {
         self.preferences = preferences
@@ -59,6 +61,9 @@ final class MenuBarController: NSObject {
             if let backend = audioEngine.activeCaptureBackend {
                 text += " — \(backend.displayName)"
             }
+            if pendingUpdateVersion != nil {
+                text += " — update available"
+            }
             button.toolTip = text
         }
         updateIcon()
@@ -82,6 +87,14 @@ final class MenuBarController: NSObject {
         settingsViewController.updateRecordingState(recording)
     }
 
+    /// A waiting update puts a dot on the icon and "Update to <version>…" in the popover.
+    func setPendingUpdateVersion(_ version: String?) {
+        guard pendingUpdateVersion != version else { return }
+        pendingUpdateVersion = version
+        settingsViewController.setPendingUpdateVersion(version)
+        updateStatus(currentStatus)
+    }
+
     @available(macOS 14.2, *)
     private var recorder: ClipRecorder? {
         recorderBox as? ClipRecorder
@@ -90,7 +103,7 @@ final class MenuBarController: NSObject {
     private func performRecordToggle() {
         guard #available(macOS 14.2, *) else { return }
         if isRecording {
-            stopRecording()
+            stopRecordingAndImport()
         } else {
             startRecording()
         }
@@ -115,15 +128,34 @@ final class MenuBarController: NSObject {
         }
     }
 
-    @available(macOS 14.2, *)
-    private func stopRecording() {
-        guard let url = recorder?.stopRecording() else { return }
+    /// Stops the take and imports it. `onSaved` runs once the take is in the library, or the import
+    /// failed — exactly once — so an update can wait for it before relaunching. With no recording
+    /// running it runs straight away.
+    func stopRecordingAndImport(onSaved: @escaping () -> Void = {}) {
+        guard #available(macOS 14.2, *) else {
+            onSaved()
+            return
+        }
+        guard let url = recorder?.stopRecording() else {
+            onSaved()
+            return
+        }
+        var didSave = false
+        let saved = {
+            guard !didSave else { return }
+            didSave = true
+            onSaved()
+        }
         importService.importFile(
             at: url,
-            onImported: { [weak self] clip in self?.onClipRecorded?(clip) },
+            onImported: { [weak self] clip in
+                self?.onClipRecorded?(clip)
+                saved()
+            },
             onProgress: { [weak self] clip in self?.onClipRecorded?(clip) },
             onFailure: { error in
                 AppLogger.shared.error("Menu bar recorded clip failed to import: \(error.localizedDescription)")
+                saved()
             }
         )
     }
@@ -185,6 +217,10 @@ final class MenuBarController: NSObject {
             self?.closeSettings()
             self?.onOpenPracticeMode?()
         }
+        settingsViewController.onUpdateClicked = { [weak self] in
+            self?.closeSettings()
+            self?.onCheckForUpdates?()
+        }
         settingsViewController.onPreferredSizeChange = { [weak self] size in
             guard let self else { return }
             self.settingsPanel.setContentSize(size)
@@ -228,7 +264,8 @@ final class MenuBarController: NSObject {
             usesTemplate = true
         }
 
-        let image = MinusOneIcon.waveform(size: size, color: color, isActive: isFilterActive)
+        // The recording dot above wins outright, so a waiting update only badges the waveform.
+        let image = MinusOneIcon.waveform(size: size, color: color, isActive: isFilterActive, showsBadge: pendingUpdateVersion != nil)
         image.isTemplate = usesTemplate
         button.image = image
         button.contentTintColor = nil

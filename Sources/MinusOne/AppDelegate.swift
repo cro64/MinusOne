@@ -15,6 +15,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private lazy var practiceImportService = ClipImportService(libraryStore: practiceLibraryStore, separationEngine: practiceSeparationEngine)
     private lazy var practicePlaybackEngine = PracticePlaybackEngine()
     private var mainWindowController: MainWindowController?
+    private let sparkleUpdater = SparkleUpdater()
+    private lazy var updateController = UpdateController(driver: sparkleUpdater)
 
     /// One recorder for the whole app. The menu bar's Record toggle and the window's Record page
     /// used to build one each, which was harmless only while the window's copy lived inside a
@@ -31,7 +33,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         // Standard editing shortcuts are menu key equivalents, so without this ⌘A/⌘C/⌘V/⌘X/⌘Z do
         // nothing anywhere in the app — see `AppMenu`.
-        AppMenu.install()
+        AppMenu.install(updates: updateController)
 
         if #available(macOS 14.2, *) {
             ProcessTapSession.destroyStaleAggregates()
@@ -117,6 +119,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
         }
 
+        configureUpdates()
+
         restoreSessionIfNeeded()
     }
 
@@ -141,6 +145,30 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         clipRecorder.onProgress = { [weak self] peaks, elapsed in
             self?.mainWindowController?.updateRecordingProgress(peaks: peaks, elapsed: elapsed)
         }
+    }
+
+    /// Starts last, once the menu bar exists to show a badge.
+    private func configureUpdates() {
+        sparkleUpdater.events = updateController
+        updateController.onPendingVersionChanged = { [weak self] version in
+            self?.menuBarController?.setPendingUpdateVersion(version)
+        }
+        menuBarController?.onCheckForUpdates = { [weak self] in
+            self?.updateController.checkForUpdates(nil)
+        }
+        updateController.isRecording = { [weak self] in
+            guard #available(macOS 14.2, *) else { return false }
+            return self?.clipRecorder.isRecording ?? false
+        }
+        updateController.askToStopRecording = { RecordingUpdateAlert.run() }
+        updateController.stopRecordingAndSave = { [weak self] completion in
+            guard let menuBar = self?.menuBarController else {
+                completion()
+                return
+            }
+            menuBar.stopRecordingAndImport(onSaved: completion)
+        }
+        sparkleUpdater.start()
     }
 
     private func openMainWindow(tab: MainWindowController.Tab) {
