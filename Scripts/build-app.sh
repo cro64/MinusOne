@@ -20,6 +20,10 @@ fi
 rm -rf "$APP_DIR"
 mkdir -p "$MACOS_DIR" "$RESOURCES_DIR"
 cp "$ROOT_DIR/Resources/Info.plist" "$CONTENTS_DIR/Info.plist"
+if [[ "$CONFIGURATION" == "debug" ]]; then
+  # A dev build must not offer to replace itself with the public release. Check for Updates… still works.
+  /usr/libexec/PlistBuddy -c "Set :SUEnableAutomaticChecks false" "$CONTENTS_DIR/Info.plist"
+fi
 cp "$ROOT_DIR/Resources/Assets.car" "$RESOURCES_DIR/Assets.car"
 [[ -f "$ROOT_DIR/Resources/MinusOne.icns" ]] && cp "$ROOT_DIR/Resources/MinusOne.icns" "$RESOURCES_DIR/MinusOne.icns"
 cp "$ROOT_DIR/.build/$CONFIGURATION/MinusOne" "$MACOS_DIR/MinusOne"
