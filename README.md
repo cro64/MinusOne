@@ -212,7 +212,7 @@ MinusOne checks for a new version when it starts and once a day.
 - A dot on the menu bar icon means an update is ready.
 - Click **Update to …** in the menu, then **Install Update**. MinusOne restarts on the new version.
 - Choose **MinusOne → Check for Updates…** to check at any time, with the main window open.
-- If you are recording, MinusOne asks before restarting. **Stop & Install** saves the recording first.
+- If you are recording, MinusOne asks when you open the update. **Stop & Install** saves the recording first.
 
 Updates work from version 0.7.0 onward.
 

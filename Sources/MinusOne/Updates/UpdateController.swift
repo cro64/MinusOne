@@ -47,7 +47,17 @@ final class UpdateController: NSObject, NSMenuItemValidation {
     }
 
     @objc func checkForUpdates(_ sender: Any?) {
-        driver.checkForUpdates()
+        switch UpdateRelaunchPolicy.decision(isRecording: isRecording()) {
+        case .proceed:
+            driver.checkForUpdates()
+        case .askToStopRecording:
+            if askToStopRecording() {
+                AppLogger.shared.info("Update: stopping the recording before opening the updater")
+                stopRecordingAndSave { [driver] in driver.checkForUpdates() }
+            } else {
+                AppLogger.shared.info("Update: opening the updater postponed while recording")
+            }
+        }
     }
 
     func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {

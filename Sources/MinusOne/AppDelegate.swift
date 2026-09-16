@@ -17,6 +17,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var mainWindowController: MainWindowController?
     private let sparkleUpdater = SparkleUpdater()
     private lazy var updateController = UpdateController(driver: sparkleUpdater)
+    private let terminationGuard = RecordingTerminationGuard()
 
     /// One recorder for the whole app. The menu bar's Record toggle and the window's Record page
     /// used to build one each, which was harmless only while the window's copy lived inside a
@@ -169,6 +170,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             menuBar.stopRecordingAndImport(onSaved: completion)
         }
         sparkleUpdater.start()
+
+        terminationGuard.isRecording = { [weak self] in
+            guard #available(macOS 14.2, *) else { return false }
+            return self?.clipRecorder.isRecording ?? false
+        }
+        terminationGuard.stopRecordingAndSave = { [weak self] completion in
+            guard let menuBar = self?.menuBarController else {
+                completion()
+                return
+            }
+            menuBar.stopRecordingAndImport(onSaved: completion)
+        }
     }
 
     private func openMainWindow(tab: MainWindowController.Tab) {
@@ -215,6 +228,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 self?.audioEngine.enableReduction()
             }
         }
+    }
+
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        terminationGuard.terminationReply { NSApp.reply(toApplicationShouldTerminate: true) }
     }
 
     func applicationWillTerminate(_ notification: Notification) {

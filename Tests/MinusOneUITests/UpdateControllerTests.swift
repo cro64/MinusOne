@@ -110,6 +110,54 @@ final class UpdateControllerTests: XCTestCase {
         XCTAssertEqual(fake.checkCount, 1)
     }
 
+    /// Not recording: opening the updater goes straight to the driver, and the recording question
+    /// never comes up.
+    func testCheckForUpdatesWhenNotRecordingNeverAsks() {
+        let fake = FakeUpdater()
+        let controller = UpdateController(driver: fake)
+        controller.isRecording = { false }
+        controller.askToStopRecording = {
+            XCTFail("asked about a recording that isn't running")
+            return true
+        }
+
+        controller.checkForUpdates(nil)
+
+        XCTAssertEqual(fake.checkCount, 1)
+    }
+
+    /// Recording + Stop & Install: the take must reach the library before the driver is asked to
+    /// check, not before.
+    func testCheckForUpdatesStopAndInstallChecksOnlyAfterSaving() {
+        let fake = FakeUpdater()
+        let controller = UpdateController(driver: fake)
+        controller.isRecording = { true }
+        controller.askToStopRecording = { true }
+        var finishSaving: (() -> Void)?
+        controller.stopRecordingAndSave = { completion in finishSaving = completion }
+
+        controller.checkForUpdates(nil)
+
+        XCTAssertEqual(fake.checkCount, 0, "checked before the take was saved")
+        finishSaving?()
+        XCTAssertEqual(fake.checkCount, 1)
+    }
+
+    /// Recording + Later: nothing is saved and the driver is never asked to check.
+    func testCheckForUpdatesLaterDoesNothing() {
+        let fake = FakeUpdater()
+        let controller = UpdateController(driver: fake)
+        controller.isRecording = { true }
+        controller.askToStopRecording = { false }
+        var saveCalled = false
+        controller.stopRecordingAndSave = { _ in saveCalled = true }
+
+        controller.checkForUpdates(nil)
+
+        XCTAssertEqual(fake.checkCount, 0)
+        XCTAssertFalse(saveCalled)
+    }
+
     func testTheMenuItemIsEnabledOnlyWhenTheUpdaterCanCheck() {
         let fake = FakeUpdater()
         let controller = UpdateController(driver: fake)
