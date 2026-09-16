@@ -5,7 +5,6 @@ enum RecordingQuitAlert {
     static func run() -> Bool {
         let alert = NSAlert()
         alert.messageText = "Stop recording and quit?"
-        alert.informativeText = "MinusOne saves your recording to the library before quitting."
         alert.addButton(withTitle: "Stop & Quit")
         alert.addButton(withTitle: "Cancel")
         NSApp.activate(ignoringOtherApps: true)
