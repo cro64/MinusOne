@@ -58,4 +58,14 @@ final class SparkleUpdater: NSObject, UpdaterDriving, SPUUpdaterDelegate, SPUSta
     func updater(_ updater: SPUUpdater, didFindValidUpdate item: SUAppcastItem) {
         events?.updateFound(version: item.displayVersionString)
     }
+
+    /// Fires after every check, scheduled or manual. A daily scheduled check that simply finds
+    /// nothing new (`SUNoUpdateError`, code 1001) is the normal case and would spam the log once a
+    /// day forever, so that one is silent. Anything else (offline, 404 feed, bad signature, …) is
+    /// the only trace an unattended check leaves, so it's worth a line.
+    func updater(_ updater: SPUUpdater, didFinishUpdateCycleFor updateCheck: SPUUpdateCheck, error: Error?) {
+        guard let error = error as NSError? else { return }
+        if error.domain == "SUSparkleErrorDomain" && error.code == 1001 { return }
+        AppLogger.shared.warning("Update check failed: \(error.localizedDescription)")
+    }
 }

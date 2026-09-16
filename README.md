@@ -207,11 +207,11 @@ The export button turns on when the stem has finished processing.
 
 ## Updates
 
-MinusOne checks for a new version once a day.
+MinusOne checks for a new version when it starts and once a day.
 
 - A dot on the menu bar icon means an update is ready.
 - Click **Update to …** in the menu, then **Install Update**. MinusOne restarts on the new version.
-- Choose **MinusOne → Check for Updates…** to check at any time.
+- Choose **MinusOne → Check for Updates…** to check at any time, with the main window open.
 - If you are recording, MinusOne asks before restarting. **Stop & Install** saves the recording first.
 
 Updates work from version 0.7.0 onward.
