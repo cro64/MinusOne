@@ -21,8 +21,17 @@ final class RecordingTerminationGuard {
             onSaved()
         }
 
+        // AppKit's contract is that `reply(toApplicationShouldTerminate:)` — which `onSaved` is —
+        // must come after this method has returned `.terminateLater`. `stopRecordingAndSave` can
+        // call its completion synchronously (e.g. when there's nothing to import), which would run
+        // `finish()`, and so `onSaved()`, before the `return` below executes. Deferring `finish()`
+        // itself by one run-loop turn — rather than deferring the call to `stopRecordingAndSave` —
+        // guarantees `.terminateLater` is back with the caller first, however the save completes,
+        // without changing when `stopRecordingAndSave` itself is invoked.
         stopRecordingAndSave {
-            finish()
+            DispatchQueue.main.async {
+                finish()
+            }
         }
 
         DispatchQueue.main.asyncAfter(deadline: .now() + timeout) {

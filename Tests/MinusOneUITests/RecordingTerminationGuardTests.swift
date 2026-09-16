@@ -84,4 +84,29 @@ final class RecordingTerminationGuardTests: XCTestCase {
         finishSaving?()
         XCTAssertEqual(onSavedCount, 1, "onSaved must not fire a second time")
     }
+
+    /// A synchronous `stopRecordingAndSave` completion must never run `onSaved` before
+    /// `terminationReply` has returned `.terminateLater` to the caller — replying to AppKit before
+    /// that return can hang the quit.
+    func testSynchronousSaveDoesNotCallOnSavedBeforeReturning() {
+        let guardObject = RecordingTerminationGuard()
+        guardObject.isRecording = { true }
+        guardObject.stopRecordingAndSave = { completion in
+            completion()
+        }
+
+        let expectation = expectation(description: "onSaved called")
+        var onSavedCount = 0
+        let reply = guardObject.terminationReply {
+            onSavedCount += 1
+            expectation.fulfill()
+        }
+        let onSavedCountRightAfterReturning = onSavedCount
+
+        XCTAssertEqual(reply, .terminateLater)
+        XCTAssertEqual(onSavedCountRightAfterReturning, 0, "onSaved must not fire before terminationReply returns")
+
+        wait(for: [expectation], timeout: 1)
+        XCTAssertEqual(onSavedCount, 1)
+    }
 }
