@@ -64,6 +64,14 @@ final class UpdateController: NSObject, NSMenuItemValidation {
         }
     }
 
+    /// Sparkle's gentle-reminder callbacks only fire for a *new* scheduled update. An update that was
+    /// already downloaded in an earlier session resumes through a different path, so the badge is also
+    /// set from the updater-level "found a valid update" callback.
+    func updateFound(version: String) {
+        AppLogger.shared.info("Update available: \(version) (found)")
+        pendingVersion = version
+    }
+
     func userLookedAtUpdate() {
         pendingVersion = nil
     }

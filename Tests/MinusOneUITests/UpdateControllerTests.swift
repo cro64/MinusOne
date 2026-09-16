@@ -47,6 +47,32 @@ final class UpdateControllerTests: XCTestCase {
         XCTAssertEqual(reported, ["0.8.0", nil])
     }
 
+    /// An update already downloaded in an earlier session resumes outside the gentle-reminder path
+    /// (`updateWillBeShown` never fires for it), so the updater-level "found a valid update" callback
+    /// must badge it too.
+    func testUpdateFoundBecomesPending() {
+        let controller = UpdateController(driver: FakeUpdater())
+        controller.updateFound(version: "0.8.0")
+        XCTAssertEqual(controller.pendingVersion, "0.8.0")
+    }
+
+    func testUpdateFoundFiresTheChangeCallback() {
+        let controller = UpdateController(driver: FakeUpdater())
+        var reported: [String?] = []
+        controller.onPendingVersionChanged = { reported.append($0) }
+
+        controller.updateFound(version: "0.8.0")
+
+        XCTAssertEqual(reported, ["0.8.0"])
+    }
+
+    func testLookingAtTheUpdateClearsAFoundBadge() {
+        let controller = UpdateController(driver: FakeUpdater())
+        controller.updateFound(version: "0.8.0")
+        controller.userLookedAtUpdate()
+        XCTAssertNil(controller.pendingVersion)
+    }
+
     // MARK: - Checking by hand
 
     func testCheckForUpdatesAsksTheUpdater() {

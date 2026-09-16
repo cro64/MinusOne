@@ -54,4 +54,8 @@ final class SparkleUpdater: NSObject, UpdaterDriving, SPUUpdaterDelegate, SPUSta
     func updater(_ updater: SPUUpdater, shouldPostponeRelaunchForUpdate item: SUAppcastItem, untilInvokingBlock installHandler: @escaping () -> Void) -> Bool {
         events?.shouldPostponeRelaunch(install: installHandler) ?? false
     }
+
+    func updater(_ updater: SPUUpdater, didFindValidUpdate item: SUAppcastItem) {
+        events?.updateFound(version: item.displayVersionString)
+    }
 }

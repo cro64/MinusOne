@@ -30,4 +30,12 @@ final class InfoPlistTests: XCTestCase {
         XCTAssertEqual(plist["SUEnableAutomaticChecks"] as? Bool, true)
         XCTAssertEqual(plist["SUScheduledCheckInterval"] as? Int, 86400)
     }
+
+    /// A silent install (Sparkle's own "automatically download and install" checkbox, which can be
+    /// persisted into the host's user defaults from an earlier session) bypasses both the menu bar
+    /// badge and the "Finish recording before updating?" guard. This key stops Sparkle from ever
+    /// installing without the user explicitly choosing Install Update.
+    func testAutomaticUpdatesAreDisallowed() throws {
+        XCTAssertEqual(try plist()["SUAllowsAutomaticUpdates"] as? Bool, false)
+    }
 }
