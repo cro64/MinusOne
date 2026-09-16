@@ -73,6 +73,34 @@ final class UpdateControllerTests: XCTestCase {
         XCTAssertNil(controller.pendingVersion)
     }
 
+    /// `updateFound` fires on every discovery, including ones Sparkle is about to show itself. Once
+    /// Sparkle's own window is on screen, the badge it left behind must not linger.
+    func testSparkleShowingItselfClearsAFoundBadge() {
+        let controller = UpdateController(driver: FakeUpdater())
+        var reported: [String?] = []
+        controller.updateFound(version: "0.8.0")
+        controller.onPendingVersionChanged = { reported.append($0) }
+
+        controller.updateWillBeShown(version: "0.8.0", sparkleShowsIt: true)
+
+        XCTAssertNil(controller.pendingVersion)
+        XCTAssertEqual(reported, [nil])
+    }
+
+    /// A gentle reminder for the same update `updateFound` already badged must not duplicate the
+    /// change callback — the badge was already showing that version.
+    func testGentleReminderKeepsAFoundBadgeWithoutDuplicateCallback() {
+        let controller = UpdateController(driver: FakeUpdater())
+        var reported: [String?] = []
+        controller.updateFound(version: "0.8.0")
+        controller.onPendingVersionChanged = { reported.append($0) }
+
+        controller.updateWillBeShown(version: "0.8.0", sparkleShowsIt: false)
+
+        XCTAssertEqual(controller.pendingVersion, "0.8.0")
+        XCTAssertEqual(reported, [])
+    }
+
     // MARK: - Checking by hand
 
     func testCheckForUpdatesAsksTheUpdater() {

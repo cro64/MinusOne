@@ -57,11 +57,12 @@ final class UpdateController: NSObject, NSMenuItemValidation {
 
     // MARK: - Sparkle events
 
+    /// `updateFound` badges on every discovery (including ones Sparkle is about to show itself), so
+    /// this is what makes the call: when Sparkle is putting its own window on screen the badge would
+    /// be redundant, so it's cleared here; otherwise (a gentle reminder) it's (re)set.
     func updateWillBeShown(version: String, sparkleShowsIt: Bool) {
         AppLogger.shared.info("Update available: \(version) (\(sparkleShowsIt ? "shown now" : "badged"))")
-        if !sparkleShowsIt {
-            pendingVersion = version
-        }
+        pendingVersion = sparkleShowsIt ? nil : version
     }
 
     /// Sparkle's gentle-reminder callbacks only fire for a *new* scheduled update. An update that was
