@@ -20,3 +20,7 @@ DerivedData/
 
 # Local task tracking
 TASKS.md
+
+# Docs: the README is the only markdown that belongs in git
+*.md
+!README.md
