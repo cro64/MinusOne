@@ -144,6 +144,7 @@ After you add a clip, MinusOne splits it into four stems in the background. You 
 - While recording, a timer replaces the search field in the library. Click it to return to the Record page.
 - The record button turns into a stop button while recording.
 - Press Escape to leave the Record page.
+- Quitting MinusOne while recording asks first, then saves the take to the library.
 - The finished recording appears in your library.
 
 ### Library

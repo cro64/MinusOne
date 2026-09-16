@@ -123,6 +123,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         configureUpdates()
 
         restoreSessionIfNeeded()
+
+        practiceImportService.resumeUnfinishedSeparations(
+            onProgress: { [weak self] clip in self?.mainWindowController?.clipImported(clip) },
+            onFailure: { error in
+                AppLogger.shared.error("Resuming separation failed: \(error.localizedDescription)")
+            }
+        )
     }
 
     @available(macOS 14.2, *)
@@ -175,6 +182,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             guard #available(macOS 14.2, *) else { return false }
             return self?.clipRecorder.isRecording ?? false
         }
+        terminationGuard.askToStopRecording = { RecordingQuitAlert.run() }
         terminationGuard.stopRecordingAndSave = { [weak self] completion in
             guard let menuBar = self?.menuBarController else {
                 completion()

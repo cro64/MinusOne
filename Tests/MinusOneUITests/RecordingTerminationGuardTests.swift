@@ -3,9 +3,13 @@ import XCTest
 @testable import MinusOne
 
 final class RecordingTerminationGuardTests: XCTestCase {
-    func testNotRecordingTerminatesNowWithoutCallingOnSaved() {
+    func testNotRecordingTerminatesNowWithoutCallingOnSavedOrAsking() {
         let guardObject = RecordingTerminationGuard()
         guardObject.isRecording = { false }
+        guardObject.askToStopRecording = {
+            XCTFail("should not ask when nothing is recording")
+            return true
+        }
         guardObject.stopRecordingAndSave = { _ in
             XCTFail("should not save when nothing is recording")
         }
@@ -17,9 +21,25 @@ final class RecordingTerminationGuardTests: XCTestCase {
         XCTAssertEqual(reply, .terminateNow)
     }
 
+    func testRecordingAndCancellingQuitReturnsTerminateCancelWithoutSaving() {
+        let guardObject = RecordingTerminationGuard()
+        guardObject.isRecording = { true }
+        guardObject.askToStopRecording = { false }
+        guardObject.stopRecordingAndSave = { _ in
+            XCTFail("should not save when the quit is cancelled")
+        }
+
+        let reply = guardObject.terminationReply {
+            XCTFail("onSaved must not be called when the quit is cancelled")
+        }
+
+        XCTAssertEqual(reply, .terminateCancel)
+    }
+
     func testRecordingTerminatesLaterAndCallsOnSavedOnceAfterSaving() {
         let guardObject = RecordingTerminationGuard()
         guardObject.isRecording = { true }
+        guardObject.askToStopRecording = { true }
         var finishSaving: (() -> Void)?
         guardObject.stopRecordingAndSave = { completion in
             finishSaving = completion
@@ -44,6 +64,7 @@ final class RecordingTerminationGuardTests: XCTestCase {
     func testASaveThatNeverCompletesStillFiresOnSavedViaTimeout() {
         let guardObject = RecordingTerminationGuard()
         guardObject.isRecording = { true }
+        guardObject.askToStopRecording = { true }
         guardObject.timeout = 0.2
         guardObject.stopRecordingAndSave = { _ in
             // never calls completion
@@ -64,6 +85,7 @@ final class RecordingTerminationGuardTests: XCTestCase {
     func testASaveThatCompletesAfterTheTimeoutStillFiresOnSavedOnlyOnce() {
         let guardObject = RecordingTerminationGuard()
         guardObject.isRecording = { true }
+        guardObject.askToStopRecording = { true }
         guardObject.timeout = 0.2
         var finishSaving: (() -> Void)?
         guardObject.stopRecordingAndSave = { completion in
@@ -91,6 +113,7 @@ final class RecordingTerminationGuardTests: XCTestCase {
     func testSynchronousSaveDoesNotCallOnSavedBeforeReturning() {
         let guardObject = RecordingTerminationGuard()
         guardObject.isRecording = { true }
+        guardObject.askToStopRecording = { true }
         guardObject.stopRecordingAndSave = { completion in
             completion()
         }

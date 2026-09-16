@@ -6,11 +6,19 @@ import AppKit
 final class RecordingTerminationGuard {
     var isRecording: () -> Bool = { false }
     var stopRecordingAndSave: (_ completion: @escaping () -> Void) -> Void = { $0() }
+    /// Asked before a recording is stopped to let the app quit. Defaults to true so existing
+    /// callers/tests that don't set it keep today's behaviour.
+    var askToStopRecording: () -> Bool = { true }
     /// Safety net: if importing stalls, quitting still happens rather than hanging forever.
     var timeout: TimeInterval = 5
 
     func terminationReply(onSaved: @escaping () -> Void) -> NSApplication.TerminateReply {
         guard isRecording() else { return .terminateNow }
+
+        guard askToStopRecording() else {
+            AppLogger.shared.info("Quit cancelled while recording")
+            return .terminateCancel
+        }
 
         AppLogger.shared.info("Update: termination waiting for the recording to save")
 
