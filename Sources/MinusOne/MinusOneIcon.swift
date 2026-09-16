@@ -19,7 +19,9 @@ enum MinusOneIcon {
         return image
     }
 
-    static func waveform(size: CGFloat, color: NSColor, isActive: Bool) -> NSImage {
+    /// `showsBadge` adds the "update available" dot in the top-right corner, in the same colour, so
+    /// it tints with the menu bar exactly like the bars when the caller makes the image a template.
+    static func waveform(size: CGFloat, color: NSColor, isActive: Bool, showsBadge: Bool = false) -> NSImage {
         let image = NSImage(size: NSSize(width: size, height: size))
         image.lockFocus()
 
@@ -70,6 +72,17 @@ enum MinusOneIcon {
         }
 
         context.restoreGState()
+
+        if showsBadge {
+            let diameter = size * 0.28
+            let dot = CGRect(x: size - diameter, y: size - diameter, width: diameter, height: diameter)
+            // Cut a 1pt gap first so the dot doesn't merge into the rightmost bar.
+            context.setBlendMode(.clear)
+            context.fillEllipse(in: dot.insetBy(dx: -1, dy: -1))
+            context.setBlendMode(.normal)
+            context.setFillColor(color.cgColor)
+            context.fillEllipse(in: dot)
+        }
 
         image.unlockFocus()
         // Caller sets isTemplate for idle (system light/dark menu bar tint).

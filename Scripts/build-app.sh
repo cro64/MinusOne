@@ -20,19 +20,43 @@ fi
 rm -rf "$APP_DIR"
 mkdir -p "$MACOS_DIR" "$RESOURCES_DIR"
 cp "$ROOT_DIR/Resources/Info.plist" "$CONTENTS_DIR/Info.plist"
+if [[ "$CONFIGURATION" == "debug" ]]; then
+  # A dev build must not offer to replace itself with the public release. Check for Updates… still works.
+  /usr/libexec/PlistBuddy -c "Set :SUEnableAutomaticChecks false" "$CONTENTS_DIR/Info.plist"
+fi
 cp "$ROOT_DIR/Resources/Assets.car" "$RESOURCES_DIR/Assets.car"
 [[ -f "$ROOT_DIR/Resources/MinusOne.icns" ]] && cp "$ROOT_DIR/Resources/MinusOne.icns" "$RESOURCES_DIR/MinusOne.icns"
 cp "$ROOT_DIR/.build/$CONFIGURATION/MinusOne" "$MACOS_DIR/MinusOne"
 chmod +x "$MACOS_DIR/MinusOne"
 
+# Sparkle (in-app updates). SwiftPM leaves the framework next to the binary, but inside the bundle it
+# lives in Contents/Frameworks, so the binary needs an rpath pointing there. ditto keeps the
+# framework's internal symlinks, which cp -R would flatten.
+FRAMEWORKS_DIR="$CONTENTS_DIR/Frameworks"
+SPARKLE_DIR="$FRAMEWORKS_DIR/Sparkle.framework"
+mkdir -p "$FRAMEWORKS_DIR"
+ditto "$ROOT_DIR/.build/$CONFIGURATION/Sparkle.framework" "$SPARKLE_DIR"
+install_name_tool -add_rpath "@executable_path/../Frameworks" "$MACOS_DIR/MinusOne"
+# The XPC services exist for sandboxed apps only; MinusOne isn't sandboxed.
+rm -rf "$SPARKLE_DIR/Versions/B/XPCServices" "$SPARKLE_DIR/XPCServices"
+
 # Seal the bundle. Prefer a local signing identity; fall back to ad-hoc.
 # Note: GitHub downloads still need Developer ID + notarization for Gatekeeper to trust them.
-if SIGN_ID="$(security find-identity -v -p codesigning 2>/dev/null | awk -F'"' '/Apple Development|Developer ID Application/{print $2; exit}')" \
-  && [[ -n "${SIGN_ID}" ]]; then
-  codesign --force --deep --options runtime --sign "$SIGN_ID" "$APP_DIR"
-else
-  codesign --force --deep --sign - "$APP_DIR"
-fi
+SIGN_ID="$(security find-identity -v -p codesigning 2>/dev/null | awk -F'"' '/Apple Development|Developer ID Application/{print $2; exit}')" || SIGN_ID=""
+
+sign() {
+  if [[ -n "$SIGN_ID" ]]; then
+    codesign --force --options runtime --sign "$SIGN_ID" "$1"
+  else
+    codesign --force --sign - "$1"
+  fi
+}
+
+# Inside-out, never --deep: --deep re-signs Sparkle's helpers without their own settings.
+sign "$SPARKLE_DIR/Versions/B/Autoupdate"
+sign "$SPARKLE_DIR/Versions/B/Updater.app"
+sign "$SPARKLE_DIR"
+sign "$APP_DIR"
 
 echo "Built $APP_DIR"
 codesign -dv --verbose=2 "$APP_DIR" 2>&1 | awk '/Authority|Signature|TeamIdentifier|flags=/{print}'

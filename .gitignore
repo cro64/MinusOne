@@ -14,7 +14,6 @@ DerivedData/
 
 # Swift Package Manager
 .swiftpm/
-Package.resolved
 
 # Editor
 .vscode/

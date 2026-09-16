@@ -19,9 +19,9 @@
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>
-	<string>0.6.0</string>
+	<string>0.7.0</string>
 	<key>CFBundleVersion</key>
-	<string>6</string>
+	<string>7</string>
 	<key>LSMinimumSystemVersion</key>
 	<string>14.0</string>
 	<key>LSUIElement</key>
@@ -32,5 +32,15 @@
 	<true/>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>MinusOne needs microphone access to record a Practice take from an input device you choose, and when using the BlackHole fallback capture path.</string>
+	<key>SUAllowsAutomaticUpdates</key>
+	<false/>
+	<key>SUEnableAutomaticChecks</key>
+	<true/>
+	<key>SUFeedURL</key>
+	<string>https://github.com/cro64/MinusOne/releases/latest/download/appcast.xml</string>
+	<key>SUPublicEDKey</key>
+	<string>QwQmusHy6DFL88JhaYCSn6iOWwXJWk1zjm+OVmfNJZg=</string>
+	<key>SUScheduledCheckInterval</key>
+	<integer>86400</integer>
 </dict>
 </plist>

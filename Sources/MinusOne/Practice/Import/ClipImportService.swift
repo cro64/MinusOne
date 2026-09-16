@@ -83,6 +83,31 @@ final class ClipImportService {
         }
     }
 
+    /// Resumes separation for any clip that was imported but never finished (e.g. the app quit
+    /// mid-run). `OfflineSeparationEngine` processes one clip at a time on its own serial queue
+    /// (see its header comment), so these are simply handed to it in a batch — the engine itself
+    /// guarantees they run one after another rather than concurrently.
+    func resumeUnfinishedSeparations(
+        onProgress: @escaping (PracticeClip) -> Void,
+        onFailure: @escaping (Error) -> Void
+    ) {
+        workQueue.async { [weak self] in
+            guard let self else { return }
+            let clips = UnfinishedSeparations.needingResume(self.libraryStore.all())
+            guard !clips.isEmpty else { return }
+            AppLogger.shared.info("Resuming separation for \(clips.count) clip(s)")
+            for clip in clips {
+                let sourceURL = self.libraryStore.stemFileURL(clipID: clip.id, fileName: clip.sourceFileName)
+                self.separationEngine.process(
+                    clip: clip,
+                    sourceURL: sourceURL,
+                    onUpdate: { updated in DispatchQueue.main.async { onProgress(updated) } },
+                    onFailure: { _, error in DispatchQueue.main.async { onFailure(error) } }
+                )
+            }
+        }
+    }
+
     private func copyAndRegister(sourceURL: URL, hash: String) throws -> PracticeClip {
         let id = UUID()
         let folder = try libraryStore.ensureFolder(forClipID: id)

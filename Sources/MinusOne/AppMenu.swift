@@ -11,12 +11,23 @@ import AppKit
 /// The menu bar itself only appears while the window is open (`AppDelegate` flips the activation
 /// policy to `.regular` for that), which is also the only time these commands have anywhere to go.
 enum AppMenu {
-    static func install(into app: NSApplication = .shared) {
-        let appName = ProcessInfo.processInfo.processName
+    static func install(into app: NSApplication = .shared, updates: UpdateController? = nil) {
+        let mainMenu = makeMainMenu(appName: ProcessInfo.processInfo.processName, updates: updates)
+        app.mainMenu = mainMenu
+        app.windowsMenu = mainMenu.items.first { $0.title == "Window" }?.submenu
+    }
 
-        let mainMenu = NSMenu()
-        mainMenu.addItem(submenu(titled: appName, items: [
-            item("About \(appName)", #selector(NSApplication.orderFrontStandardAboutPanel(_:))),
+    static func makeMainMenu(appName: String, updates: UpdateController?) -> NSMenu {
+        var appItems: [NSMenuItem] = [
+            item("About \(appName)", #selector(NSApplication.orderFrontStandardAboutPanel(_:)))
+        ]
+        if let updates {
+            // Targets the controller directly: it validates the item (disabled while a check runs).
+            let check = NSMenuItem(title: "Check for Updates…", action: #selector(UpdateController.checkForUpdates(_:)), keyEquivalent: "")
+            check.target = updates
+            appItems.append(check)
+        }
+        appItems += [
             .separator(),
             item("Hide \(appName)", #selector(NSApplication.hide(_:)), "h"),
             item("Hide Others", #selector(NSApplication.hideOtherApplications(_:)), "h", [.command, .option]),
@@ -25,7 +36,10 @@ enum AppMenu {
             // Same door as the popover's Quit link: closing the window leaves Live and any
             // recording running, quitting does not.
             item("Quit \(appName)", #selector(NSApplication.terminate(_:)), "q")
-        ]))
+        ]
+
+        let mainMenu = NSMenu()
+        mainMenu.addItem(submenu(titled: appName, items: appItems))
 
         mainMenu.addItem(submenu(titled: "Edit", items: [
             item("Undo", Selector(("undo:")), "z"),
@@ -38,17 +52,15 @@ enum AppMenu {
             item("Select All", #selector(NSText.selectAll(_:)), "a")
         ]))
 
-        let windowMenu = submenu(titled: "Window", items: [
+        mainMenu.addItem(submenu(titled: "Window", items: [
             item("Minimize", #selector(NSWindow.performMiniaturize(_:)), "m"),
             item("Zoom", #selector(NSWindow.performZoom(_:))),
             .separator(),
             item("Close", #selector(NSWindow.performClose(_:)), "w"),
             item("Bring All to Front", #selector(NSApplication.arrangeInFront(_:)))
-        ])
-        mainMenu.addItem(windowMenu)
+        ]))
 
-        app.mainMenu = mainMenu
-        app.windowsMenu = windowMenu.submenu
+        return mainMenu
     }
 
     private static func submenu(titled title: String, items: [NSMenuItem]) -> NSMenuItem {
