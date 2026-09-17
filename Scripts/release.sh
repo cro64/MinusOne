@@ -44,6 +44,17 @@ if [[ "$DOWNLOAD_BASE" != https://* && "$ALLOW_LOCAL" != "--local" ]]; then
   exit 1
 fi
 
+ZIP_NAME="MinusOne-v$VERSION-macos.zip"
+ZIP="$BUILD_DIR/$ZIP_NAME"
+DMG="$BUILD_DIR/MinusOne-v$VERSION-macos.dmg"
+APPCAST="$BUILD_DIR/appcast.xml"
+
+# A run that aborts after rebuilding the zip but before writing the appcast can otherwise leave
+# behind an old appcast.xml that still describes a previous zip — its signature and length no
+# longer match, and nothing downstream notices until an installed copy fails to update. Clear
+# both this run's outputs up front so a partial run can never leave a stale mismatched pair.
+rm -f "$ZIP" "$APPCAST"
+
 "$ROOT_DIR/Scripts/build-app.sh" release
 if [[ ! -x "$SIGN_UPDATE" ]]; then
   echo "Missing $SIGN_UPDATE (Sparkle's tools come with swift build)." >&2
@@ -51,12 +62,6 @@ if [[ ! -x "$SIGN_UPDATE" ]]; then
 fi
 "$ROOT_DIR/Scripts/package-dmg.sh"
 
-ZIP_NAME="MinusOne-v$VERSION-macos.zip"
-ZIP="$BUILD_DIR/$ZIP_NAME"
-DMG="$BUILD_DIR/MinusOne-v$VERSION-macos.dmg"
-APPCAST="$BUILD_DIR/appcast.xml"
-
-rm -f "$ZIP"
 ditto -c -k --sequesterRsrc --keepParent "$BUILD_DIR/MinusOne.app" "$ZIP"
 
 # Prints: sparkle:edSignature="…" length="…"
@@ -89,6 +94,11 @@ EOF
 
 xmllint --noout "$APPCAST"
 
+SU_PUBLIC_ED_KEY="$($PB -c 'Print :SUPublicEDKey' "$PLIST")"
+"$ROOT_DIR/Scripts/verify-appcast.sh" "$APPCAST" "$ZIP" "$SU_PUBLIC_ED_KEY"
+
+echo
+echo "Verified: appcast signature and length match the zip."
 echo
 echo "Attach all three to the GitHub release v$VERSION:"
 ls -lh "$DMG" "$ZIP" "$APPCAST"
