@@ -63,7 +63,13 @@ for _ in $(seq 1 20); do
 done
 
 # Classic Finder window: app on the left, Applications on the right.
-osascript <<EOF
+# Finder's AppleScript layout step is flaky (e.g. "Can't set toolbar visible of container
+# window... (-10006)"), and a plain re-run usually succeeds, so retry it a few times before
+# giving up. Producing a dmg without its layout is worse than a slower build, so a run that
+# exhausts all attempts must fail loudly rather than continue.
+LAYOUT_OK=false
+for attempt in 1 2 3; do
+  if osascript <<EOF
 tell application "Finder"
   tell disk "$VOL_NAME"
     open
@@ -82,6 +88,31 @@ tell application "Finder"
   end tell
 end tell
 EOF
+  then
+    LAYOUT_OK=true
+    break
+  fi
+
+  if [[ "$attempt" -lt 3 ]]; then
+    echo "Finder layout failed (attempt $attempt/3), retrying…" >&2
+    sleep 2
+    # Make sure the volume is still mounted before the next attempt.
+    if [[ ! -d "$VOLUME" ]]; then
+      hdiutil attach -readwrite -noverify -noautoopen "$RW_DMG" >/dev/null
+      for _ in $(seq 1 20); do
+        if [[ -d "$VOLUME/MinusOne.app" ]]; then
+          break
+        fi
+        sleep 0.25
+      done
+    fi
+  fi
+done
+
+if [[ "$LAYOUT_OK" != true ]]; then
+  echo "Finder layout failed after 3 attempts; not producing a dmg without its layout." >&2
+  exit 1
+fi
 
 sync
 hdiutil detach "$VOLUME" -quiet
