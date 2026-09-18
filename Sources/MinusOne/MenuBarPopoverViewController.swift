@@ -11,6 +11,9 @@ final class MenuBarPopoverViewController: NSViewController {
     private let liveToggle = ToggleSwitchView()
     private let recordToggle = ToggleSwitchView()
     private var contentStack: NSStackView?
+    private var footerStack: NSStackView?
+    private var updateButton: NSButton?
+    private var pendingUpdateVersion: String?
 
     private var currentStatus: AudioEngineStatus = .idle
     private var isFilterActive = false
@@ -20,6 +23,7 @@ final class MenuBarPopoverViewController: NSViewController {
     var onToggleRecord: (() -> Void)?
     var onOpenWindow: (() -> Void)?
     var onQuit: (() -> Void)?
+    var onUpdateClicked: (() -> Void)?
     var onPreferredSizeChange: ((NSSize) -> Void)?
 
     override func loadView() {
@@ -59,7 +63,11 @@ final class MenuBarPopoverViewController: NSViewController {
 
         let topSeparator = PopoverUI.nativeSeparator()
         let footerSeparator = PopoverUI.nativeSeparator()
-        let footer = Layout.verticalStack([footerSeparator, openButton, quitButton], spacing: PopoverUI.Metrics.rowSpacing)
+        // Hidden until an update is waiting; the stack drops hidden views from layout.
+        let updateButton = PopoverUI.nativeLinkButton(title: "", target: self, action: #selector(updateClicked))
+        self.updateButton = updateButton
+        let footer = Layout.verticalStack([footerSeparator, updateButton, openButton, quitButton], spacing: PopoverUI.Metrics.rowSpacing)
+        footerStack = footer
         footer.alignment = .leading
 
         let sections: [NSView] = [statusHeaderContainer, topSeparator, toggleRows, footer]
@@ -88,9 +96,11 @@ final class MenuBarPopoverViewController: NSViewController {
             recordRow.widthAnchor.constraint(equalTo: toggleRows.widthAnchor),
             footer.widthAnchor.constraint(equalTo: content.widthAnchor),
             footerSeparator.widthAnchor.constraint(equalTo: footer.widthAnchor),
+            updateButton.widthAnchor.constraint(equalTo: footer.widthAnchor),
             openButton.widthAnchor.constraint(equalTo: footer.widthAnchor),
             quitButton.widthAnchor.constraint(equalTo: footer.widthAnchor)
         ])
+        applyPendingUpdate()
     }
 
     func sizeToFitContent() {
@@ -120,6 +130,22 @@ final class MenuBarPopoverViewController: NSViewController {
         setSwitchState(recordToggle, on: isRecording)
     }
 
+    /// Shows "Update to <version>…" above Open MinusOne…, or hides it for nil.
+    func setPendingUpdateVersion(_ version: String?) {
+        guard version != pendingUpdateVersion else { return }
+        pendingUpdateVersion = version
+        applyPendingUpdate()
+        if contentStack != nil {
+            sizeToFitContent()
+        }
+    }
+
+    private func applyPendingUpdate() {
+        guard let updateButton else { return }
+        updateButton.title = pendingUpdateVersion.map { "Update to \($0)…" } ?? ""
+        updateButton.isHidden = pendingUpdateVersion == nil
+    }
+
     private func setSwitchState(_ toggle: ToggleSwitchView, on: Bool) {
         guard toggle.isOn != on else { return }
         toggle.isOn = on
@@ -139,5 +165,22 @@ final class MenuBarPopoverViewController: NSViewController {
 
     @objc private func quit() {
         onQuit?()
+    }
+
+    @objc private func updateClicked() {
+        onUpdateClicked?()
+    }
+
+    // MARK: - Testing
+
+    var footerTitlesForTesting: [String] {
+        footerStack?.arrangedSubviews
+            .compactMap { $0 as? NSButton }
+            .filter { !$0.isHidden }
+            .map(\.title) ?? []
+    }
+
+    func simulateUpdateClickForTesting() {
+        updateClicked()
     }
 }
