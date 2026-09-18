@@ -158,7 +158,7 @@ final class StatusHeaderView: NSView {
         case .warmingUp:
             let suffix: String
             if let warmupRemainingSeconds, warmupRemainingSeconds > 0 {
-                suffix = " (~\(Int(warmupRemainingSeconds.rounded(.up)))s)"
+                suffix = " (\(Int(warmupRemainingSeconds.rounded(.up)))s)"
             } else {
                 suffix = ""
             }
@@ -172,7 +172,12 @@ final class StatusHeaderView: NSView {
         case .permissionRequired(.systemAudioRecording):
             return ("Permission needed", .systemOrange, nil, "System Audio Recording permission required")
         case .error(let message):
-            return ("Error", .systemRed, message, "Reduction stopped — an error occurred")
+            // The title already says "Error" (red) — `tooltipDetail` used to repeat that generically
+            // ("Reduction stopped — an error occurred") and hide the actual, often actionable reason
+            // (e.g. "No selected apps are currently playing audio...") behind the header's small
+            // info-button popover. Surfacing the real message directly in the meter caption/tooltip
+            // means the user doesn't have to go hunting for why it failed.
+            return ("Error", .systemRed, message, message)
         case .passthrough, .idle:
             return ("Off", .tertiaryLabelColor, nil, "Ready — system audio passthrough")
         }

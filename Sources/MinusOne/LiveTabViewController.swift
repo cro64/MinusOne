@@ -113,7 +113,7 @@ final class LiveTabViewController: NSViewController {
         levelMeter.append(levels: audioEngine.liveLevels, stemLevels: audioEngine.liveStemLevels)
         levelMeter.caption = meterCaption()
         // The big status title only otherwise refreshes on engine status *changes* — without this,
-        // "Warming up (~20s)" would paint once and then freeze at that same number for the whole
+        // "Warming up (20s)" would paint once and then freeze at that same number for the whole
         // wait instead of counting down. Reuses this already-running 25Hz timer rather than adding
         // a second one.
         if case .warmingUp = currentStatus {

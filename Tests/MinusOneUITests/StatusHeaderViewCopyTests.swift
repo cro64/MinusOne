@@ -2,11 +2,14 @@ import XCTest
 @testable import MinusOne
 
 final class StatusHeaderViewCopyTests: XCTestCase {
-    func testErrorCopyMentionsAnErrorNotJustStopped() {
-        let copy = StatusHeaderView.copy(for: .error("boom"), isFilterActive: false)
+    /// The title alone ("Error", red) doesn't say *why* — the detail has to carry the actual,
+    /// often actionable failure message (e.g. "No selected apps are currently playing audio..."),
+    /// not a generic "an error occurred" that hides it behind the info-button popover.
+    func testErrorCopySurfacesTheActualFailureReason() {
+        let copy = StatusHeaderView.copy(for: .error("No selected apps are currently playing audio."), isFilterActive: false)
         XCTAssertEqual(copy.title, "Error")
-        XCTAssertTrue(copy.tooltipDetail.lowercased().contains("error"))
-        XCTAssertEqual(copy.errorDetail, "boom")
+        XCTAssertEqual(copy.tooltipDetail, "No selected apps are currently playing audio.")
+        XCTAssertEqual(copy.errorDetail, "No selected apps are currently playing audio.")
     }
 
     func testActiveIsOnWhenFilterIsActive() {

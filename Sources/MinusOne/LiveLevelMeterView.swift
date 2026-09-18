@@ -132,7 +132,11 @@ final class LiveLevelMeterView: NSView {
         super.draw(dirtyRect)
 
         let midY = bounds.midY
-        drawBaseline(atY: midY)
+        // Skipped while a caption is showing — the caption text is centered at this same y, so the
+        // line would run straight through it (the legend already skips itself for the same reason).
+        if caption == nil {
+            drawBaseline(atY: midY)
+        }
 
         if samples.count >= 2 {
             // Dry first, as a translucent backdrop wash — the wet bars paint inside it, and the
