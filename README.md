@@ -99,7 +99,7 @@ Open the main window and choose the **Live** tab to change its settings.
 Things to know:
 
 - Audio plays about 10 seconds behind while Live is on.
-- Live warms up again after a track changes.
+- Live warms up once when you turn it on, then keeps running smoothly across track changes and pauses.
 
 ### Permissions
 
