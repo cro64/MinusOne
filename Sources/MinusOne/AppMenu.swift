@@ -2,14 +2,15 @@ import AppKit
 
 /// The application's main menu.
 ///
-/// MinusOne is an `LSUIElement` app that started life as a menu bar popover, so it never had one —
-/// and without a main menu **no standard editing shortcut works anywhere in the app**: ⌘A, ⌘C, ⌘V,
-/// ⌘X and ⌘Z are not built into `NSTextView`, they are key equivalents that `NSApplication`
-/// resolves against `mainMenu` before the event ever reaches the first responder. That is why
-/// Select All did nothing while renaming a clip.
+/// MinusOne started life as an `LSUIElement` menu bar popover with no main menu, and without one
+/// **no standard editing shortcut works anywhere in the app**: ⌘A, ⌘C, ⌘V, ⌘X and ⌘Z are not built
+/// into `NSTextView`, they are key equivalents that `NSApplication` resolves against `mainMenu`
+/// before the event ever reaches the first responder. That is why Select All did nothing while
+/// renaming a clip.
 ///
-/// The menu bar itself only appears while the window is open (`AppDelegate` flips the activation
-/// policy to `.regular` for that), which is also the only time these commands have anywhere to go.
+/// MinusOne is now a regular app (Dock icon, Cmd-Tab entry) with the status item as a companion
+/// control, so this menu bar is present for the app's whole lifetime, not just while the main
+/// window is open.
 enum AppMenu {
     static func install(into app: NSApplication = .shared, updates: UpdateController? = nil) {
         let mainMenu = makeMainMenu(appName: ProcessInfo.processInfo.processName, updates: updates)

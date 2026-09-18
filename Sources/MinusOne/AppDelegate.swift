@@ -194,19 +194,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func openMainWindow(tab: MainWindowController.Tab) {
-        // Before the window is built, not after it. Switching an LSUIElement app from `.accessory`
-        // to `.regular` gives it a menu bar on every display, and a window that already existed
-        // when that switch happened can no longer composite menus on a *secondary* display: the
-        // menu is created at the right screen coordinates, fully opaque, and simply never put on
-        // screen (measured — `kCGWindowIsOnscreen` stays false on the layer-101 menu window while
-        // the identical click on the built-in display reports true). It is process-wide, so it
-        // takes out every menu in every window of the app, not just the one that was open — which
-        // is what made it look like a broken picker rather than a broken app state.
-        //
-        // Ordering the switch first is the whole fix; deferring the window by a run-loop turn is
-        // not enough, so this is about the window pre-dating the policy change rather than timing.
-        NSApp.setActivationPolicy(.regular)
-
         if mainWindowController == nil {
             let controller = MainWindowController(
                 preferences: preferences,
@@ -219,7 +206,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 controller.attachRecorder(clipRecorder)
             }
             controller.onWindowClosed = { [weak self] in
-                NSApp.setActivationPolicy(.accessory)
                 self?.mainWindowController = nil
             }
             mainWindowController = controller
@@ -230,6 +216,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
         terminationGuard.terminationReply { NSApp.reply(toApplicationShouldTerminate: true) }
+    }
+
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        if !flag {
+            openMainWindow(tab: .live)
+        }
+        return true
     }
 
     func applicationWillTerminate(_ notification: Notification) {

@@ -59,11 +59,14 @@ open /Applications/MinusOne.app
 
 ## Menu bar
 
+MinusOne is a regular app — it shows up in the Dock and Cmd-Tab — with a menu bar icon as a companion for quick access to Live and Record without opening the main window.
+
 | Action | Result |
 |---|---|
 | Click the icon | Opens the menu |
 | Right-click or Control-click the icon | Turns Live on or off |
 | ⌘⌥M | Turns Live on or off |
+| Click the Dock icon | Opens the main window |
 
 The menu has these items:
 

@@ -24,8 +24,6 @@
 	<string>7</string>
 	<key>LSMinimumSystemVersion</key>
 	<string>14.2</string>
-	<key>LSUIElement</key>
-	<true/>
 	<key>NSAudioCaptureUsageDescription</key>
 	<string>MinusOne captures system audio to reduce vocals in real time, and — only when you start a Practice Mode recording — to save a take for offline practice.</string>
 	<key>NSHighResolutionCapable</key>
