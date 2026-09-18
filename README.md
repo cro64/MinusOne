@@ -4,14 +4,14 @@
 
 # MinusOne
 
-MinusOne is a macOS menu bar app for practicing along with music.
+MinusOne is a macOS menu bar app that splits audio into stems — vocals, drums, bass, and other — in real time or from a saved clip.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 ![Platform](https://img.shields.io/badge/platform-macOS%2014.2%2B-lightgrey)
 
 It has two parts:
 
-- **Live** removes the vocals from any audio playing on your Mac.
+- **Live** splits whatever is playing on your Mac into stems and remixes them in real time, so you can mute vocals for karaoke or mix any combination.
 - **Practice** splits a song into vocals, drums, bass, and other, so you can mute, loop, and slow down each part.
 
 ## Contents
@@ -59,11 +59,14 @@ open /Applications/MinusOne.app
 
 ## Menu bar
 
+MinusOne is a regular app — it shows up in the Dock and Cmd-Tab — with a menu bar icon as a companion for quick access to Live and Record without opening the main window.
+
 | Action | Result |
 |---|---|
 | Click the icon | Opens the menu |
 | Right-click or Control-click the icon | Turns Live on or off |
 | ⌘⌥M | Turns Live on or off |
+| Click the Dock icon | Opens the main window |
 
 The menu has these items:
 
@@ -88,7 +91,7 @@ The menu has these items:
 
 ## Live
 
-Live separates whatever is playing on your Mac into vocals, drums, bass, and other, in real time. Nothing is recorded or saved.
+Live splits whatever is playing on your Mac into vocals, drums, bass, and other, in real time. Nothing is recorded or saved.
 
 Open the main window and choose the **Live** tab to change its settings.
 

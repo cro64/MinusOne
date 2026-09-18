@@ -27,9 +27,9 @@ enum HeaderChrome {
 /// two tabs' content. Live embeds `LiveTabViewController`, a full-width window-filling view (REDESIGN.md
 /// §3); Practice embeds the existing sidebar + deck split view, reused as-is per REDESIGN.md §1.
 ///
-/// Activation policy (REDESIGN.md §1): opening the window promotes the app to `.regular` with a
-/// Dock icon; closing (red traffic light / ⌘W) demotes back to `.accessory` without quitting —
-/// Live/Recording keep running. Only Quit in the menu bar popover fully quits.
+/// MinusOne is a regular app (Dock icon, Cmd-Tab entry) at all times; closing this window (red
+/// traffic light / ⌘W) hides it without quitting — Live/Recording keep running. Only Quit in the
+/// menu bar popover or the app menu fully quits.
 final class MainWindowController: NSWindowController, NSWindowDelegate {
     enum Tab: Int {
         case live = 0
