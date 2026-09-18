@@ -125,11 +125,28 @@ final class ClipLibraryStore {
         }
     }
 
+    /// Missing index file is a normal first launch and stays silent. A file that exists but
+    /// fails to decode is corruption, and starting from an empty library without logging it
+    /// would hide the fact that every clip just vanished from the sidebar.
     private static func loadIndex(at url: URL) -> [UUID: PracticeClip] {
-        guard let data = try? Data(contentsOf: url) else { return [:] }
+        let data: Data
+        do {
+            data = try Data(contentsOf: url)
+        } catch let error as CocoaError where error.code == .fileReadNoSuchFile {
+            return [:]
+        } catch {
+            AppLogger.shared.error("Failed to read Practice library index: \(error.localizedDescription)")
+            return [:]
+        }
+
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .iso8601
-        guard let clips = try? decoder.decode([PracticeClip].self, from: data) else { return [:] }
-        return Dictionary(uniqueKeysWithValues: clips.map { ($0.id, $0) })
+        do {
+            let clips = try decoder.decode([PracticeClip].self, from: data)
+            return Dictionary(uniqueKeysWithValues: clips.map { ($0.id, $0) })
+        } catch {
+            AppLogger.shared.error("Failed to decode Practice library index; starting from an empty library: \(error.localizedDescription)")
+            return [:]
+        }
     }
 }

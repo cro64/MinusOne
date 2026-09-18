@@ -80,19 +80,6 @@ final class RollingStereoBuffer {
         }
     }
 
-    func accumulate(
-        left inputLeft: UnsafePointer<Float>,
-        right inputRight: UnsafePointer<Float>,
-        frameCount: Int,
-        atAbsolutePosition startPosition: UInt64
-    ) {
-        for frame in 0..<frameCount {
-            let slot = Int(startPosition + UInt64(frame)) & mask
-            left[slot] += inputLeft[frame]
-            right[slot] += inputRight[frame]
-        }
-    }
-
     func overwrite(
         left inputLeft: UnsafePointer<Float>,
         right inputRight: UnsafePointer<Float>,

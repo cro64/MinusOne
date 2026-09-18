@@ -202,22 +202,6 @@ extension FlatButton {
     }
 }
 
-extension NSImage {
-    /// Copy with `points` of transparent space on the trailing edge — the only way to put a gap
-    /// between an `NSButton`'s icon and its title, since the cell offers no spacing knob.
-    /// `isTemplate` is carried over so SF Symbols keep taking their color from `contentTintColor`
-    /// rather than being flattened into the bitmap.
-    func withTrailingPadding(_ points: CGFloat) -> NSImage {
-        guard points > 0 else { return self }
-        let padded = NSImage(size: NSSize(width: size.width + points, height: size.height))
-        padded.lockFocus()
-        draw(in: NSRect(origin: .zero, size: size))
-        padded.unlockFocus()
-        padded.isTemplate = isTemplate
-        return padded
-    }
-}
-
 /// Layer-backed `NSButton` replacement for the native bezel styles (`.accessoryBar`,
 /// `.texturedRounded`, `.accessoryBarAction`, `.inline`) this file used to reach for — flat
 /// fill/border/text per REDESIGN's `.btn-primary`/`.btn-secondary`/`.btn-ghost`, `.btn`'s
