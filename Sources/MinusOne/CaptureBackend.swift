@@ -1,22 +1,14 @@
 import Foundation
 
+/// Process Tap is the only capture backend — BlackHole (the old macOS 14.0/14.1 fallback) was
+/// dropped once the app's minimum system version became 14.2, which is Process Tap's own
+/// requirement. Kept as a named type rather than collapsing `activeCaptureBackend` to a `Bool`:
+/// it still reads naturally at its call sites (`MenuBarController`'s tooltip suffix) and leaves
+/// room if a future capture backend is ever added.
 enum CaptureBackend: Int {
     case processTap = 0
-    case blackHole = 1
-
-    static var preferred: CaptureBackend {
-        if #available(macOS 14.2, *) {
-            return .processTap
-        }
-        return .blackHole
-    }
 
     var displayName: String {
-        switch self {
-        case .processTap:
-            return "Process Tap"
-        case .blackHole:
-            return "BlackHole"
-        }
+        "Process Tap"
     }
 }

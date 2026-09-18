@@ -39,7 +39,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if #available(macOS 14.2, *) {
             ProcessTapSession.destroyStaleAggregates()
         }
-        audioEngine.recoverOrphanedBlackHoleIfNeeded()
 
         menuBarController = MenuBarController(
             preferences: preferences,
@@ -122,7 +121,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         configureUpdates()
 
-        restoreSessionIfNeeded()
+        // Deliberately no auto-restore of Live's on/off state here — it used to silently restart
+        // capture + reduction 150ms after every launch if Live was on at last quit, which read as
+        // "Live turns itself on" with no visible cause. Live always starts off now.
 
         practiceImportService.resumeUnfinishedSeparations(
             onProgress: { [weak self] clip in self?.mainWindowController?.clipImported(clip) },
@@ -225,17 +226,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         mainWindowController?.show(tab: tab)
         mainWindowController?.updateLiveStatus(audioEngine.status, isFilterActive: audioEngine.isVocalReductionActive)
-    }
-
-    private func restoreSessionIfNeeded() {
-        guard preferences.lastReductionEnabled else { return }
-
-        audioEngine.start { [weak self] success in
-            guard let self, success else { return }
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) { [weak self] in
-                self?.audioEngine.enableReduction()
-            }
-        }
     }
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {

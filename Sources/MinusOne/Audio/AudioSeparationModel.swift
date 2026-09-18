@@ -1,10 +1,5 @@
 import Foundation
 
-struct SeparationResult {
-    let instrumentalLeft: [Float]
-    let instrumentalRight: [Float]
-}
-
 /// Individual Demucs source stems (dexxdean CoreML tensor order: vocals, drums, bass, other).
 enum SeparationStem: String, CaseIterable {
     case vocals
@@ -33,14 +28,8 @@ protocol AudioSeparationModel: AnyObject {
     var modelSampleRate: Double { get }
     var preferredWindowSeconds: Double { get }
 
-    func separate(
-        left: UnsafePointer<Float>,
-        right: UnsafePointer<Float>,
-        frameCount: Int,
-        sampleRate: Double
-    ) throws -> SeparationResult
-
-    /// Full per-stem separation (no summing) for offline/full-quality use — Practice Mode.
+    /// Full per-stem separation (no summing) — the only separation entry point now that Live mode
+    /// carries all 4 stems through instead of pre-summing 3 of them into "instrumental".
     func separateAllStems(
         left: UnsafePointer<Float>,
         right: UnsafePointer<Float>,

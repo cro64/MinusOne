@@ -85,10 +85,6 @@ enum CoreAudioDevices {
         allDevices().filter { $0.isInputCapable && !$0.isBlackHole }
     }
 
-    static func blackHoleDevice() -> AudioDevice? {
-        allDevices().first { $0.isBlackHole }
-    }
-
     static func logDeviceSnapshot(reason: String) {
         let devices = allDevices()
         AppLogger.shared.info("CoreAudio device snapshot (\(reason)): \(devices.count) devices")

@@ -11,6 +11,11 @@ final class MenuBarController: NSObject {
 
     private var currentStatus: AudioEngineStatus = .idle
     private var isFilterActive = false
+    /// Drives the warming-up spinner icon. Only runs while `currentStatus == .warmingUp` — started
+    /// and stopped from `updateIcon()`, the one place that already decides what state the icon is
+    /// in, mirroring `LiveTabViewController.startMeter()`/`stopMeter()`'s guarded start/stop.
+    private var spinnerTimer: Timer?
+    private var spinnerFrame = 0
     /// Mirrors the shared recorder's state rather than owning it. Kept as a plain stored bool
     /// because `updateIcon()` reads it and isn't gated on macOS 14.2; `AppDelegate` pushes every
     /// change here through `updateRecordingState(_:)`, including recordings the window started.
@@ -51,23 +56,37 @@ final class MenuBarController: NSObject {
             DistributedNotificationCenter.default.removeObserver(appearanceObserver)
         }
         stopDismissMonitors()
+        spinnerTimer?.invalidate()
     }
 
     func updateStatus(_ status: AudioEngineStatus) {
         currentStatus = status
         isFilterActive = audioEngine.isVocalReductionActive
-        if let button = statusItem.button, !isRecording {
-            var text = status.displayText
-            if let backend = audioEngine.activeCaptureBackend {
-                text += " — \(backend.displayName)"
-            }
-            if pendingUpdateVersion != nil {
-                text += " — update available"
-            }
-            button.toolTip = text
-        }
+        updateTooltip()
         updateIcon()
         settingsViewController.updateStatusDisplay(status, isFilterActive: isFilterActive)
+    }
+
+    /// The same canonical status copy the Live tab and popover use (`StatusHeaderView.copy`), plus
+    /// the active capture backend — previously `AudioEngineStatus.displayText`, a second hand-written
+    /// copy that had drifted (e.g. always claiming "reducing vocals" for `.active` regardless of
+    /// whether reduction was actually on). Re-invoked on every spinner tick too, so the countdown
+    /// here always matches the one ticking on the Live tab.
+    private func updateTooltip() {
+        guard let button = statusItem.button, !isRecording else { return }
+        let copy = StatusHeaderView.copy(
+            for: currentStatus,
+            isFilterActive: isFilterActive,
+            warmupRemainingSeconds: audioEngine.warmupRemainingSeconds
+        )
+        var text = copy.tooltipDetail
+        if let backend = audioEngine.activeCaptureBackend {
+            text += " — \(backend.displayName)"
+        }
+        if pendingUpdateVersion != nil {
+            text += " — update available"
+        }
+        button.toolTip = text
     }
 
     // MARK: - Record toggle
@@ -237,38 +256,69 @@ final class MenuBarController: NSObject {
 
         if isRecording {
             // Solid coral dot always wins over whatever Live is doing underneath (REDESIGN.md §2).
+            stopSpinnerTimer()
             button.image = MinusOneIcon.recordingDot(size: size)
             button.toolTip = "Recording — \(liveStatusPhrase())"
             button.contentTintColor = nil
             return
         }
 
-        let color: NSColor
-        let usesTemplate: Bool
+        guard case .warmingUp = currentStatus else {
+            stopSpinnerTimer()
+            let color: NSColor
+            let usesTemplate: Bool
 
-        if case .error = currentStatus {
-            color = .systemRed
-            usesTemplate = false
-        } else if case .permissionRequired = currentStatus {
-            color = .systemOrange
-            usesTemplate = false
-        } else if case .warmingUp = currentStatus {
-            color = .systemCyan
-            usesTemplate = false
-        } else if isFilterActive {
-            color = .brandAccent
-            usesTemplate = false
-        } else {
-            // Black mask + template → AppKit tints for light/dark menu bar.
-            color = .black
-            usesTemplate = true
+            if case .error = currentStatus {
+                color = .systemRed
+                usesTemplate = false
+            } else if case .permissionRequired = currentStatus {
+                color = .systemOrange
+                usesTemplate = false
+            } else if isFilterActive {
+                color = .brandAccent
+                usesTemplate = false
+            } else {
+                // Black mask + template → AppKit tints for light/dark menu bar.
+                color = .black
+                usesTemplate = true
+            }
+
+            // The recording dot above wins outright, so a waiting update only badges the waveform —
+            // the spinner (below, for `.warmingUp`) doesn't carry a badge; that's a separate glyph
+            // this merge didn't extend to, not an oversight to "fix" here.
+            let image = MinusOneIcon.waveform(size: size, color: color, isActive: isFilterActive, showsBadge: pendingUpdateVersion != nil)
+            image.isTemplate = usesTemplate
+            button.image = image
+            button.contentTintColor = nil
+            return
         }
 
-        // The recording dot above wins outright, so a waiting update only badges the waveform.
-        let image = MinusOneIcon.waveform(size: size, color: color, isActive: isFilterActive, showsBadge: pendingUpdateVersion != nil)
-        image.isTemplate = usesTemplate
-        button.image = image
+        startSpinnerTimerIfNeeded()
+        button.image = MinusOneIcon.warmingUpSpinner(size: size, color: .systemCyan, frame: spinnerFrame)
         button.contentTintColor = nil
+    }
+
+    // MARK: - Warming-up spinner
+
+    private func startSpinnerTimerIfNeeded() {
+        guard spinnerTimer == nil else { return }
+        let timer = Timer(timeInterval: 0.1, repeats: true) { [weak self] _ in
+            self?.advanceSpinnerFrame()
+        }
+        RunLoop.main.add(timer, forMode: .common)
+        spinnerTimer = timer
+    }
+
+    private func stopSpinnerTimer() {
+        spinnerTimer?.invalidate()
+        spinnerTimer = nil
+        spinnerFrame = 0
+    }
+
+    private func advanceSpinnerFrame() {
+        spinnerFrame += 1
+        updateTooltip()
+        updateIcon()
     }
 
     private func liveStatusPhrase() -> String {

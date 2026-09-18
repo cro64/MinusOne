@@ -11,14 +11,11 @@ final class CoreMLSeparationModel: AudioSeparationModel {
 
     private let model: MLModel
     private let windowSampleCount: Int
-    private let instrumentalStemIndices: [Int]
     private let inputArray: MLMultiArray
     private let inputLeftPtr: UnsafeMutablePointer<Float>
     private let inputRightPtr: UnsafeMutablePointer<Float>
     private let modelLeftScratch: UnsafeMutablePointer<Float>
     private let modelRightScratch: UnsafeMutablePointer<Float>
-    private let instrumentalLeftScratch: UnsafeMutablePointer<Float>
-    private let instrumentalRightScratch: UnsafeMutablePointer<Float>
 
     init(variant: SeparationModelVariant, captureSampleRate: Double = 48_000) throws {
         self.variant = variant
@@ -45,17 +42,10 @@ final class CoreMLSeparationModel: AudioSeparationModel {
         if let sources = model.modelDescription.outputDescriptionsByName["sources"]?
             .multiArrayConstraint,
            sources.shape.count >= 2 {
-            let outputStemCount = sources.shape[1].intValue
-            instrumentalStemIndices = Self.resolveInstrumentalIndices(
-                variant: variant,
-                outputStemCount: outputStemCount
-            )
             let outputShape = sources.shape.map(\.stringValue).joined(separator: "×")
             AppLogger.shared.info(
                 "CoreML sources output: shape=\(outputShape) dtype=\(sources.dataType.rawValue)"
             )
-        } else {
-            instrumentalStemIndices = variant.instrumentalStemIndices
         }
 
         inputArray = try MLMultiArray(shape: [1, 2, NSNumber(value: windowSampleCount)], dataType: .float32)
@@ -65,62 +55,23 @@ final class CoreMLSeparationModel: AudioSeparationModel {
 
         modelLeftScratch = UnsafeMutablePointer<Float>.allocate(capacity: windowSampleCount)
         modelRightScratch = UnsafeMutablePointer<Float>.allocate(capacity: windowSampleCount)
-        instrumentalLeftScratch = UnsafeMutablePointer<Float>.allocate(capacity: windowSampleCount)
-        instrumentalRightScratch = UnsafeMutablePointer<Float>.allocate(capacity: windowSampleCount)
         modelLeftScratch.initialize(repeating: 0, count: windowSampleCount)
         modelRightScratch.initialize(repeating: 0, count: windowSampleCount)
-        instrumentalLeftScratch.initialize(repeating: 0, count: windowSampleCount)
-        instrumentalRightScratch.initialize(repeating: 0, count: windowSampleCount)
 
         AppLogger.shared.info(
-            "CoreML \(variant.rawValue) loaded from \(modelURL.path), window=\(windowSampleCount) samples (~\(String(format: "%.1f", preferredWindowSeconds)) s), stems=\(instrumentalStemIndices.count + 1), resample=\(needsResample)"
+            "CoreML \(variant.rawValue) loaded from \(modelURL.path), window=\(windowSampleCount) samples (~\(String(format: "%.1f", preferredWindowSeconds)) s), resample=\(needsResample)"
         )
     }
 
     deinit {
         modelLeftScratch.deinitialize(count: windowSampleCount)
         modelRightScratch.deinitialize(count: windowSampleCount)
-        instrumentalLeftScratch.deinitialize(count: windowSampleCount)
-        instrumentalRightScratch.deinitialize(count: windowSampleCount)
         modelLeftScratch.deallocate()
         modelRightScratch.deallocate()
-        instrumentalLeftScratch.deallocate()
-        instrumentalRightScratch.deallocate()
     }
 
-    func separate(
-        left: UnsafePointer<Float>,
-        right: UnsafePointer<Float>,
-        frameCount: Int,
-        sampleRate: Double
-    ) throws -> SeparationResult {
-        let captureCount = frameCount
-        let sources = try runModel(left: left, right: right, frameCount: captureCount, sampleRate: sampleRate)
-
-        sumInstrumentalStems(from: sources)
-
-        if abs(sampleRate - modelSampleRate) < 1, captureCount == windowSampleCount {
-            return SeparationResult(
-                instrumentalLeft: Array(UnsafeBufferPointer(start: instrumentalLeftScratch, count: windowSampleCount)),
-                instrumentalRight: Array(UnsafeBufferPointer(start: instrumentalRightScratch, count: windowSampleCount))
-            )
-        }
-
-        return SeparationResult(
-            instrumentalLeft: resampleFromScratch(
-                instrumentalLeftScratch,
-                sourceCount: windowSampleCount,
-                targetCount: captureCount
-            ),
-            instrumentalRight: resampleFromScratch(
-                instrumentalRightScratch,
-                sourceCount: windowSampleCount,
-                targetCount: captureCount
-            )
-        )
-    }
-
-    /// Full per-stem separation (no summing) — used by Practice Mode's offline path.
+    /// Full per-stem separation (no summing) — the only separation entry point now that Live mode
+    /// carries all 4 stems through instead of pre-summing 3 of them into "instrumental".
     func separateAllStems(
         left: UnsafePointer<Float>,
         right: UnsafePointer<Float>,
@@ -290,18 +241,6 @@ final class CoreMLSeparationModel: AudioSeparationModel {
         return output
     }
 
-    private func sumInstrumentalStems(from sources: MLMultiArray) {
-        instrumentalLeftScratch.update(repeating: 0, count: windowSampleCount)
-        instrumentalRightScratch.update(repeating: 0, count: windowSampleCount)
-
-        // FP16 models (HTDemucs_CoreML_FP16) output float16 — vDSP on a Float* view overruns the buffer.
-        if sources.dataType == .float32, let layout = StemTensorLayout(sources: sources) {
-            sumInstrumentalStemsFloat32(from: sources, layout: layout)
-        } else {
-            sumInstrumentalStemsScalar(from: sources)
-        }
-    }
-
     /// Packed `[1, stems, 2, samples]` float32 layout only.
     private struct StemTensorLayout {
         let stemCount: Int
@@ -330,46 +269,6 @@ final class CoreMLSeparationModel: AudioSeparationModel {
         }
     }
 
-    private func sumInstrumentalStemsFloat32(from sources: MLMultiArray, layout: StemTensorLayout) {
-        let sampleCount = min(windowSampleCount, layout.sampleCount)
-        let base = sources.dataPointer.assumingMemoryBound(to: Float.self)
-
-        for stemIndex in instrumentalStemIndices where stemIndex < layout.stemCount {
-            let stemOffset = stemIndex * layout.stemStride
-            let leftStem = base.advanced(by: stemOffset)
-            let rightStem = leftStem.advanced(by: layout.channelStride)
-            vDSP_vadd(leftStem, 1, instrumentalLeftScratch, 1, instrumentalLeftScratch, 1, vDSP_Length(sampleCount))
-            vDSP_vadd(rightStem, 1, instrumentalRightScratch, 1, instrumentalRightScratch, 1, vDSP_Length(sampleCount))
-        }
-    }
-
-    private func sumInstrumentalStemsScalar(from sources: MLMultiArray) {
-        let shape = sources.shape.map(\.intValue)
-        let strides = sources.strides.map(\.intValue)
-        let sampleCount = resolvedSampleCount(shape: shape)
-
-        if sources.dataType == .float16, shape.count == 4, strides.count == 4 {
-            let base = sources.dataPointer.assumingMemoryBound(to: Float16.self)
-            for stemIndex in instrumentalStemIndices {
-                guard stemIndex < shape[1] else { continue }
-                for sample in 0..<sampleCount {
-                    let leftIndex = tensorOffset(strides: strides, stem: stemIndex, channel: 0, sample: sample)
-                    let rightIndex = tensorOffset(strides: strides, stem: stemIndex, channel: 1, sample: sample)
-                    instrumentalLeftScratch[sample] += Float(base[leftIndex])
-                    instrumentalRightScratch[sample] += Float(base[rightIndex])
-                }
-            }
-            return
-        }
-
-        for stemIndex in instrumentalStemIndices {
-            for sample in 0..<sampleCount {
-                instrumentalLeftScratch[sample] += sources[[0, NSNumber(value: stemIndex), 0, NSNumber(value: sample)]].floatValue
-                instrumentalRightScratch[sample] += sources[[0, NSNumber(value: stemIndex), 1, NSNumber(value: sample)]].floatValue
-            }
-        }
-    }
-
     private func resolvedSampleCount(shape: [Int]) -> Int {
         guard shape.count == 4 else { return windowSampleCount }
         if shape[2] == 2 {
@@ -383,18 +282,6 @@ final class CoreMLSeparationModel: AudioSeparationModel {
 
     private func tensorOffset(strides: [Int], stem: Int, channel: Int, sample: Int) -> Int {
         stem * strides[1] + channel * strides[2] + sample * strides[3]
-    }
-
-    private static func resolveInstrumentalIndices(
-        variant: SeparationModelVariant,
-        outputStemCount: Int
-    ) -> [Int] {
-        switch outputStemCount {
-        case 4:
-            return [1, 2, 3]
-        default:
-            return variant.instrumentalStemIndices
-        }
     }
 
     private static func resolveModelURL(for variant: SeparationModelVariant) throws -> URL {

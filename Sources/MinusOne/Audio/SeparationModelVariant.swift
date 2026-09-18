@@ -43,10 +43,6 @@ enum SeparationModelVariant: String, CaseIterable, Codable, Identifiable {
     static let legacyBalancedPackage = "HTDemucs_CoreML.mlpackage"
     static let legacyBalancedCompiled = "HTDemucs_CoreML.mlmodelc"
 
-    /// Stem indices to sum for instrumental output (CoreML `sources` tensor, vocals excluded).
-    /// dexxdean CoreML order: vocals, drums, bass, other
-    var instrumentalStemIndices: [Int] { [1, 2, 3] }
-
     static func fromPersisted(_ raw: String) -> SeparationModelVariant? {
         if let variant = SeparationModelVariant(rawValue: raw) {
             return variant

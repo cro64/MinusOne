@@ -7,7 +7,7 @@
 MinusOne is a macOS menu bar app for practicing along with music.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-![Platform](https://img.shields.io/badge/platform-macOS%2014%2B-lightgrey)
+![Platform](https://img.shields.io/badge/platform-macOS%2014.2%2B-lightgrey)
 
 It has two parts:
 
@@ -28,10 +28,8 @@ It has two parts:
 
 ## Requirements
 
-- macOS 14 or later.
-- macOS 14.2 or later to record system audio or choose which apps Live affects.
+- macOS 14.2 or later.
 - The Demucs model (about 200 MB), downloaded on first launch.
-- [BlackHole 2ch](https://existential.audio/blackhole/), only on macOS versions before 14.2.
 
 ## Install
 
@@ -90,13 +88,13 @@ The menu has these items:
 
 ## Live
 
-Live removes vocals from whatever is playing on your Mac. Nothing is recorded or saved.
+Live separates whatever is playing on your Mac into vocals, drums, bass, and other, in real time. Nothing is recorded or saved.
 
 Open the main window and choose the **Live** tab to change its settings.
 
 | Setting | What it does |
 |---|---|
-| **Intensity** | How much of the vocals to remove, from 0 to 100% |
+| **Vocals / Drums / Bass / Other** | A fader + mute toggle per stem — mute vocals for the classic karaoke effect, or mix any combination. Cmd-click a mute toggle to isolate that stem. |
 | **Gain** | Makes the result louder, from 0 to 12 dB (default 4.5 dB) |
 | **Scope** | **All Apps**, or **Custom** for only the apps you pick |
 | **Capture** | The list of apps to process when Scope is Custom |
@@ -104,15 +102,11 @@ Open the main window and choose the **Live** tab to change its settings.
 Things to know:
 
 - Audio plays about 10 seconds behind while Live is on.
-- Live warms up again after a track changes.
-- Custom scope needs macOS 14.2 or later.
+- Live warms up once when you turn it on, then keeps running smoothly across track changes and pauses.
 
 ### Permissions
 
-| Setup | Permission to grant |
-|---|---|
-| macOS 14.2 or later | System Audio Recording |
-| BlackHole | Microphone |
+Grant **System Audio Recording** when macOS asks for it.
 
 ## Practice
 
