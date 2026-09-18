@@ -85,21 +85,6 @@ enum CoreAudioDevices {
         allDevices().filter { $0.isInputCapable && !$0.isBlackHole }
     }
 
-    static func logDeviceSnapshot(reason: String) {
-        let devices = allDevices()
-        AppLogger.shared.info("CoreAudio device snapshot (\(reason)): \(devices.count) devices")
-
-        if devices.isEmpty {
-            AppLogger.shared.error("CoreAudio returned zero devices. This usually means the app is not seeing the user audio session or coreaudiod needs a restart.")
-        }
-
-        for device in devices {
-            AppLogger.shared.info(
-                "Device id=\(device.id) name=\"\(device.name)\" uid=\"\(device.uid)\" input=\(device.inputChannelCount) output=\(device.outputChannelCount)"
-            )
-        }
-    }
-
     static func device(withUID uid: String) -> AudioDevice? {
         allDevices().first { $0.uid == uid }
     }

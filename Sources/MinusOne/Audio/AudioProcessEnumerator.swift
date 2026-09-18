@@ -16,10 +16,6 @@ struct AudioClientProcess: Identifiable, Equatable, Hashable {
 enum AudioProcessEnumerator {
     static let ownBundleID = "com.minusone.app"
 
-    static func runningOutputProcesses() -> [AudioClientProcess] {
-        deduplicatedProcesses(from: allProcesses().filter { $0.isRunningOutput && $0.bundleID != ownBundleID })
-    }
-
     /// Apps shown in the picker — all running user apps, enriched with CoreAudio process info when available.
     static func processesForAppPicker(includingSelected selectedBundleIDs: Set<String>) -> [AudioClientProcess] {
         let audioByBundleID = Dictionary(

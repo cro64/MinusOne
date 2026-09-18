@@ -45,7 +45,13 @@ enum PeakSidecarMigrator {
     @discardableResult
     static func backfill(clip: PracticeClip, libraryStore: ClipLibraryStore) -> PracticeClip {
         var updated = clip
-        guard let peaksFolder = try? libraryStore.ensurePeaksFolder(forClipID: clip.id) else { return updated }
+        let peaksFolder: URL
+        do {
+            peaksFolder = try libraryStore.ensurePeaksFolder(forClipID: clip.id)
+        } catch {
+            AppLogger.shared.warning("Peak backfill skipped for \(clip.id); could not create peaks folder: \(error.localizedDescription)")
+            return updated
+        }
 
         for track in PeakTrack.all {
             guard let audioURL = sourceURL(for: track, clip: clip, libraryStore: libraryStore) else { continue }
