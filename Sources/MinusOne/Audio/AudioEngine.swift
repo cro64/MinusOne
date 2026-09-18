@@ -17,11 +17,8 @@ final class AudioEngine {
     private let preferences: Preferences
     private var neuralPipeline: NeuralSeparationPipeline?
     private var separationModel: AudioSeparationModel?
-    private let ringBuffer = StereoRingBuffer(capacityPowerOfTwo: 65_536)
     private let maxFramesPerCallback = 8_192
 
-    private var inputUnit: AudioUnit?
-    private var outputUnit: AudioUnit?
     private var processTapSetup: TapAggregateSetup?
     private var processTapProcID: AudioDeviceIOProcID?
     private let processTapQueue = DispatchQueue(label: "com.minusone.process-tap-io", qos: .userInteractive)
@@ -29,15 +26,24 @@ final class AudioEngine {
     private var processTapLoggedFirstBuffer = false
     private var processTapLoggedNilOutput = false
     private(set) var activeCaptureBackend: CaptureBackend?
-    private var captureBuffers: UnsafeMutableAudioBufferListPointer
     private let processedLeft: UnsafeMutablePointer<Float>
     private let processedRight: UnsafeMutablePointer<Float>
 
     private(set) var status: AudioEngineStatus = .idle {
         didSet {
             guard oldValue != status else { return }
-            DispatchQueue.main.async { [status, onStatusChanged] in
+            // Every mutation site runs on the main thread already; dispatching async
+            // unconditionally used to leave a one-runloop-tick window where `isVocalReductionActive`
+            // (and other synchronously-updated engine state) had already changed but every UI
+            // surface listening for `onStatusChanged` — menu bar icon, popover toggle, Live tab
+            // header/caption — hadn't been told yet, so they'd briefly contradict each other right
+            // after a toggle. Only hop to the main queue when actually called from elsewhere.
+            if Thread.isMainThread {
                 onStatusChanged?(status)
+            } else {
+                DispatchQueue.main.async { [status, onStatusChanged] in
+                    onStatusChanged?(status)
+                }
             }
         }
     }
@@ -59,10 +65,13 @@ final class AudioEngine {
     }
     private var suppressDeviceRebuild = false
     private var pendingDeviceRebuild: DispatchWorkItem?
-    private var lastProcessTapPermissionDenied = false
     private var separationModelLoadTask: DispatchWorkItem?
     private var captureRebuildWorkItem: DispatchWorkItem?
     private let separationModelLock = NSLock()
+
+    /// Live's per-stem fader/mute state — seeded from `Preferences` at launch, and the single
+    /// source of truth `neuralPipeline?.mixDSP.stemLevels` gets pushed from on every change.
+    private let stemMixer: StemMixerController
 
     var isNeuralSeparationAvailable: Bool {
         SeparationModelVariant.allCases.contains { SeparationModelFactory.isAvailable($0) }
@@ -72,9 +81,14 @@ final class AudioEngine {
         isReductionEnabled
     }
 
+    /// Seconds left in the current warm-up, or `nil` when no pipeline is warming up.
+    var warmupRemainingSeconds: Double? {
+        neuralPipeline?.remainingWarmupSeconds
+    }
+
     init(preferences: Preferences) {
         self.preferences = preferences
-        captureBuffers = AudioBufferList.allocate(maximumBuffers: 2)
+        stemMixer = preferences.liveStemMixerSnapshot()
         processedLeft = UnsafeMutablePointer<Float>.allocate(capacity: maxFramesPerCallback)
         processedRight = UnsafeMutablePointer<Float>.allocate(capacity: maxFramesPerCallback)
         processedLeft.initialize(repeating: 0, count: maxFramesPerCallback)
@@ -87,29 +101,13 @@ final class AudioEngine {
         processedRight.deinitialize(count: maxFramesPerCallback)
         processedLeft.deallocate()
         processedRight.deallocate()
-        captureBuffers.unsafeMutablePointer.deallocate()
     }
 
-    func recoverOrphanedBlackHoleIfNeeded() {
-        CoreAudioDevices.logDeviceSnapshot(reason: "launch")
-
-        guard
-            let defaultID = CoreAudioDevices.defaultOutputDeviceID(),
-            let defaultDevice = CoreAudioDevices.device(for: defaultID),
-            defaultDevice.isBlackHole,
-            let fallback = CoreAudioDevices.outputDevices().first
-        else {
-            return
-        }
-
-        do {
-            try CoreAudioDevices.setDefaultOutputDevice(fallback.id)
-            AppLogger.shared.info("Recovered orphaned BlackHole default output by switching to \(fallback.name)")
-        } catch {
-            AppLogger.shared.error("Failed to recover orphaned BlackHole output: \(error.localizedDescription)")
-        }
-    }
-
+    /// `Process Tap` requires macOS 14.2, which is the app's own minimum system version (enforced
+    /// by `LSMinimumSystemVersion` in Info.plist) — the `#available` check only exists because
+    /// `Package.swift`'s deployment target can't express a point release, so the compiler still
+    /// requires it even though the `else` branch can never actually run on a launched copy of this
+    /// app.
     func start(completion: ((Bool) -> Void)? = nil) {
         guard !isRunning else {
             completion?(true)
@@ -120,59 +118,21 @@ final class AudioEngine {
             do {
                 try startProcessTap()
                 completion?(true)
-                return
-            } catch AudioEngineError.noSelectedAudioProcesses {
-                let message = AudioEngineError.noSelectedAudioProcesses.localizedDescription
-                status = .error(message)
-                AppLogger.shared.error("Process tap failed: \(message)")
-                completion?(false)
-                return
             } catch let error as AudioEngineError where error.isLikelyPermissionDenied {
-                lastProcessTapPermissionDenied = true
-                AppLogger.shared.warning(
-                    "Process tap permission denied, falling back to BlackHole: \(error.localizedDescription)"
-                )
+                // The one failure mode worth a dedicated status (and a one-click "Open Settings…"
+                // button, via `updatePermissionButton`) rather than a plain error: the user denied
+                // the System Audio Recording prompt.
+                status = .permissionRequired(.systemAudioRecording)
+                AppLogger.shared.warning("Process tap permission denied: \(error.localizedDescription)")
+                completion?(false)
             } catch {
-                AppLogger.shared.warning(
-                    "Process tap failed, falling back to BlackHole: \(error.localizedDescription)"
-                )
+                status = .error(error.localizedDescription)
+                AppLogger.shared.error("Process tap failed: \(error.localizedDescription)")
+                completion?(false)
             }
-        }
-
-        startBlackHoleWithPermission(completion: completion)
-    }
-
-    private func startBlackHoleWithPermission(completion: ((Bool) -> Void)? = nil) {
-        guard !AudioPermission.isMicrophoneDenied else {
-            status = .permissionRequired(.microphone)
+        } else {
+            status = .error("MinusOne requires macOS 14.2 or later.")
             completion?(false)
-            return
-        }
-
-        AudioPermission.requestMicrophone { [weak self] granted in
-            guard let self else { return }
-            guard granted else {
-                self.status = .permissionRequired(.microphone)
-                completion?(false)
-                return
-            }
-
-            do {
-                try self.startBlackHole()
-                completion?(true)
-            } catch {
-                if self.lastProcessTapPermissionDenied,
-                   case AudioEngineError.blackHoleMissing = error {
-                    self.status = .permissionRequired(.systemAudioRecording)
-                } else {
-                    self.status = .error(error.localizedDescription)
-                }
-                AppLogger.shared.error("Audio engine failed to start: \(error.localizedDescription)")
-                self.stopAudioUnitsOnly()
-                self.stopProcessTap()
-                self.restorePreviousOutput()
-                completion?(false)
-            }
         }
     }
 
@@ -212,7 +172,6 @@ final class AudioEngine {
                     "Switched default output to tap aggregate \(setup.aggregateID) (was \(previousDefaultOutputID.map(String.init) ?? "unknown"))"
                 )
 
-                ringBuffer.reset()
                 processTapCallbackCount = 0
                 processTapLoggedFirstBuffer = false
                 processTapLoggedNilOutput = false
@@ -240,58 +199,6 @@ final class AudioEngine {
         }
     }
 
-    private func startBlackHole() throws {
-        try performInternalAudioChange {
-        let blackHole = try requireBlackHole()
-        let output = try resolveOutputDevice()
-        activeOutputDevice = output
-        sampleRate = nominalSampleRate(for: output.id) ?? 48_000
-
-        if let currentDefaultID = CoreAudioDevices.defaultOutputDeviceID(),
-           let currentDefaultDevice = CoreAudioDevices.device(for: currentDefaultID),
-           !currentDefaultDevice.isBlackHole {
-            previousDefaultOutputID = currentDefaultID
-        }
-
-        try CoreAudioDevices.setDefaultOutputDevice(blackHole.id)
-        try configureAudioUnits(inputDevice: blackHole, outputDevice: output)
-
-        ringBuffer.reset()
-
-        try startUnit(inputUnit, label: "input")
-        try startUnit(outputUnit, label: "output")
-
-        isRunning = true
-        isReductionEnabled = false
-        activeCaptureBackend = .blackHole
-        status = resolvedStartupStatus(channelCount: Int(blackHole.inputChannelCount))
-        AppLogger.shared.info("Audio engine started with BlackHole input and \(output.name) output")
-        }
-    }
-
-    private func ingestCapturedAudio(
-        left: UnsafePointer<Float>,
-        right: UnsafePointer<Float>,
-        frameCount: Int
-    ) {
-        guard frameCount > 0, frameCount <= maxFramesPerCallback else { return }
-
-        if let neuralPipeline {
-            neuralPipeline.process(
-                inputLeft: left,
-                inputRight: right,
-                outputLeft: processedLeft,
-                outputRight: processedRight,
-                frameCount: frameCount
-            )
-        } else {
-            processedLeft.update(from: left, count: frameCount)
-            processedRight.update(from: right, count: frameCount)
-        }
-
-        ringBuffer.write(left: processedLeft, right: processedRight, frameCount: frameCount)
-    }
-
     private func processInPlaceAudio(
         left: UnsafeMutablePointer<Float>,
         right: UnsafeMutablePointer<Float>,
@@ -315,13 +222,13 @@ final class AudioEngine {
         pendingDeviceRebuild = nil
         stopNeuralPipeline()
         performInternalAudioChange {
-            stopAudioUnitsOnly()
             stopProcessTap()
 
             if restoreOutput {
                 restorePreviousOutput()
             }
 
+            isRunning = false
             isReductionEnabled = false
             activeCaptureBackend = nil
             status = .idle
@@ -463,28 +370,60 @@ final class AudioEngine {
         guard isRunning else { return }
 
         isReductionEnabled = true
-        preferences.lastReductionEnabled = true
         if neuralPipeline == nil {
             startNeuralPipelineIfNeeded()
         }
-        applyReductionIntensity(preferences.targetIntensity)
+        neuralPipeline?.mixDSP.masterEnabled.store(1)
+        applyStemMixSnapshot()
         updateActiveStatus()
-        AppLogger.shared.info("Vocal reduction enabled (target intensity \(preferences.targetIntensity))")
+        AppLogger.shared.info("Vocal reduction enabled")
     }
 
     func disableReduction() {
         guard isRunning else { return }
 
         isReductionEnabled = false
-        preferences.lastReductionEnabled = false
-        applyReductionIntensity(0)
+        // Bypass only — never touch the user's stem mix, so it's exactly as they left it next time.
+        neuralPipeline?.mixDSP.masterEnabled.store(0)
         updateActiveStatus()
         AppLogger.shared.info("Vocal reduction disabled — passthrough")
     }
 
-    private func applyReductionIntensity(_ value: Float) {
-        neuralPipeline?.mixDSP.targetIntensity.store(value)
+    /// Pushes the mixer's current `effectiveVolume(for:)` for every stem into the live pipeline,
+    /// plus makeup gain (which tracks how much vocal is actually being removed). The one place all
+    /// 3 per-stem setters below, `enableReduction()`, and device-rebuild funnel through, so the
+    /// pipeline never sees a partial update.
+    private func applyStemMixSnapshot() {
+        guard let mixDSP = neuralPipeline?.mixDSP else { return }
+        for stem in SeparationStem.allCases {
+            mixDSP.stemLevels[stem]?.store(stemMixer.effectiveVolume(for: stem))
+        }
+        applyMakeupGain()
+    }
+
+    private func applyMakeupGain() {
         neuralPipeline?.mixDSP.makeupGainDecibels.store(preferences.makeupGainDecibels)
+    }
+
+    func setStemVolume(_ volume: Float, for stem: SeparationStem) {
+        stemMixer.setVolume(volume, for: stem)
+        preferences.persistLiveStemMixer(stemMixer)
+        guard isReductionEnabled else { return }
+        applyStemMixSnapshot()
+    }
+
+    func setStemMuted(_ muted: Bool, for stem: SeparationStem) {
+        stemMixer.setMuted(muted, for: stem)
+        preferences.persistLiveStemMixer(stemMixer)
+        guard isReductionEnabled else { return }
+        applyStemMixSnapshot()
+    }
+
+    func isolateStem(_ stem: SeparationStem) {
+        stemMixer.isolateStem(stem)
+        preferences.persistLiveStemMixer(stemMixer)
+        guard isReductionEnabled else { return }
+        applyStemMixSnapshot()
     }
 
     /// Latest aligned dry/wet peak pair from the mix stage, or `nil` when no pipeline is running.
@@ -494,6 +433,13 @@ final class AudioEngine {
     var liveLevels: (dry: Float, wet: Float)? {
         guard let mixDSP = neuralPipeline?.mixDSP else { return nil }
         return (mixDSP.dryPeak.load(), mixDSP.wetPeak.load())
+    }
+
+    /// Each stem's raw (pre-fader) peak this callback, or `nil` when no pipeline is running — feeds
+    /// the Live tab meter's Practice-style per-stem color blend.
+    var liveStemLevels: [SeparationStem: Float]? {
+        guard let mixDSP = neuralPipeline?.mixDSP else { return nil }
+        return Dictionary(uniqueKeysWithValues: SeparationStem.allCases.map { ($0, mixDSP.stemPeaks[$0]?.load() ?? 0) })
     }
 
     private func notifyOutputConfigurationChanged() {
@@ -557,6 +503,16 @@ final class AudioEngine {
                     guard let self, self.isRunning, self.isReductionEnabled else { return }
                     if self.neuralPipeline == nil {
                         self.startNeuralPipelineIfNeeded()
+                        // `enableReduction()` already tried this once, but `neuralPipeline` was
+                        // still nil at that point (the model hadn't loaded yet) — both calls
+                        // silently no-op through `neuralPipeline?...`. This is the first moment a
+                        // real pipeline exists, so it's the first moment this can actually land;
+                        // without it, the pipeline's mixer sits at its constructor defaults
+                        // (`masterEnabled` 0, every stem level 0) forever — it warms up and reaches
+                        // "ready," but never actually mixes, until something else happens to call
+                        // `enableReduction()` again with a non-nil pipeline (e.g. toggling off/on).
+                        self.neuralPipeline?.mixDSP.masterEnabled.store(1)
+                        self.applyStemMixSnapshot()
                         self.updateActiveStatus()
                     }
                 }
@@ -630,13 +586,6 @@ final class AudioEngine {
         return .passthrough
     }
 
-    func setTargetIntensity(_ value: Float) {
-        preferences.targetIntensity = value
-        if isReductionEnabled {
-            applyReductionIntensity(value)
-        }
-    }
-
     func setMakeupGainDecibels(_ value: Float) {
         preferences.makeupGainDecibels = value
         neuralPipeline?.mixDSP.makeupGainDecibels.store(value)
@@ -692,7 +641,7 @@ final class AudioEngine {
 
         let wasReducing = isReductionEnabled
         if wasReducing {
-            applyReductionIntensity(0)
+            neuralPipeline?.mixDSP.masterEnabled.store(0)
         }
 
         let fadeSeconds = wasReducing
@@ -722,34 +671,24 @@ final class AudioEngine {
         }
 
         let shouldRestoreReduction = isReductionEnabled
-        let backend = activeCaptureBackend ?? .processTap
         performInternalAudioChange {
-            stopAudioUnitsOnly()
             stopProcessTap()
 
             do {
-                switch backend {
-                case .processTap:
-                    if #available(macOS 14.2, *) {
-                        do {
-                            try startProcessTap()
-                        } catch {
-                            AppLogger.shared.warning(
-                                "Process tap rebuild failed, falling back to BlackHole: \(error.localizedDescription)"
-                            )
-                            try startBlackHole()
-                        }
-                    } else {
-                        try startBlackHole()
-                    }
-                case .blackHole:
-                    try startBlackHole()
+                guard #available(macOS 14.2, *) else {
+                    throw AudioEngineError.coreAudio("MinusOne requires macOS 14.2 or later", unspecifiedAudioStatus)
                 }
+                try startProcessTap()
                 isReductionEnabled = shouldRestoreReduction
                 if shouldRestoreReduction {
                     startNeuralPipelineIfNeeded()
                 }
-                applyReductionIntensity(isReductionEnabled ? preferences.targetIntensity : 0)
+                if isReductionEnabled {
+                    neuralPipeline?.mixDSP.masterEnabled.store(1)
+                    applyStemMixSnapshot()
+                } else {
+                    neuralPipeline?.mixDSP.masterEnabled.store(0)
+                }
                 if let output = activeOutputDevice {
                     AppLogger.shared.info("Audio engine rebuilt for output device \(output.name)")
                 }
@@ -774,77 +713,6 @@ final class AudioEngine {
         work()
     }
 
-    fileprivate func handleInput(
-        actionFlags: UnsafeMutablePointer<AudioUnitRenderActionFlags>,
-        timestamp: UnsafePointer<AudioTimeStamp>,
-        busNumber: UInt32,
-        frameCount: UInt32
-    ) -> OSStatus {
-        guard let inputUnit, Int(frameCount) <= maxFramesPerCallback else {
-            return kAudio_ParamError
-        }
-
-        let byteCount = frameCount * UInt32(MemoryLayout<Float>.size)
-        captureBuffers[0].mNumberChannels = 1
-        captureBuffers[0].mDataByteSize = byteCount
-        captureBuffers[0].mData = UnsafeMutableRawPointer(processedLeft)
-        captureBuffers[1].mNumberChannels = 1
-        captureBuffers[1].mDataByteSize = byteCount
-        captureBuffers[1].mData = UnsafeMutableRawPointer(processedRight)
-
-        let renderStatus = AudioUnitRender(
-            inputUnit,
-            actionFlags,
-            timestamp,
-            busNumber,
-            frameCount,
-            captureBuffers.unsafeMutablePointer
-        )
-        guard renderStatus == noErr else { return renderStatus }
-
-        ingestCapturedAudio(
-            left: processedLeft,
-            right: processedRight,
-            frameCount: Int(frameCount)
-        )
-        return noErr
-    }
-
-    fileprivate func handleOutput(ioData: UnsafeMutablePointer<AudioBufferList>?, frameCount: UInt32) -> OSStatus {
-        guard let ioData else { return kAudio_ParamError }
-        let buffers = UnsafeMutableAudioBufferListPointer(ioData)
-        guard buffers.count >= 2,
-              let leftData = buffers[0].mData,
-              let rightData = buffers[1].mData
-        else {
-            return kAudio_ParamError
-        }
-
-        let left = leftData.bindMemory(to: Float.self, capacity: Int(frameCount))
-        let right = rightData.bindMemory(to: Float.self, capacity: Int(frameCount))
-        ringBuffer.read(left: left, right: right, frameCount: Int(frameCount))
-        buffers[0].mDataByteSize = frameCount * UInt32(MemoryLayout<Float>.size)
-        buffers[1].mDataByteSize = frameCount * UInt32(MemoryLayout<Float>.size)
-        return noErr
-    }
-
-    private func requireBlackHole() throws -> AudioDevice {
-        CoreAudioDevices.logDeviceSnapshot(reason: "require BlackHole")
-
-        guard let blackHole = CoreAudioDevices.blackHoleDevice() else {
-            if FileManager.default.fileExists(atPath: "/Library/Audio/Plug-Ins/HAL/BlackHole2ch.driver") {
-                throw AudioEngineError.blackHoleDriverInstalledButNotLoaded
-            }
-            throw AudioEngineError.blackHoleMissing
-        }
-        guard blackHole.inputChannelCount >= 2 else {
-            throw AudioEngineError.unsupportedFormat(
-                "BlackHole is visible to CoreAudio as \"\(blackHole.name)\", but reports input=\(blackHole.inputChannelCount), output=\(blackHole.outputChannelCount). Restart CoreAudio or reboot."
-            )
-        }
-        return blackHole
-    }
-
     private func resolveOutputDevice() throws -> AudioDevice {
         if let systemOutputID = CoreAudioDevices.defaultSystemOutputDeviceID(),
            let systemOutput = CoreAudioDevices.device(for: systemOutputID),
@@ -867,100 +735,6 @@ final class AudioEngine {
         return first
     }
 
-    private func configureAudioUnits(inputDevice: AudioDevice, outputDevice: AudioDevice) throws {
-        inputUnit = try makeHALUnit()
-        outputUnit = try makeHALUnit()
-
-        guard let inputUnit, let outputUnit else {
-            throw AudioEngineError.coreAudio("Unable to create audio units", unspecifiedAudioStatus)
-        }
-
-        var format = stereoFloatFormat(sampleRate: sampleRate)
-        try configureInputUnit(inputUnit, deviceID: inputDevice.id, format: &format)
-        try configureOutputUnit(outputUnit, deviceID: outputDevice.id, format: &format)
-    }
-
-    private func configureInputUnit(_ unit: AudioUnit, deviceID: AudioDeviceID, format: inout AudioStreamBasicDescription) throws {
-        var one: UInt32 = 1
-        var zero: UInt32 = 0
-        var mutableDeviceID = deviceID
-        var callback = AURenderCallbackStruct(
-            inputProc: inputCallback,
-            inputProcRefCon: Unmanaged.passUnretained(self).toOpaque()
-        )
-
-        try checkCoreAudio(AudioUnitSetProperty(unit, kAudioOutputUnitProperty_EnableIO, kAudioUnitScope_Input, 1, &one, UInt32(MemoryLayout<UInt32>.size)), "Enable input IO")
-        try checkCoreAudio(AudioUnitSetProperty(unit, kAudioOutputUnitProperty_EnableIO, kAudioUnitScope_Output, 0, &zero, UInt32(MemoryLayout<UInt32>.size)), "Disable input unit output IO")
-        try checkCoreAudio(AudioUnitSetProperty(unit, kAudioOutputUnitProperty_CurrentDevice, kAudioUnitScope_Global, 0, &mutableDeviceID, UInt32(MemoryLayout<AudioDeviceID>.size)), "Set capture input device")
-        try checkCoreAudio(AudioUnitSetProperty(unit, kAudioOutputUnitProperty_SetInputCallback, kAudioUnitScope_Global, 0, &callback, UInt32(MemoryLayout<AURenderCallbackStruct>.size)), "Set input callback")
-        try checkCoreAudio(AudioUnitSetProperty(unit, kAudioUnitProperty_StreamFormat, kAudioUnitScope_Output, 1, &format, UInt32(MemoryLayout<AudioStreamBasicDescription>.size)), "Set input stream format")
-        try checkCoreAudio(AudioUnitInitialize(unit), "Initialize input unit")
-    }
-
-    private func configureOutputUnit(_ unit: AudioUnit, deviceID: AudioDeviceID, format: inout AudioStreamBasicDescription) throws {
-        var one: UInt32 = 1
-        var zero: UInt32 = 0
-        var mutableDeviceID = deviceID
-        var callback = AURenderCallbackStruct(
-            inputProc: outputCallback,
-            inputProcRefCon: Unmanaged.passUnretained(self).toOpaque()
-        )
-
-        try checkCoreAudio(AudioUnitSetProperty(unit, kAudioOutputUnitProperty_EnableIO, kAudioUnitScope_Output, 0, &one, UInt32(MemoryLayout<UInt32>.size)), "Enable output IO")
-        try checkCoreAudio(AudioUnitSetProperty(unit, kAudioOutputUnitProperty_EnableIO, kAudioUnitScope_Input, 1, &zero, UInt32(MemoryLayout<UInt32>.size)), "Disable output unit input IO")
-        try checkCoreAudio(AudioUnitSetProperty(unit, kAudioOutputUnitProperty_CurrentDevice, kAudioUnitScope_Global, 0, &mutableDeviceID, UInt32(MemoryLayout<AudioDeviceID>.size)), "Set physical output device")
-        try checkCoreAudio(AudioUnitSetProperty(unit, kAudioUnitProperty_SetRenderCallback, kAudioUnitScope_Input, 0, &callback, UInt32(MemoryLayout<AURenderCallbackStruct>.size)), "Set output callback")
-        try checkCoreAudio(AudioUnitSetProperty(unit, kAudioUnitProperty_StreamFormat, kAudioUnitScope_Input, 0, &format, UInt32(MemoryLayout<AudioStreamBasicDescription>.size)), "Set output stream format")
-        try checkCoreAudio(AudioUnitInitialize(unit), "Initialize output unit")
-    }
-
-    private func makeHALUnit() throws -> AudioUnit {
-        var description = AudioComponentDescription(
-            componentType: kAudioUnitType_Output,
-            componentSubType: kAudioUnitSubType_HALOutput,
-            componentManufacturer: kAudioUnitManufacturer_Apple,
-            componentFlags: 0,
-            componentFlagsMask: 0
-        )
-
-        guard let component = AudioComponentFindNext(nil, &description) else {
-            throw AudioEngineError.coreAudio("Unable to find HAL output component", unspecifiedAudioStatus)
-        }
-
-        var unit: AudioUnit?
-        let status = AudioComponentInstanceNew(component, &unit)
-        guard status == noErr, let unit else {
-            throw AudioEngineError.coreAudio("Unable to create HAL output unit", status)
-        }
-        return unit
-    }
-
-    private func startUnit(_ unit: AudioUnit?, label: String) throws {
-        guard let unit else {
-            throw AudioEngineError.coreAudio("Missing \(label) audio unit", unspecifiedAudioStatus)
-        }
-        try checkCoreAudio(AudioOutputUnitStart(unit), "Start \(label) unit")
-    }
-
-    private func stopAudioUnitsOnly() {
-        if let inputUnit {
-            AudioOutputUnitStop(inputUnit)
-            AudioUnitUninitialize(inputUnit)
-            AudioComponentInstanceDispose(inputUnit)
-        }
-        if let outputUnit {
-            AudioOutputUnitStop(outputUnit)
-            AudioUnitUninitialize(outputUnit)
-            AudioComponentInstanceDispose(outputUnit)
-        }
-        inputUnit = nil
-        outputUnit = nil
-        isRunning = false
-        isReductionEnabled = false
-        stopNeuralPipeline()
-        ringBuffer.reset()
-    }
-
     private func restorePreviousOutput() {
         guard let previousDefaultOutputID else { return }
 
@@ -973,45 +747,4 @@ final class AudioEngine {
         }
     }
 
-    private func nominalSampleRate(for deviceID: AudioDeviceID) -> Double? {
-        var address = AudioObjectPropertyAddress(
-            mSelector: kAudioDevicePropertyNominalSampleRate,
-            mScope: kAudioObjectPropertyScopeGlobal,
-            mElement: kAudioObjectPropertyElementMain
-        )
-        var sampleRate = Float64(0)
-        var dataSize = UInt32(MemoryLayout<Float64>.size)
-        let status = AudioObjectGetPropertyData(deviceID, &address, 0, nil, &dataSize, &sampleRate)
-        guard status == noErr, sampleRate > 0 else { return nil }
-        return sampleRate
-    }
-
-    private func stereoFloatFormat(sampleRate: Double) -> AudioStreamBasicDescription {
-        AudioStreamBasicDescription(
-            mSampleRate: sampleRate,
-            mFormatID: kAudioFormatLinearPCM,
-            mFormatFlags: kAudioFormatFlagIsFloat | kAudioFormatFlagIsPacked | kAudioFormatFlagIsNonInterleaved,
-            mBytesPerPacket: UInt32(MemoryLayout<Float>.size),
-            mFramesPerPacket: 1,
-            mBytesPerFrame: UInt32(MemoryLayout<Float>.size),
-            mChannelsPerFrame: 2,
-            mBitsPerChannel: 32,
-            mReserved: 0
-        )
-    }
-}
-
-private let inputCallback: AURenderCallback = { refCon, actionFlags, timestamp, busNumber, frameCount, _ in
-    let engine = Unmanaged<AudioEngine>.fromOpaque(refCon).takeUnretainedValue()
-    return engine.handleInput(
-        actionFlags: actionFlags,
-        timestamp: timestamp,
-        busNumber: busNumber,
-        frameCount: frameCount
-    )
-}
-
-private let outputCallback: AURenderCallback = { refCon, _, _, _, frameCount, ioData in
-    let engine = Unmanaged<AudioEngine>.fromOpaque(refCon).takeUnretainedValue()
-    return engine.handleOutput(ioData: ioData, frameCount: frameCount)
 }

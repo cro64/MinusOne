@@ -1,9 +1,12 @@
 import AppKit
 
 /// Scrolling before/after level meter for the Live tab's hero card — the one place in the app that
-/// shows vocal reduction actually happening. Two mirrored envelopes share a baseline: the outer
-/// neutral one is the delayed dry signal (what you would have heard), the inner coral one is the
-/// mixed output (what you do hear). The gap between them *is* the vocal being removed.
+/// shows vocal reduction actually happening. A translucent neutral envelope traces the delayed dry
+/// signal (what you would have heard); colored bar columns painted inside it are the mixed output
+/// (what you do hear), colored the same way Practice's `HeroWaveformView` colors its bars — a
+/// weighted blend of the 4 stem identity colors by which instrument is loudest at that instant
+/// (`HeroWaveformBlend`, reused as-is since it's pure/stateless). The exposed neutral margin above
+/// the bars *is* the vocal being removed; the bar color is what's actually playing.
 ///
 /// Drawing follows `LiveWaveformView`'s approach (bucketed peaks → `NSBezierPath`) but is a separate
 /// view rather than a reuse: that one is bound to `ClipRecorder`'s 0.1s recording buckets and
@@ -17,11 +20,23 @@ final class LiveLevelMeterView: NSView {
         static let decibelFloor: Float = -60
         static let verticalInset: CGFloat = 10
         static let legendInset: CGFloat = 8
+        /// Fraction of each bar's slot that's actually filled, matching Practice's discrete-column
+        /// look — the rest is the gap between bars.
+        static let barFillRatio: CGFloat = 0.7
+        /// Peaks are already raw linear amplitudes in 0...1 (full digital scale), the same domain
+        /// `PeakScaling.height` expects a `reference` in — so 1.0 (unity) is the correct reference,
+        /// not a per-clip loudness figure like `PeakStore.normalizationReference` (there is no clip).
+        static let stemColorReference: Float = 1.0
     }
 
     private struct Sample {
         var dry: Float
         var wet: Float
+        /// Raw (smoothed) per-stem magnitudes, kept separately from `dry`/`wet` heights — the color
+        /// blend runs on these at *draw* time (see `HeroWaveformBlend`'s own doc comment on why
+        /// resolving `NSColor`s at append time would freeze a dynamic system color to whichever
+        /// appearance was current then, e.g. `HeroWaveformBlend.silenceColor`).
+        var stemMagnitudes: [SeparationStem: Float]
     }
 
     /// Caption shown centered over a flat baseline when there's nothing to meter. `nil` hides it.
@@ -35,6 +50,9 @@ final class LiveLevelMeterView: NSView {
     private var samples: [Sample] = []
     private var smoothedDry: Float = 0
     private var smoothedWet: Float = 0
+    private var smoothedStemMagnitudes: [SeparationStem: Float] = Dictionary(
+        uniqueKeysWithValues: SeparationStem.allCases.map { ($0, Float(0)) }
+    )
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
@@ -50,18 +68,26 @@ final class LiveLevelMeterView: NSView {
 
     // MARK: - Feeding
 
-    /// Appends one bucket. Pass `nil` when no pipeline is running so the trace decays to the
-    /// baseline instead of freezing at its last reading.
-    func append(levels: (dry: Float, wet: Float)?) {
+    /// Appends one bucket. Pass `nil` for either parameter when no pipeline is running so the trace
+    /// decays to the baseline instead of freezing at its last reading.
+    func append(levels: (dry: Float, wet: Float)?, stemLevels: [SeparationStem: Float]?) {
         let targetDry = levels.map { normalized($0.dry) } ?? 0
         let targetWet = levels.map { normalized($0.wet) } ?? 0
 
-        // Fast attack / slow release, the usual meter ballistics — without the slow release a peak
-        // meter at this refresh rate reads as noise rather than as a signal envelope.
+        // Dry keeps the slow release — it draws as one continuous envelope, where slow release is
+        // what makes it read as a smooth trace instead of noise. Wet now draws as discrete bar
+        // columns (one per tick, Practice-style), so the same slow release just flattens every
+        // neighboring bar to nearly the same height — a fast release lets each bar reflect the
+        // music's actual moment-to-moment dynamics instead of an 8-second-smoothed average.
         smoothedDry = ballistic(current: smoothedDry, target: targetDry)
-        smoothedWet = ballistic(current: smoothedWet, target: targetWet)
+        smoothedWet = ballistic(current: smoothedWet, target: targetWet, releaseCoefficient: 0.4)
 
-        samples.append(Sample(dry: smoothedDry, wet: smoothedWet))
+        for stem in SeparationStem.allCases {
+            let target = stemLevels?[stem] ?? 0
+            smoothedStemMagnitudes[stem] = ballistic(current: smoothedStemMagnitudes[stem] ?? 0, target: target)
+        }
+
+        samples.append(Sample(dry: smoothedDry, wet: smoothedWet, stemMagnitudes: smoothedStemMagnitudes))
         if samples.count > Metrics.sampleCapacity {
             samples.removeFirst(samples.count - Metrics.sampleCapacity)
         }
@@ -72,11 +98,14 @@ final class LiveLevelMeterView: NSView {
         samples.removeAll(keepingCapacity: true)
         smoothedDry = 0
         smoothedWet = 0
+        for stem in SeparationStem.allCases {
+            smoothedStemMagnitudes[stem] = 0
+        }
         needsDisplay = true
     }
 
-    private func ballistic(current: Float, target: Float) -> Float {
-        let coefficient: Float = target > current ? 0.6 : 0.12
+    private func ballistic(current: Float, target: Float, releaseCoefficient: Float = 0.12) -> Float {
+        let coefficient: Float = target > current ? 0.6 : releaseCoefficient
         return current + (target - current) * coefficient
     }
 
@@ -106,18 +135,14 @@ final class LiveLevelMeterView: NSView {
         drawBaseline(atY: midY)
 
         if samples.count >= 2 {
-            // Dry first so the wet envelope paints inside it; the exposed neutral margin is the
-            // reduction the user is being shown.
+            // Dry first, as a translucent backdrop wash — the wet bars paint inside it, and the
+            // exposed neutral margin above them is the reduction being shown.
             fillEnvelope(
                 using: { $0.dry },
                 midY: midY,
                 color: NSColor.labelColor.withAlphaComponent(0.18)
             )
-            fillEnvelope(
-                using: { $0.wet },
-                midY: midY,
-                color: .brandAccent
-            )
+            drawWetBars(midY: midY)
         }
 
         drawLegend()
@@ -155,6 +180,41 @@ final class LiveLevelMeterView: NSView {
         path.fill()
     }
 
+    /// The wet (mixed-output) level, drawn as Practice-style discrete bar columns instead of a
+    /// smooth envelope — one per sample, colored by `HeroWaveformBlend`'s weighted stem blend so a
+    /// drum-heavy moment reads amber and a bass-heavy one reads teal, matching Practice's hero
+    /// waveform. Colors are resolved here at draw time, not cached on `Sample` at append time — see
+    /// the `Sample.stemMagnitudes` doc comment for why.
+    private func drawWetBars(midY: CGFloat) {
+        let amplitude = max(0, midY - Metrics.verticalInset)
+        let slotWidth = bounds.width / CGFloat(Metrics.sampleCapacity)
+        let barWidth = slotWidth * Metrics.barFillRatio
+
+        for (index, sample) in samples.enumerated() {
+            let height = CGFloat(sample.wet) * amplitude
+            guard height > 0.5 else { continue }
+
+            let color = resolvedBarColor(for: sample)
+            let left = slotWidth * CGFloat(index) + (slotWidth - barWidth) / 2
+            let rect = NSRect(x: left, y: midY - height, width: barWidth, height: height * 2)
+            color.setFill()
+            NSBezierPath(rect: rect).fill()
+        }
+    }
+
+    private func resolvedBarColor(for sample: Sample) -> NSColor {
+        switch HeroWaveformBlend.barColor(
+            forMagnitudes: sample.stemMagnitudes,
+            reference: Metrics.stemColorReference,
+            isSeparated: true
+        ) {
+        case .blended(let color):
+            return color
+        case .tail:
+            return HeroWaveformBlend.tailColor
+        }
+    }
+
     private func x(for index: Int) -> CGFloat {
         // Pinned to the full capacity, not to `samples.count`, so a partially-filled buffer scrolls
         // in from the left instead of stretching to fill the width and then snapping.
@@ -164,27 +224,50 @@ final class LiveLevelMeterView: NSView {
     private func drawLegend() {
         guard caption == nil else { return }
 
-        let entries: [(String, NSColor)] = [
-            ("Before", NSColor.labelColor.withAlphaComponent(0.18)),
-            ("After", .brandAccent)
-        ]
         var originX = Metrics.legendInset
 
-        for (title, color) in entries {
-            let swatch = NSRect(x: originX, y: bounds.maxY - Metrics.legendInset - 8, width: 8, height: 8)
-            color.setFill()
-            NSBezierPath(roundedRect: swatch, xRadius: 2, yRadius: 2).fill()
+        // "Before": one flat neutral swatch, matching the translucent dry wash.
+        originX = drawLegendEntry(
+            title: "Before",
+            originX: originX,
+            swatch: { rect in
+                NSColor.labelColor.withAlphaComponent(0.18).setFill()
+                NSBezierPath(roundedRect: rect, xRadius: 2, yRadius: 2).fill()
+            }
+        )
 
-            let attributes: [NSAttributedString.Key: Any] = [
-                .font: NSFont.systemFont(ofSize: NSFont.smallSystemFontSize),
-                .foregroundColor: NSColor.secondaryLabelColor
-            ]
-            let text = NSAttributedString(string: title, attributes: attributes)
-            let textOrigin = NSPoint(x: swatch.maxX + 4, y: swatch.minY - 3)
-            text.draw(at: textOrigin)
+        // "After": a 4-stripe swatch of the stem identity colors — signals at a glance that the
+        // bars below are colored by instrument, the same convention Practice's hero waveform uses.
+        _ = drawLegendEntry(
+            title: "After",
+            originX: originX,
+            swatch: { rect in
+                let stripeWidth = rect.width / CGFloat(SeparationStem.allCases.count)
+                for (index, stem) in SeparationStem.allCases.enumerated() {
+                    let stripe = NSRect(x: rect.minX + stripeWidth * CGFloat(index), y: rect.minY, width: stripeWidth, height: rect.height)
+                    stem.identityColor.setFill()
+                    NSBezierPath(rect: stripe).fill()
+                }
+            }
+        )
+    }
 
-            originX = textOrigin.x + text.size().width + 12
-        }
+    /// Draws one legend entry (a swatch + label) and returns the x-origin the next entry should
+    /// start at. `swatch` draws into a fixed 8×8 rect — a closure rather than a single `NSColor` so
+    /// the "After" entry can paint its multi-stripe swatch through the same layout code.
+    private func drawLegendEntry(title: String, originX: CGFloat, swatch: (NSRect) -> Void) -> CGFloat {
+        let swatchRect = NSRect(x: originX, y: bounds.maxY - Metrics.legendInset - 8, width: 8, height: 8)
+        swatch(swatchRect)
+
+        let attributes: [NSAttributedString.Key: Any] = [
+            .font: NSFont.systemFont(ofSize: NSFont.smallSystemFontSize),
+            .foregroundColor: NSColor.secondaryLabelColor
+        ]
+        let text = NSAttributedString(string: title, attributes: attributes)
+        let textOrigin = NSPoint(x: swatchRect.maxX + 4, y: swatchRect.minY - 3)
+        text.draw(at: textOrigin)
+
+        return textOrigin.x + text.size().width + 12
     }
 
     private func drawCaption() {

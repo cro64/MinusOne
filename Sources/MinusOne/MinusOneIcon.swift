@@ -76,4 +76,39 @@ enum MinusOneIcon {
         image.isTemplate = false
         return image
     }
+
+    /// Warming-up spinner: a rotating 270° arc, stepped through 8 discrete frames rather than
+    /// animated continuously — at menu-bar size the difference isn't visible, and discrete frames
+    /// let `MenuBarController` drive it off a plain repeating `Timer` the same way
+    /// `LiveTabViewController`'s meter timer works, no `CADisplayLink` needed. Same raw
+    /// `lockFocus`/`CGContext` drawing technique as `waveform` above — not a second, SF-Symbol-based
+    /// approach — so the two glyphs read as part of one icon family.
+    static func warmingUpSpinner(size: CGFloat, color: NSColor, frame: Int, frameCount: Int = 8) -> NSImage {
+        let image = NSImage(size: NSSize(width: size, height: size))
+        image.lockFocus()
+
+        guard let context = NSGraphicsContext.current?.cgContext else {
+            image.unlockFocus()
+            return image
+        }
+
+        let center = CGPoint(x: size / 2, y: size / 2)
+        let radius = size * 0.32
+        let lineWidth = size * 0.14
+        let degreesPerFrame = 360.0 / Double(frameCount)
+        let rotation = CGFloat(Double(((frame % frameCount) + frameCount) % frameCount) * degreesPerFrame) * .pi / 180
+        let arcSpan: CGFloat = 270 * .pi / 180
+
+        context.saveGState()
+        context.setStrokeColor(color.cgColor)
+        context.setLineWidth(lineWidth)
+        context.setLineCap(.round)
+        context.addArc(center: center, radius: radius, startAngle: rotation, endAngle: rotation + arcSpan, clockwise: false)
+        context.strokePath()
+        context.restoreGState()
+
+        image.unlockFocus()
+        image.isTemplate = false
+        return image
+    }
 }

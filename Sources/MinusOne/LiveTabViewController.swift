@@ -19,7 +19,16 @@ final class LiveTabViewController: NSViewController {
     private let levelMeter = LiveLevelMeterView()
     private let outputSummaryLabel = NSTextField(labelWithString: "")
     private var meterTimer: Timer?
-    private let intensitySlider = DragValueSlider(value: 100, minValue: 0, maxValue: 100, target: nil, action: nil)
+    /// One fader + mute toggle per stem, replacing the old single Intensity slider — Live now
+    /// exposes the model's full 4-stem output instead of just a vocals-removed/raw crossfade.
+    /// `MuteToggleView` is Practice's own stem mute control (Cmd-click isolates), reused as-is so
+    /// Live's mental model matches Practice's rather than inventing a second one.
+    private let stemFaders: [SeparationStem: DragValueSlider] = Dictionary(
+        uniqueKeysWithValues: SeparationStem.allCases.map { ($0, DragValueSlider(value: 100, minValue: 0, maxValue: 100, target: nil, action: nil)) }
+    )
+    private let stemMuteToggles: [SeparationStem: MuteToggleView] = Dictionary(
+        uniqueKeysWithValues: SeparationStem.allCases.map { ($0, MuteToggleView(label: $0.displayName)) }
+    )
     private let makeupSlider = DragValueSlider(value: 4.5, minValue: 0, maxValue: 12, target: nil, action: nil)
     private let sliderValueOverlay = SharedUI.valueLabel()
     private let captureScopePopUp = NSPopUpButton(frame: .zero, pullsDown: false)
@@ -41,8 +50,6 @@ final class LiveTabViewController: NSViewController {
 
     private var currentStatus: AudioEngineStatus = .idle
     private var activeOverlaySlider: NSSlider?
-
-    var onSettingsChanged: (() -> Void)?
 
     init(preferences: Preferences, audioEngine: AudioEngine) {
         self.preferences = preferences
@@ -103,25 +110,32 @@ final class LiveTabViewController: NSViewController {
     }
 
     private func tickMeter() {
-        levelMeter.append(levels: audioEngine.liveLevels)
+        levelMeter.append(levels: audioEngine.liveLevels, stemLevels: audioEngine.liveStemLevels)
         levelMeter.caption = meterCaption()
+        // The big status title only otherwise refreshes on engine status *changes* — without this,
+        // "Warming up (~20s)" would paint once and then freeze at that same number for the whole
+        // wait instead of counting down. Reuses this already-running 25Hz timer rather than adding
+        // a second one.
+        if case .warmingUp = currentStatus {
+            refreshStatusHeader()
+        }
     }
 
     /// `nil` once there's a signal worth showing — the meter draws its legend instead. The card
     /// should never read as an empty box, so every non-running state names itself here.
+    ///
+    /// Delegates to `StatusHeaderView.copy` for the actual wording — previously this switch was a
+    /// second, independently hand-written copy of "what does this status mean" that had already
+    /// drifted from the status header's (e.g. `.error` read as a calm "Reduction stopped" while the
+    /// header simultaneously showed "Error" in red). One function, one wording now.
     private func meterCaption() -> String? {
-        switch currentStatus {
-        case .error:
-            return "Reduction stopped"
-        case .permissionRequired:
-            return "Permission needed to capture audio"
-        case .warmingUp:
-            return "Warming up…"
-        case .active where audioEngine.isVocalReductionActive:
-            return nil
-        default:
-            return "Turn Live on to see vocals being removed"
-        }
+        if case .active = currentStatus, audioEngine.isVocalReductionActive { return nil }
+        let copy = StatusHeaderView.copy(
+            for: currentStatus,
+            isFilterActive: audioEngine.isVocalReductionActive,
+            warmupRemainingSeconds: audioEngine.warmupRemainingSeconds
+        )
+        return copy.tooltipDetail
     }
 
     private func updateOutputSummary() {
@@ -253,7 +267,10 @@ final class LiveTabViewController: NSViewController {
             setPopUpSelection(captureScopePopUp, index: scopeIndex)
         }
 
-        intensitySlider.floatValue = preferences.targetIntensity * 100
+        for stem in SeparationStem.allCases {
+            stemFaders[stem]?.floatValue = preferences.liveStemFaderVolume(for: stem) * 100
+            stemMuteToggles[stem]?.setMuted(preferences.mutedLiveStems.contains(stem))
+        }
         makeupSlider.floatValue = preferences.makeupGainDecibels
         updateCaptureScopeUI()
         refreshControlStates()
@@ -268,9 +285,6 @@ final class LiveTabViewController: NSViewController {
         refreshStatusHeader(isFilterActive: isFilterActive)
         updatePermissionButton(for: status)
         setSwitchState(liveToggle, on: isFilterActive)
-        // Previously missing: if the engine falls back from Process Tap to BlackHole while this tab
-        // is already visible, the Scope popup stayed enabled with a stale tooltip until the tab was
-        // re-shown, because `refreshControlStates` only ran from `reloadFromPreferences`.
         refreshControlStates()
         updateOutputSummary()
     }
@@ -294,15 +308,28 @@ final class LiveTabViewController: NSViewController {
         liveToggle.action = #selector(liveToggleChanged)
         liveToggle.translatesAutoresizingMaskIntoConstraints = false
 
-        WindowUI.configureSlider(intensitySlider)
-        intensitySlider.trackFillColor = .brandAccent
-        intensitySlider.target = self
-        intensitySlider.action = #selector(intensityChanged)
-        intensitySlider.onDragBegan = { [weak self] in
-            self?.beginSliderOverlay(for: self?.intensitySlider)
-        }
-        intensitySlider.onDragEnded = { [weak self] in
-            self?.endSliderOverlay()
+        for stem in SeparationStem.allCases {
+            guard let fader = stemFaders[stem], let mute = stemMuteToggles[stem] else { continue }
+            WindowUI.configureSlider(fader)
+            // Matches Practice's `LaneHeaderView`: each stem's fader fills with its own identity
+            // color rather than one flat accent, so a stem reads the same way in both places.
+            fader.trackFillColor = stem.identityColor
+            fader.target = self
+            fader.action = #selector(stemFaderChanged(_:))
+            fader.onDragBegan = { [weak self] in
+                self?.beginSliderOverlay(for: fader)
+            }
+            fader.onDragEnded = { [weak self] in
+                self?.endSliderOverlay()
+            }
+
+            mute.onMuteToggled = { [weak self] muted in
+                self?.audioEngine.setStemMuted(muted, for: stem)
+            }
+            mute.onIsolateRequested = { [weak self] in
+                self?.audioEngine.isolateStem(stem)
+                self?.reloadFromPreferences()
+            }
         }
 
         WindowUI.configureSlider(makeupSlider)
@@ -358,23 +385,23 @@ final class LiveTabViewController: NSViewController {
                 row.bottomAnchor.constraint(equalTo: statusHeaderContainer.bottomAnchor)
             ])
         }
-        statusHeader.update(for: currentStatus, isFilterActive: active)
+        statusHeader.update(for: currentStatus, isFilterActive: active, warmupRemainingSeconds: audioEngine.warmupRemainingSeconds)
     }
 
     private func refreshControlStates() {
         // Neural is the only path now; controls are always active (model-required gating is
         // handled separately by `updateModelGate`).
-        intensitySlider.isEnabled = true
+        for fader in stemFaders.values {
+            fader.isEnabled = true
+            fader.alphaValue = 1
+        }
         makeupSlider.isEnabled = true
-        intensitySlider.alphaValue = 1
         makeupSlider.alphaValue = 1
 
-        let processTapAvailable = audioEngine.activeCaptureBackend != .blackHole
-        captureScopePopUp.isEnabled = processTapAvailable || audioEngine.activeCaptureBackend == nil
-        captureScopePopUp.alphaValue = captureScopePopUp.isEnabled ? 1 : 0.45
-        captureScopePopUp.toolTip = captureScopePopUp.isEnabled
-            ? preferences.captureScope.detailText
-            : "App selection requires Process Tap (macOS 14.2+). BlackHole captures all audio."
+        // Process Tap is the only capture backend now — Scope selection is always available.
+        captureScopePopUp.isEnabled = true
+        captureScopePopUp.alphaValue = 1
+        captureScopePopUp.toolTip = preferences.captureScope.detailText
     }
 
     // MARK: - Model-required gate (REDESIGN.md §5)
@@ -400,16 +427,45 @@ final class LiveTabViewController: NSViewController {
 
     private func processingRowsView() -> NSView {
         if let existing = cachedProcessingRowsView { return existing }
-        let intensityRow = WindowUI.formRow(label: "Intensity", control: intensitySlider)
+
+        let stemRows: [NSView] = SeparationStem.allCases.compactMap { stem in
+            guard let fader = stemFaders[stem], let mute = stemMuteToggles[stem] else { return nil }
+            let control = Layout.horizontalStack([fader, mute], spacing: WindowUI.Metrics.rowSpacing)
+            return stemFormRow(stem: stem, control: control)
+        }
         let gainRow = WindowUI.formRow(label: "Gain", control: makeupSlider)
-        let view = Layout.verticalStack([intensityRow, gainRow], spacing: WindowUI.Metrics.rowSpacing)
+
+        let rows = stemRows + [gainRow]
+        let view = Layout.verticalStack(rows, spacing: WindowUI.Metrics.rowSpacing)
         // Same "`.leading` stacks don't stretch their children" story as `WindowUI.section` —
         // without this the rows (and the sliders inside them) sit at their own minimum width
         // instead of stretching to fill this stack's actual width.
-        intensityRow.widthAnchor.constraint(equalTo: view.widthAnchor).isActive = true
-        gainRow.widthAnchor.constraint(equalTo: view.widthAnchor).isActive = true
+        for row in rows {
+            row.widthAnchor.constraint(equalTo: view.widthAnchor).isActive = true
+        }
         cachedProcessingRowsView = view
         return view
+    }
+
+    /// `WindowUI.formRow`, but the label carries the stem's identity color and weight — the same
+    /// convention Practice's `LaneHeaderView` uses for its stem names (`identityTextColor` at the
+    /// text-legible variant, semibold), so a stem reads as the same color here as it does in
+    /// Practice's mixer. `Gain`/`Scope` stay on the plain `formRow` label — that convention is
+    /// specifically for identifying a *stem*, not a generic setting.
+    private func stemFormRow(stem: SeparationStem, control: NSView) -> NSView {
+        let label = SharedUI.fieldLabel(stem.displayName)
+        label.textColor = stem.identityTextColor
+        label.font = .systemFont(ofSize: NSFont.systemFontSize, weight: .semibold)
+        control.translatesAutoresizingMaskIntoConstraints = false
+
+        let row = Layout.horizontalStack([label, control], spacing: WindowUI.Metrics.rowSpacing)
+        row.alignment = .centerY
+        row.distribution = .fill
+        NSLayoutConstraint.activate([
+            label.widthAnchor.constraint(equalToConstant: WindowUI.Metrics.labelWidth),
+            row.heightAnchor.constraint(equalToConstant: 24)
+        ])
+        return row
     }
 
     private func modelRequiredView() -> NSView {
@@ -468,7 +524,6 @@ final class LiveTabViewController: NSViewController {
                     self.modelGateDownloadTask = nil
                     self.updateModelGate()
                     self.refreshControlStates()
-                    self.onSettingsChanged?()
                 }
             } catch {
                 await MainActor.run {
@@ -516,8 +571,8 @@ final class LiveTabViewController: NSViewController {
         guard let slider = activeOverlaySlider else { return }
 
         let text: String
-        if slider === intensitySlider {
-            text = "\(Int(intensitySlider.floatValue.rounded()))%"
+        if stemFaders.values.contains(where: { $0 === slider }) {
+            text = "\(Int(slider.floatValue.rounded()))%"
         } else {
             text = String(format: "%.1f dB", makeupSlider.floatValue)
         }
@@ -567,7 +622,6 @@ final class LiveTabViewController: NSViewController {
 
     @objc private func liveToggleChanged() {
         audioEngine.toggleReduction()
-        onSettingsChanged?()
     }
 
     @objc private func captureScopeChanged() {
@@ -580,13 +634,12 @@ final class LiveTabViewController: NSViewController {
             setPopUpSelection(captureScopePopUp, index: actual)
         }
         updateCaptureScopeUI()
-        onSettingsChanged?()
     }
 
-    @objc private func intensityChanged() {
+    @objc private func stemFaderChanged(_ sender: DragValueSlider) {
+        guard let stem = stemFaders.first(where: { $0.value === sender })?.key else { return }
         updateSliderOverlay()
-        audioEngine.setTargetIntensity(intensitySlider.floatValue / 100)
-        onSettingsChanged?()
+        audioEngine.setStemVolume(sender.floatValue / 100, for: stem)
     }
 
     @objc private func makeupGainChanged() {

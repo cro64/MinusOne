@@ -36,7 +36,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if #available(macOS 14.2, *) {
             ProcessTapSession.destroyStaleAggregates()
         }
-        audioEngine.recoverOrphanedBlackHoleIfNeeded()
 
         menuBarController = MenuBarController(
             preferences: preferences,
@@ -116,8 +115,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 self?.openMainWindow(tab: tab)
             }
         }
-
-        restoreSessionIfNeeded()
     }
 
     @available(macOS 14.2, *)
@@ -176,17 +173,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         mainWindowController?.show(tab: tab)
         mainWindowController?.updateLiveStatus(audioEngine.status, isFilterActive: audioEngine.isVocalReductionActive)
-    }
-
-    private func restoreSessionIfNeeded() {
-        guard preferences.lastReductionEnabled else { return }
-
-        audioEngine.start { [weak self] success in
-            guard let self, success else { return }
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) { [weak self] in
-                self?.audioEngine.enableReduction()
-            }
-        }
     }
 
     func applicationWillTerminate(_ notification: Notification) {

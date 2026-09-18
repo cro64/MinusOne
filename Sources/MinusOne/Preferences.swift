@@ -1,15 +1,16 @@
 import Foundation
 
 final class Preferences {
-    static let defaultTargetIntensity: Float = 1.0
     static let defaultMakeupGainDecibels: Float = 4.5
     static let defaultRampDurationMilliseconds: Float = 50.0
 
+    /// Live's default stem mix: vocals muted, everything else at full fader — reproduces the old
+    /// single-slider "remove vocals" default exactly.
+    static let defaultMutedLiveStems: Set<SeparationStem> = [.vocals]
+
     private enum Key {
-        static let targetIntensity = "targetIntensity"
         static let makeupGainDecibels = "makeupGainDecibels"
         static let rampDurationMilliseconds = "rampDurationMilliseconds"
-        static let lastReductionEnabled = "lastReductionEnabled"
         static let hasCompletedOnboarding = "hasCompletedOnboarding"
         static let separationModelVariant = "separationModelVariant"
         static let captureScope = "captureScope"
@@ -19,6 +20,11 @@ final class Preferences {
         static let stemExportFormat = "stemExportFormat"
         static let heroWaveformEnabled = "heroWaveformEnabled"
         static let heroWaveformHeight = "heroWaveformHeight"
+        static let mutedLiveStems = "mutedLiveStems"
+
+        static func liveStemFaderVolume(_ stem: SeparationStem) -> String {
+            "liveStemFaderVolume.\(stem.rawValue)"
+        }
     }
 
     private let defaults: UserDefaults
@@ -27,10 +33,8 @@ final class Preferences {
         let resolved = defaults ?? UserDefaults(suiteName: "com.minusone.app") ?? .standard
         self.defaults = resolved
         self.defaults.register(defaults: [
-            Key.targetIntensity: Double(Self.defaultTargetIntensity),
             Key.makeupGainDecibels: Double(Self.defaultMakeupGainDecibels),
             Key.rampDurationMilliseconds: Double(Self.defaultRampDurationMilliseconds),
-            Key.lastReductionEnabled: false,
             Key.hasCompletedOnboarding: false,
             Key.separationModelVariant: SeparationModelVariant.balanced.rawValue,
             Key.captureScope: CaptureScope.allApps.rawValue,
@@ -42,13 +46,51 @@ final class Preferences {
             // .testTheDeckFitsTheMinimumWindowHeightAtDefaultHeroHeightWithStatusVisible` measures the
             // deck with `statusLabel` visible (a clip still separating — a common state, not an edge
             // case) and 64 left only ~1pt of margin at `WindowSizing.minimum.height`. 45 leaves ~20pt.
-            Key.heroWaveformHeight: Double(45)
+            Key.heroWaveformHeight: Double(45),
+            Key.mutedLiveStems: Self.defaultMutedLiveStems.map(\.rawValue)
         ])
+        for stem in SeparationStem.allCases {
+            self.defaults.register(defaults: [Key.liveStemFaderVolume(stem): Double(1)])
+        }
     }
 
-    var targetIntensity: Float {
-        get { clamp(Float(defaults.double(forKey: Key.targetIntensity)), 0, 1) }
-        set { defaults.set(Double(clamp(newValue, 0, 1)), forKey: Key.targetIntensity) }
+    func liveStemFaderVolume(for stem: SeparationStem) -> Float {
+        clamp(Float(defaults.double(forKey: Key.liveStemFaderVolume(stem))), 0, 1)
+    }
+
+    func setLiveStemFaderVolume(_ volume: Float, for stem: SeparationStem) {
+        defaults.set(Double(clamp(volume, 0, 1)), forKey: Key.liveStemFaderVolume(stem))
+    }
+
+    var mutedLiveStems: Set<SeparationStem> {
+        get {
+            let raw = defaults.stringArray(forKey: Key.mutedLiveStems) ?? []
+            return Set(raw.compactMap(SeparationStem.init(rawValue:)))
+        }
+        set {
+            defaults.set(newValue.map(\.rawValue), forKey: Key.mutedLiveStems)
+        }
+    }
+
+    /// Builds a `StemMixerController` seeded from the persisted per-stem fader/mute state — the
+    /// single place Live's fader values and mute set turn into the mixer Practice already trusts.
+    func liveStemMixerSnapshot() -> StemMixerController {
+        let mixer = StemMixerController()
+        let muted = mutedLiveStems
+        for stem in SeparationStem.allCases {
+            mixer.setVolume(liveStemFaderVolume(for: stem), for: stem)
+            mixer.setMuted(muted.contains(stem), for: stem)
+        }
+        return mixer
+    }
+
+    /// Persists a `StemMixerController`'s full fader/mute state in one call, so callers don't have
+    /// to remember to write both halves separately after every mixer mutation.
+    func persistLiveStemMixer(_ mixer: StemMixerController) {
+        for stem in SeparationStem.allCases {
+            setLiveStemFaderVolume(mixer.volume(for: stem), for: stem)
+        }
+        mutedLiveStems = Set(SeparationStem.allCases.filter { mixer.isMuted($0) })
     }
 
     var makeupGainDecibels: Float {
@@ -59,11 +101,6 @@ final class Preferences {
     var rampDurationMilliseconds: Float {
         get { clamp(Float(defaults.double(forKey: Key.rampDurationMilliseconds)), 30, 80) }
         set { defaults.set(Double(clamp(newValue, 30, 80)), forKey: Key.rampDurationMilliseconds) }
-    }
-
-    var lastReductionEnabled: Bool {
-        get { defaults.bool(forKey: Key.lastReductionEnabled) }
-        set { defaults.set(newValue, forKey: Key.lastReductionEnabled) }
     }
 
     var heroWaveformEnabled: Bool {

@@ -1,6 +1,6 @@
 import Foundation
 
-/// Which apps MinusOne captures and processes. Process Tap only — BlackHole always captures all output.
+/// Which apps MinusOne captures and processes.
 enum CaptureScope: String, CaseIterable, Equatable {
     case allApps
     case selectedApps

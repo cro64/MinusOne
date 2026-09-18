@@ -13,25 +13,6 @@ enum AudioEngineStatus: Equatable {
     case warmingUp
     case permissionRequired(AudioPermissionKind)
     case error(String)
-
-    var displayText: String {
-        switch self {
-        case .idle:
-            return "Idle"
-        case .passthrough:
-            return "Ready — system audio passthrough"
-        case .active:
-            return "Active — reducing vocals"
-        case .warmingUp:
-            return "Warming up — neural model loading"
-        case .permissionRequired(.microphone):
-            return "Microphone permission required for BlackHole"
-        case .permissionRequired(.systemAudioRecording):
-            return "System Audio Recording permission required"
-        case .error(let message):
-            return message
-        }
-    }
 }
 
 /// Throws `AudioEngineError.coreAudio(message, status)` unless `status` is `noErr`.
@@ -46,8 +27,6 @@ func checkCoreAudio(_ status: OSStatus, _ message: String) throws {
 }
 
 enum AudioEngineError: Error, LocalizedError {
-    case blackHoleMissing
-    case blackHoleDriverInstalledButNotLoaded
     case processTapPermissionDenied
     case noPhysicalOutput
     case noSelectedAudioProcesses
@@ -56,10 +35,6 @@ enum AudioEngineError: Error, LocalizedError {
 
     var errorDescription: String? {
         switch self {
-        case .blackHoleMissing:
-            return "BlackHole is not installed. Install BlackHole 2ch from existential.audio/blackhole, then reopen MinusOne."
-        case .blackHoleDriverInstalledButNotLoaded:
-            return "BlackHole is installed, but CoreAudio has not loaded it yet. Restart CoreAudio or reboot, then reopen MinusOne."
         case .processTapPermissionDenied:
             return "System audio capture permission denied. Grant System Audio Recording in System Settings."
         case .noPhysicalOutput:

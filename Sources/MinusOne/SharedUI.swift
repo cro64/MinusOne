@@ -126,8 +126,8 @@ final class StatusHeaderView: NSView {
     /// one set of semantics, a scale knob for the difference. The copies had already drifted on
     /// `.passthrough`/`.idle`, and since both ended in a `default` branch, neither would have been
     /// flagged by the compiler when a new `AudioEngineStatus` case appeared.
-    func update(for status: AudioEngineStatus, isFilterActive: Bool) {
-        let copy = Self.copy(for: status, isFilterActive: isFilterActive)
+    func update(for status: AudioEngineStatus, isFilterActive: Bool, warmupRemainingSeconds: Double? = nil) {
+        let copy = Self.copy(for: status, isFilterActive: isFilterActive, warmupRemainingSeconds: warmupRemainingSeconds)
         update(title: copy.title, indicatorColor: copy.indicatorColor, errorDetail: copy.errorDetail)
     }
 
@@ -139,21 +139,42 @@ final class StatusHeaderView: NSView {
     /// isn't reducing, so the status is the more trustworthy of the two. (The popover's old copy
     /// resolved these through its `default` and could briefly say "On" instead, since it tracks
     /// status and filter state through two separate updates.)
+    ///
+    /// `tooltipDetail` is the single canonical long-form sentence for this status — used by the
+    /// menu bar tooltip (previously `AudioEngineStatus.displayText`, a second hand-written copy
+    /// that had already drifted, e.g. claiming "reducing vocals" for `.active` regardless of
+    /// `isFilterActive`) and by the Live tab's meter caption (previously its own third private
+    /// switch). One function, one wording per status, so the three surfaces can't disagree again.
     static func copy(
         for status: AudioEngineStatus,
-        isFilterActive: Bool
-    ) -> (title: String, indicatorColor: NSColor, errorDetail: String?) {
+        isFilterActive: Bool,
+        warmupRemainingSeconds: Double? = nil
+    ) -> (title: String, indicatorColor: NSColor, errorDetail: String?, tooltipDetail: String) {
         switch status {
         case .active:
-            return isFilterActive ? ("On", .brandAccentDeep, nil) : ("Off", .tertiaryLabelColor, nil)
+            return isFilterActive
+                ? ("On", .brandAccentDeep, nil, "Reducing vocals")
+                : ("Off", .tertiaryLabelColor, nil, "Ready — system audio passthrough")
         case .warmingUp:
-            return ("Warming up", .systemCyan, nil)
-        case .permissionRequired:
-            return ("Permission needed", .systemOrange, nil)
+            let suffix: String
+            if let warmupRemainingSeconds, warmupRemainingSeconds > 0 {
+                suffix = " (~\(Int(warmupRemainingSeconds.rounded(.up)))s)"
+            } else {
+                suffix = ""
+            }
+            // The countdown lives in the title itself, not just `tooltipDetail` — the title is the
+            // one glanceable, prominent element (the Live tab's hero card, the menu bar tooltip's
+            // headline); a number tucked only into a tooltip or a small meter caption is too easy
+            // to miss when what you actually want is "how much longer do I wait."
+            return ("Warming up\(suffix)", .systemCyan, nil, "Warming up — neural model loading\(suffix)")
+        case .permissionRequired(.microphone):
+            return ("Permission needed", .systemOrange, nil, "Microphone permission required")
+        case .permissionRequired(.systemAudioRecording):
+            return ("Permission needed", .systemOrange, nil, "System Audio Recording permission required")
         case .error(let message):
-            return ("Error", .systemRed, message)
+            return ("Error", .systemRed, message, "Reduction stopped — an error occurred")
         case .passthrough, .idle:
-            return ("Off", .tertiaryLabelColor, nil)
+            return ("Off", .tertiaryLabelColor, nil, "Ready — system audio passthrough")
         }
     }
 
