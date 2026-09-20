@@ -84,9 +84,9 @@ The menu has these items:
 | --- | --- |
 | **Off** | Live is off |
 | **On** | Vocals are being removed |
-| **Warming up** | The model is loading |
+| **Warming up** | The model is loading, with a live countdown |
 | **Permission needed** | Grant access in System Settings |
-| **Error** | Something went wrong |
+| **Error** | Something went wrong — hover the icon for the reason |
 | **Dot in the corner** | An update is ready |
 
 ## Live
