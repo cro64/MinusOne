@@ -9,6 +9,12 @@ final class ClipLibraryStore {
     private let indexURL: URL
     private var clipsByID: [UUID: PracticeClip] = [:]
 
+    /// How `trash(_:)` disposes of a clip's folder. The Trash by default; tests swap in a plain
+    /// delete so they do not leave folders in the real one.
+    var disposeOfFolder: (URL) throws -> Void = { url in
+        try FileManager.default.trashItem(at: url, resultingItemURL: nil)
+    }
+
     init(rootURL: URL? = nil) {
         let resolvedRoot = rootURL ?? Self.defaultRootURL()
         libraryRootURL = resolvedRoot
@@ -56,6 +62,17 @@ final class ClipLibraryStore {
         }
     }
 
+    /// `update` for work that outlives the moment it started — separation, peak backfill. A clip
+    /// that is no longer in the library was deleted meanwhile, and writing it back would resurrect
+    /// it as an entry with no files, so this ignores it.
+    func updateExisting(_ clip: PracticeClip) {
+        queue.sync {
+            guard clipsByID[clip.id] != nil else { return }
+            clipsByID[clip.id] = clip
+            persist()
+        }
+    }
+
     /// Renames a clip in place. Returns the updated clip, or `nil` if the id is unknown or the
     /// new title is blank — a rename that would leave a clip with no name is treated as a
     /// cancellation, since the title is the only thing identifying it in the sidebar.
@@ -77,6 +94,22 @@ final class ClipLibraryStore {
             clipsByID.removeValue(forKey: id)
             persist()
             try? fileManager.removeItem(at: folder(forClipID: id))
+        }
+    }
+
+    /// Removes a clip from the library and moves its folder to the Trash, so a delete can be undone
+    /// from Finder. Falls back to deleting the folder if it can't be trashed.
+    func trash(_ id: UUID) {
+        queue.sync {
+            clipsByID.removeValue(forKey: id)
+            persist()
+            let folder = folder(forClipID: id)
+            guard fileManager.fileExists(atPath: folder.path) else { return }
+            do {
+                try disposeOfFolder(folder)
+            } catch {
+                try? fileManager.removeItem(at: folder)
+            }
         }
     }
 

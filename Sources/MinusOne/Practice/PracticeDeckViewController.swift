@@ -35,7 +35,7 @@ final class PracticeDeckViewController: NSViewController, NSTextFieldDelegate {
     private let heroWaveformView = HeroWaveformView(frame: .zero)
     private let heroResizeHandle = HeroResizeHandleView(frame: .zero)
     private var heroContainer: NSStackView?
-    private lazy var heroHeightConstraint = heroWaveformView.heightAnchor.constraint(equalToConstant: CGFloat(preferences.heroWaveformHeight))
+    private lazy var heroHeightConstraint = heroWaveformView.heightAnchor.constraint(equalToConstant: HeroWaveformView.maximumHeight)
     private let heroToggleButton = FlatButton(title: "", kind: .secondary, target: nil, action: nil)
     private let toolbar = TimelineToolbarView()
     private var tapTempo = TapTempo()
@@ -133,6 +133,8 @@ final class PracticeDeckViewController: NSViewController, NSTextFieldDelegate {
         heroResizeHandle.translatesAutoresizingMaskIntoConstraints = false
         heroResizeHandle.onDrag = { [weak self] delta in self?.heroResizeHandleDragged(byDeltaY: delta) }
         heroHeightConstraint.isActive = true
+        // Height is automatic (`fitLanesToHeight`), so there is nothing to drag.
+        heroResizeHandle.isHidden = true
         // 4pt, not a rounder 8: `HeroWaveformView.maximumHeight` (53) was sized against the deck's
         // real measured layout at `WindowSizing.minimum` with this handle at exactly this height —
         // see that constant's doc comment, which also covers why the budget now accounts for
@@ -401,7 +403,7 @@ final class PracticeDeckViewController: NSViewController, NSTextFieldDelegate {
                     current.downbeatOffsetSeconds = updated.downbeatOffsetSeconds
                     current.beatConfidence = updated.beatConfidence
                 }
-                libraryStore.update(current)
+                libraryStore.updateExisting(current)
                 self.clip = current
                 self.timeline.refreshPeaks()
                 self.heroWaveformView.refreshPeaks()
@@ -436,7 +438,7 @@ final class PracticeDeckViewController: NSViewController, NSTextFieldDelegate {
         clip.beatConfidence = nil
         clip.isBeatGridUserSet = true
         self.clip = clip
-        self.libraryStore.update(clip)
+        self.libraryStore.updateExisting(clip)
     }
 
     /// Commits a loop drawn on either the lanes or the hero waveform, and shows it on both.
@@ -499,8 +501,51 @@ final class PracticeDeckViewController: NSViewController, NSTextFieldDelegate {
     /// `refreshForCurrentClip()`, which also runs on every separation tick before the peaks have
     /// been reloaded — it would measure a stale track count and then be corrected a line later.
     private func updateTimelineHeight() {
-        timelineHeightConstraint.constant = DeckTimelineView.height(forLaneCount: max(1, timeline.tracks.count))
+        timelineHeightConstraint.constant = DeckTimelineView.height(
+            forLaneCount: max(1, timeline.tracks.count),
+            laneHeight: timeline.laneHeight
+        )
     }
+
+    override func viewDidLayout() {
+        super.viewDidLayout()
+        fitLanesToHeight()
+    }
+
+    /// Spends spare window height on the deck, automatically: the hero waveform takes it first (up
+    /// to `HeroWaveformView.maximumExtraHeight`, which the default 1120×760 window already
+    /// reaches), and the lanes share what is left up to `maximumLaneHeight`.
+    /// The base fitting height is derived with both at their minimum, so the result depends only on
+    /// the window and never on what it last chose — no layout feedback loop.
+    private func fitLanesToHeight() {
+        guard let contentStack, !contentStack.isHidden else { return }
+        let laneCount = CGFloat(max(1, timeline.tracks.count))
+        let pad = WindowUI.Metrics.padding
+        let baseTimeline = DeckTimelineView.height(forLaneCount: Int(laneCount))
+        let heroVisible = !(heroContainer?.isHidden ?? true)
+        let baseHero = HeroWaveformView.maximumHeight
+        var baseFitting = contentStack.fittingSize.height - timelineHeightConstraint.constant + baseTimeline
+        if heroVisible { baseFitting -= heroHeightConstraint.constant - baseHero }
+        let spare = max(0, view.bounds.height - pad * 2 - baseFitting)
+
+        let heroExtra = heroVisible ? min(HeroWaveformView.maximumExtraHeight, spare.rounded(.down)) : 0
+        let laneGrowth = min(TimelineMetrics.maximumLaneHeight - TimelineMetrics.laneHeight, ((spare - heroExtra) / laneCount).rounded(.down))
+        let target = TimelineMetrics.laneHeight + max(0, laneGrowth)
+
+        if target != timeline.laneHeight {
+            timeline.laneHeight = target
+            updateTimelineHeight()
+        }
+        if heroExtra != heroExtraHeight {
+            heroExtraHeight = heroExtra
+            heroHeightConstraint.constant = baseHero + heroExtra
+        }
+    }
+
+    var heroHeightForTesting: CGFloat { heroHeightConstraint.constant }
+
+    /// Extra hero height the window can currently afford, on top of the saved `heroWaveformHeight`.
+    private var heroExtraHeight: CGFloat = 0
 
     private func applyHeroWaveformVisibility() {
         let enabled = preferences.heroWaveformEnabled
@@ -515,10 +560,13 @@ final class PracticeDeckViewController: NSViewController, NSTextFieldDelegate {
     }
 
     private func heroResizeHandleDragged(byDeltaY deltaY: CGFloat) {
+        // The handle drags the height on screen, which includes whatever the window is lending
+        // (`heroExtraHeight`); the saved preference is only the part the user owns.
         let proposed = heroHeightConstraint.constant + deltaY
-        let clamped = min(max(proposed, HeroWaveformView.minimumHeight), HeroWaveformView.maximumHeight)
+        let clamped = min(max(proposed, HeroWaveformView.minimumHeight), HeroWaveformView.maximumHeight + heroExtraHeight)
         heroHeightConstraint.constant = clamped
-        preferences.heroWaveformHeight = Double(clamped)
+        let owned = min(clamped, HeroWaveformView.maximumHeight)
+        preferences.heroWaveformHeight = Double(owned)
     }
 
     func updateClip(_ updated: PracticeClip) {
@@ -823,6 +871,21 @@ final class PracticeDeckViewController: NSViewController, NSTextFieldDelegate {
     /// A rename that happened in the sidebar. Deliberately *not* routed through `updateClip`:
     /// that one may reload the playback engine, and re-titling a clip has no business
     /// interrupting playback.
+    /// The library deleted a clip. If it is the one shown or loaded, stop it and go back to the
+    /// empty state rather than leaving a deck pointing at files that are gone.
+    func clipWasDeleted(id: UUID) {
+        if loadedClipID == id {
+            playbackEngine.unload()
+            loadedClipID = nil
+            showPlayGlyph(true)
+            notifyPlaybackState()
+        }
+        guard clip?.id == id else { return }
+        clip = nil
+        clearLoop()
+        showEmptyState(true)
+    }
+
     func applyRenamedClip(_ updated: PracticeClip) {
         guard clip?.id == updated.id else { return }
         clip = updated

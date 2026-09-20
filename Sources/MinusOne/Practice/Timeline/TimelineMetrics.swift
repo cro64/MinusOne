@@ -30,6 +30,9 @@ enum TimelineMetrics {
     /// compress-then-scroll behaviour is what to build then.
     static let laneHeight: CGFloat = 72
     static let laneSpacing: CGFloat = 4
+    /// Ceiling for `laneHeight` when the window is taller than the deck needs. Lanes should stay
+    /// track-shaped: past this the deck stays top-aligned and the spare height is left empty.
+    static let maximumLaneHeight: CGFloat = 100
 
     /// Width of a lane's header — name, fader, mute, solo, export. Spec §8's window arithmetic is
     /// built on this number.

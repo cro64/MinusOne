@@ -69,6 +69,30 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
     /// header overlaps. 80 clears the zoom button by 11pt. It does *not* line up with the 24pt
     /// content padding below — nothing can, on this edge.
     private static let backButtonLeadingInset: CGFloat = 80
+    /// In full screen the traffic lights are gone, so the leading slot can line up with the
+    /// content's own padding instead of clearing them.
+    private static let fullScreenLeadingInset: CGFloat = WindowUI.Metrics.padding
+    private var leadingSlotConstraints: [NSLayoutConstraint] = []
+
+    /// Holds the window at its current size against the tabs' own constraints. AppKit sizes a
+    /// window from its content's constraints, and only priorities *below* 500 (stay-put) lose to
+    /// them — Live's 980pt width preference (800) and the cards' 750 hugging both win, so a tab
+    /// swap resized the window: to 980 at launch, and in full screen to a 980pt page inside a
+    /// screen-sized window. These sit above every tab constraint and are re-pointed at the window's
+    /// real size on each resize, so they never fight the user, full screen or `setContentSize`.
+    private lazy var sizeLock: (width: NSLayoutConstraint, height: NSLayoutConstraint) = {
+        let width = contentContainer.widthAnchor.constraint(equalToConstant: WindowSizing.defaultContent.width)
+        let height = contentContainer.heightAnchor.constraint(equalToConstant: WindowSizing.defaultContent.height)
+        width.priority = .init(900)
+        height.priority = .init(900)
+        return (width, height)
+    }()
+
+    func windowDidResize(_ notification: Notification) {
+        guard let size = window?.contentView?.frame.size, size.width > 0 else { return }
+        sizeLock.width.constant = size.width
+        sizeLock.height.constant = size.height
+    }
 
     private let contentContainer = ThemedView(fill: .windowBackgroundColor)
     private let contentRootViewController = NSViewController()
@@ -141,7 +165,8 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         window.titlebarAppearsTransparent = true
         // A real floor, not the default size. Four lanes plus chrome need 574pt, so nothing has
         // to compress at 600 — see `TimelineMetrics.laneHeight` for why §8's lane floor is not built.
-        window.minSize = WindowSizing.minimum
+        window.contentMinSize = WindowSizing.minimum
+        window.collectionBehavior.insert(.fullScreenPrimary)
         // Explicit, not just relying on NSWindow's defaults: an ambiguous/false isOpaque or clear
         // backgroundColor is exactly what makes the Dock show through the window at the edges.
         window.isOpaque = true
@@ -156,6 +181,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         contentContainer.translatesAutoresizingMaskIntoConstraints = true
         contentRootViewController.view = contentContainer
         window.contentViewController = contentRootViewController
+        NSLayoutConstraint.activate([sizeLock.width, sizeLock.height])
 
         configureHeader()
         configureLiveTab()
@@ -164,6 +190,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         sidebar.onSelectClip = { [weak self] clip in self?.deck.show(clip: clip) }
         // Renaming is available on both sides of the split, so each side has to tell the other.
         sidebar.onRenameClip = { [weak self] clip in self?.deck.applyRenamedClip(clip) }
+        sidebar.onDeleteClip = { [weak self] id in self?.deck.clipWasDeleted(id: id) }
         deck.onClipRenamed = { [weak self] clip in self?.sidebar.upsertClip(clip) }
         deck.onPlaybackStateChanged = { [weak self] clipID, isPlaying in
             self?.sidebar.setPlayingClip(id: isPlaying ? clipID : nil)
@@ -184,6 +211,9 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         // word on the opening size; the floor above is what permits shrinking afterwards.
         window.setContentSize(WindowSizing.defaultContent)
         window.center()
+        // After the default frame, so a saved size and position win when there is one and the
+        // default above is what a first launch gets. AppKit clamps a restored frame to `contentMinSize`.
+        window.setFrameAutosaveName("MinusOneMainWindow")
     }
 
     @available(*, unavailable)
@@ -204,6 +234,14 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         // outside the navigation, and reading `currentTab` alone would pop the dot back up on top
         // of a takeover page that had deliberately hidden it.
         liveStatusDot.isHidden = currentPage != .tab(.practice)
+    }
+
+    func windowWillEnterFullScreen(_ notification: Notification) {
+        leadingSlotConstraints.forEach { $0.constant = Self.fullScreenLeadingInset }
+    }
+
+    func windowDidExitFullScreen(_ notification: Notification) {
+        leadingSlotConstraints.forEach { $0.constant = Self.backButtonLeadingInset }
     }
 
     func windowShouldClose(_ sender: NSWindow) -> Bool {
@@ -293,17 +331,20 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         headerRow.addSubview(cluster)
         headerRow.addSubview(backButton)
         headerRow.addSubview(sidebarToggleButton)
+        let backLeading = backButton.leadingAnchor.constraint(equalTo: headerRow.leadingAnchor, constant: Self.backButtonLeadingInset)
+        let toggleLeading = sidebarToggleButton.leadingAnchor.constraint(equalTo: headerRow.leadingAnchor, constant: Self.backButtonLeadingInset)
+        leadingSlotConstraints = [backLeading, toggleLeading]
         NSLayoutConstraint.activate([
             // Trailing-aligned, matching the padding the tab content below uses, so the switch
             // lines up with the right edge of the Live tab's card grid.
             cluster.trailingAnchor.constraint(equalTo: headerRow.trailingAnchor, constant: -WindowUI.Metrics.padding),
             cluster.centerYAnchor.constraint(equalTo: headerRow.centerYAnchor),
-            backButton.leadingAnchor.constraint(equalTo: headerRow.leadingAnchor, constant: Self.backButtonLeadingInset),
+            backLeading,
             backButton.centerYAnchor.constraint(equalTo: headerRow.centerYAnchor),
             // Same slot as `backButton`, which is never visible at the same time. The 80pt inset is
             // load-bearing: with `.fullSizeContentView` the traffic lights float inside `headerRow`
             // (14×14 at x=9/32/55), and 80 clears the zoom button by 11pt.
-            sidebarToggleButton.leadingAnchor.constraint(equalTo: headerRow.leadingAnchor, constant: Self.backButtonLeadingInset),
+            toggleLeading,
             sidebarToggleButton.centerYAnchor.constraint(equalTo: headerRow.centerYAnchor)
         ])
 

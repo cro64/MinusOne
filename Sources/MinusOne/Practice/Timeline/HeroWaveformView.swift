@@ -16,6 +16,8 @@ final class HeroWaveformView: NSView {
     /// label visible (measured need 588pt against the 600pt floor), rather than a hand-estimated one.
     static let minimumHeight: CGFloat = 32
     static let maximumHeight: CGFloat = 53
+    /// How much taller the deck may make the hero on a big window, on top of the saved height.
+    static let maximumExtraHeight: CGFloat = 150
 
     private var peakStore: PeakStore?
     private(set) var clipDuration: Double = 0

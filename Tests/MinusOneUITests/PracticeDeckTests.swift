@@ -498,6 +498,67 @@ final class PracticeDeckTests: XCTestCase {
                            "the speed slider is \(controller.speedSliderForTesting.frame.width)pt wide — still reads as a full-width row")
     }
 
+    /// Spare window height goes to the lanes, but only a little — four slabs hundreds of points
+    /// tall would stop reading as tracks.
+    func testLanesGrowWithWindowHeightButStayCapped() throws {
+        let clip = try makeClip(withStemSidecars: true)
+        let controller = deck()
+        controller.show(clip: clip)
+
+        controller.view.frame = NSRect(x: 0, y: 0, width: 900, height: 562)
+        controller.view.layoutSubtreeIfNeeded()
+        XCTAssertEqual(controller.timelineForTesting.laneHeight, TimelineMetrics.laneHeight, accuracy: 4,
+                       "almost no spare height at the window floor, so lanes stay near their minimum")
+
+        controller.view.frame = NSRect(x: 0, y: 0, width: 900, height: 640)
+        controller.view.layoutSubtreeIfNeeded()
+        XCTAssertGreaterThan(controller.heroHeightForTesting, HeroWaveformView.maximumHeight,
+                             "spare height goes to the hero first")
+        XCTAssertLessThan(controller.heroHeightForTesting,
+                          HeroWaveformView.maximumHeight + HeroWaveformView.maximumExtraHeight)
+        XCTAssertEqual(controller.timelineForTesting.laneHeight, TimelineMetrics.laneHeight, accuracy: 0.5,
+                       "lanes wait until the hero is full")
+
+        controller.view.frame = NSRect(x: 0, y: 0, width: 900, height: 800)
+        controller.view.layoutSubtreeIfNeeded()
+        XCTAssertEqual(controller.heroHeightForTesting,
+                       HeroWaveformView.maximumHeight + HeroWaveformView.maximumExtraHeight, accuracy: 0.5)
+        let grown = controller.timelineForTesting.laneHeight
+        XCTAssertGreaterThan(grown, TimelineMetrics.laneHeight)
+        XCTAssertLessThan(grown, TimelineMetrics.maximumLaneHeight)
+
+        controller.view.frame = NSRect(x: 0, y: 0, width: 900, height: 1600)
+        controller.view.layoutSubtreeIfNeeded()
+        XCTAssertEqual(controller.timelineForTesting.laneHeight, TimelineMetrics.maximumLaneHeight)
+        XCTAssertEqual(controller.timelineForTesting.frame.height,
+                       DeckTimelineView.height(forLaneCount: 4, laneHeight: TimelineMetrics.maximumLaneHeight), accuracy: 0.5)
+        XCTAssertEqual(controller.heroHeightForTesting,
+                       HeroWaveformView.maximumHeight + HeroWaveformView.maximumExtraHeight, accuracy: 0.5,
+                       "a very tall window gives the hero its full extra height")
+    }
+
+    /// Growing for a big window (full screen) must not stick: the same deck shrinks back when the
+    /// window does, all the way to the floor.
+    func testTheDeckShrinksBackAfterAGrowingWindowShrinks() throws {
+        let clip = try makeClip(withStemSidecars: true)
+        let controller = deck()
+        controller.show(clip: clip)
+
+        controller.view.frame = NSRect(x: 0, y: 0, width: 900, height: 562)
+        controller.view.layoutSubtreeIfNeeded()
+        let floorHero = controller.heroHeightForTesting
+        let floorLane = controller.timelineForTesting.laneHeight
+
+        controller.view.frame = NSRect(x: 0, y: 0, width: 1470, height: 1600)
+        controller.view.layoutSubtreeIfNeeded()
+        XCTAssertGreaterThan(controller.heroHeightForTesting, floorHero + 100)
+
+        controller.view.frame = NSRect(x: 0, y: 0, width: 900, height: 562)
+        controller.view.layoutSubtreeIfNeeded()
+        XCTAssertEqual(controller.heroHeightForTesting, floorHero, accuracy: 0.5)
+        XCTAssertEqual(controller.timelineForTesting.laneHeight, floorLane, accuracy: 0.5)
+    }
+
     /// A grid must not follow the user to the next clip — each clip has its own.
     func testTheGridIsReplacedOnAClipSwitch() throws {
         var first = try makeClip(withStemSidecars: true)
