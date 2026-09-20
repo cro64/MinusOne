@@ -97,8 +97,8 @@ final class DeckTimelineView: NSView {
     /// Ruler + lanes + indicator, with `laneSpacing` between every block. The BPM/Tap toolbar used
     /// to add its own row here; it now lives in `PracticeDeckViewController`'s control bar, below
     /// the whole timeline, alongside the rest of the transport.
-    static func height(forLaneCount count: Int) -> CGFloat {
-        let lanes = CGFloat(count) * TimelineMetrics.laneHeight + CGFloat(max(0, count - 1)) * TimelineMetrics.laneSpacing
+    static func height(forLaneCount count: Int, laneHeight: CGFloat = TimelineMetrics.laneHeight) -> CGFloat {
+        let lanes = CGFloat(count) * laneHeight + CGFloat(max(0, count - 1)) * TimelineMetrics.laneSpacing
         return TimelineMetrics.rulerHeight
             + TimelineMetrics.laneSpacing
             + lanes
@@ -106,8 +106,18 @@ final class DeckTimelineView: NSView {
             + TimelineMetrics.scrollIndicatorHeight
     }
 
+    /// Height of each lane. `TimelineMetrics.laneHeight` is the floor; the deck raises it (up to
+    /// `TimelineMetrics.maximumLaneHeight`) when the window has height to spare.
+    var laneHeight: CGFloat = TimelineMetrics.laneHeight {
+        didSet {
+            guard laneHeight != oldValue else { return }
+            invalidateIntrinsicContentSize()
+            needsLayout = true
+        }
+    }
+
     override var intrinsicContentSize: NSSize {
-        NSSize(width: NSView.noIntrinsicMetric, height: Self.height(forLaneCount: max(1, tracks.count)))
+        NSSize(width: NSView.noIntrinsicMetric, height: Self.height(forLaneCount: max(1, tracks.count), laneHeight: laneHeight))
     }
 
     // MARK: - Clip lifecycle
@@ -261,11 +271,11 @@ final class DeckTimelineView: NSView {
 
         var y = rulerY + TimelineMetrics.rulerHeight + TimelineMetrics.laneSpacing
         for (index, lane) in lanes.enumerated() {
-            lane.frame = NSRect(x: canvasX, y: y, width: width, height: TimelineMetrics.laneHeight)
+            lane.frame = NSRect(x: canvasX, y: y, width: width, height: laneHeight)
             if index < headerViews.count {
-                headerViews[index].frame = NSRect(x: 0, y: y, width: TimelineMetrics.headerWidth, height: TimelineMetrics.laneHeight)
+                headerViews[index].frame = NSRect(x: 0, y: y, width: TimelineMetrics.headerWidth, height: laneHeight)
             }
-            y += TimelineMetrics.laneHeight + TimelineMetrics.laneSpacing
+            y += laneHeight + TimelineMetrics.laneSpacing
         }
 
         // From the top of the ruler to the bottom of the last lane: one band, all four lanes, so

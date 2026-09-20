@@ -154,7 +154,10 @@ enum WindowUI {
         target: AnyObject?,
         action: Selector?
     ) -> FlatButton {
-        let button = FlatButton(title: "", kind: .secondary, target: target, action: action)
+        // Ghost: bare glyphs, no box. Ghost's default accent tint is overridden so the transport
+        // reads as neutral controls; hover still tints the background.
+        let button = FlatButton(title: "", kind: .ghost, target: target, action: action)
+        button.textColorOverride = .labelColor
         // A momentary action must never paint the engaged fill: `state` gets set on these anyway
         // (measured — even a stock `NSButton` set to `.momentaryPushIn` comes back from a click
         // with `state == .on`), and the Forward glyph ended up latched in solid accent as though
@@ -178,6 +181,9 @@ enum WindowUI {
     ) -> FlatButton {
         let button = transportButton(symbolName: symbolName, label: label, target: target, action: action)
         button.setButtonType(.pushOnPushOff)
+        // A mode needs its box: ghost has no engaged fill to show the latch.
+        button.kind = .secondary
+        button.textColorOverride = nil
         button.reflectsState = true
         return button
     }

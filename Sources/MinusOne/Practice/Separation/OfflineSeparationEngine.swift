@@ -44,7 +44,7 @@ final class OfflineSeparationEngine {
                 AppLogger.shared.error("Practice offline separation failed for \(clip.id): \(error.localizedDescription)")
                 var failed = clip
                 failed.processingFailed = true
-                self.libraryStore.update(failed)
+                self.libraryStore.updateExisting(failed)
                 onFailure(failed, error)
             }
         }
@@ -216,7 +216,7 @@ final class OfflineSeparationEngine {
                 // this it would silently overwrite that edit — and leave `isBeatGridUserSet` false,
                 // letting the final `detectBeatGrid` call below clobber it again.
                 workingClip = withCurrentBeatGrid(workingClip)
-                libraryStore.update(workingClip)
+                libraryStore.updateExisting(workingClip)
                 onUpdate(workingClip)
             }
         }
@@ -237,7 +237,7 @@ final class OfflineSeparationEngine {
         // Already on the separation queue; `detectBeatGrid` cannot throw. Refreshed first so
         // detection sees the current `isBeatGridUserSet`, not the stale snapshot's.
         workingClip = detectBeatGrid(for: withCurrentBeatGrid(workingClip))
-        libraryStore.update(workingClip)
+        libraryStore.updateExisting(workingClip)
         onUpdate(workingClip)
     }
 

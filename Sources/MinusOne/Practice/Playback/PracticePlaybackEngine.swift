@@ -467,6 +467,9 @@ final class PracticePlaybackEngine {
         onPlayheadUpdate?(time)
     }
 
+    /// Stops and drops whatever clip is loaded — for when that clip is deleted out from under it.
+    func unload() { tearDown() }
+
     private func tearDown() {
         stopPolling()
         for player in players.values {

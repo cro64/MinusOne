@@ -61,6 +61,8 @@ final class ClipSidebarViewController: NSViewController, NSTableViewDataSource, 
     var onDropFiles: (([URL]) -> Void)?
     /// Fired after a rename has been persisted, so the deck showing the same clip re-titles too.
     var onRenameClip: ((PracticeClip) -> Void)?
+    /// Fired after a clip has been deleted from the library, so the deck can drop it if it is open.
+    var onDeleteClip: ((UUID) -> Void)?
     var onImportClicked: (() -> Void)?
     var onRecordClicked: (() -> Void)?
     var onRecordElapsedClicked: (() -> Void)?
@@ -110,6 +112,9 @@ final class ClipSidebarViewController: NSViewController, NSTableViewDataSource, 
             button.imageScaling = .scaleProportionallyDown
             button.constrainSize(width: 24, height: 24)
             button.target = self
+            // Momentary actions: AppKit leaves `state == .on` after a click, which would otherwise
+            // latch the engaged fill on permanently.
+            button.reflectsState = false
         }
         importButton.textColorOverride = .secondaryLabelColor
         importButton.setIcon("square.and.arrow.down", pointSize: 12, label: "Import")
@@ -263,6 +268,10 @@ final class ClipSidebarViewController: NSViewController, NSTableViewDataSource, 
         return view
     }
 
+    func tableView(_ tableView: NSTableView, rowViewForRow row: Int) -> NSTableRowView? {
+        ClipTableRowView()
+    }
+
     func tableViewSelectionDidChange(_ notification: Notification) {
         guard let clip = filteredClips[safe: tableView.selectedRow] else { return }
         onSelectClip?(clip)
@@ -307,14 +316,76 @@ final class ClipSidebarViewController: NSViewController, NSTableViewDataSource, 
     /// handled — not later, when the menu item fires.
     func menuNeedsUpdate(_ menu: NSMenu) {
         menu.removeAllItems()
-        guard let clip = filteredClips[safe: tableView.clickedRow] else { return }
+        guard let clip = filteredClips[safe: clickedRowOverrideForTesting ?? tableView.clickedRow] else { return }
         let item = NSMenuItem(title: "Rename…", action: #selector(renameMenuItemSelected(_:)), keyEquivalent: "")
         item.target = self
         item.representedObject = clip.id
         menu.addItem(item)
+
+        let reveal = NSMenuItem(title: "Show in Finder", action: #selector(showInFinderMenuItemSelected(_:)), keyEquivalent: "")
+        reveal.target = self
+        reveal.representedObject = clip.id
+        menu.addItem(reveal)
+
+        menu.addItem(.separator())
+        let delete = NSMenuItem(title: "Delete", action: #selector(deleteMenuItemSelected(_:)), keyEquivalent: "")
+        delete.target = self
+        delete.representedObject = clip.id
+        menu.addItem(delete)
+    }
+
+    // MARK: - Show in Finder / Delete
+
+    @objc private func showInFinderMenuItemSelected(_ sender: NSMenuItem) {
+        guard let id = sender.representedObject as? UUID, let clip = libraryStore.clip(withID: id) else { return }
+        let source = libraryStore.stemFileURL(clipID: id, fileName: clip.sourceFileName)
+        // The original audio if it is still there, otherwise the clip's own folder.
+        let target = FileManager.default.fileExists(atPath: source.path) ? source : libraryStore.folder(forClipID: id)
+        NSWorkspace.shared.activateFileViewerSelecting([target])
+    }
+
+    @objc private func deleteMenuItemSelected(_ sender: NSMenuItem) {
+        guard let id = sender.representedObject as? UUID else { return }
+        deleteClip(id: id)
+    }
+
+    /// Moves the clip to the Trash and drops its row. The deck is told after the library has let
+    /// go of the clip, so nothing it does in response can find the clip again.
+    func deleteClip(id: UUID) {
+        libraryStore.trash(id)
+        allClips.removeAll { $0.id == id }
+        if playingClipID == id { playingClipID = nil }
+        applyFilter(preserveSelection: true)
+        onDeleteClip?(id)
     }
 
     var searchFieldForTesting: NSSearchField { searchField }
+
+    /// The context menu the given row would show, built the way a right-click builds it.
+    func menuForTesting(row: Int) -> NSMenu {
+        let menu = NSMenu()
+        clickedRowOverrideForTesting = row
+        menuNeedsUpdate(menu)
+        clickedRowOverrideForTesting = nil
+        return menu
+    }
+    private var clickedRowOverrideForTesting: Int?
+}
+
+/// Row chrome: the selected clip is a soft rounded rectangle inset from the row's edges, not the
+/// system's full-width blue bar. The tint is drawn at draw time from `brandAccent`, so it follows
+/// light/dark without a stored, frozen color. Text keeps its normal color: with a light tint, the
+/// white-on-blue treatment `.emphasized` would apply is the wrong contrast.
+private final class ClipTableRowView: NSTableRowView {
+    override var interiorBackgroundStyle: NSView.BackgroundStyle { .normal }
+
+    override func drawSelection(in dirtyRect: NSRect) {
+        guard isSelected else { return }
+        let rect = bounds.insetBy(dx: 6, dy: 2)
+        let path = NSBezierPath(roundedRect: rect, xRadius: 9, yRadius: 9)
+        NSColor.brandAccent.withAlphaComponent(isEmphasized ? 0.20 : 0.13).setFill()
+        path.fill()
+    }
 }
 
 private extension Array {

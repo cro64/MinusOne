@@ -23,6 +23,9 @@ final class PracticeSplitViewController: NSSplitViewController {
         self.sidebarItem = sidebarItem
 
         let detailItem = NSSplitViewItem(viewController: detail)
+        // The deck's control bar needs 632pt (`WindowSizingTests`); without a floor here, dragging
+        // the sidebar to its 360 maximum in a small window would starve it.
+        detailItem.minimumThickness = 632
 
         super.init(nibName: nil, bundle: nil)
 
