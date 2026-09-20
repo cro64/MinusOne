@@ -61,11 +61,14 @@ final class LiveWaveformView: NSView {
         // time, so the fraction is permanently 1 and the wash covers the whole view — a flat pink
         // field that says nothing. Barely noticeable in a 68pt popover box; at page scale it's the
         // largest thing on screen.
+        var nowFraction: CGFloat?
         if let autoStopSeconds, autoStopSeconds > 0 {
-            let progressFraction = min(1, elapsedSeconds / windowSeconds)
-            let progressRect = NSRect(x: 0, y: 0, width: bounds.width * progressFraction, height: bounds.height)
+            let fraction = min(1, CGFloat(elapsedSeconds / windowSeconds))
+            nowFraction = fraction
+            let progressRect = NSRect(x: 0, y: 0, width: bounds.width * fraction, height: bounds.height)
             NSColor.systemRed.withAlphaComponent(0.06).setFill()
             progressRect.fill()
+            drawFutureZone(fromFraction: fraction)
         }
 
         drawWaveformLine()
@@ -73,7 +76,79 @@ final class LiveWaveformView: NSView {
         if let autoStopSeconds {
             let x = bounds.width * CGFloat(autoStopSeconds / windowSeconds)
             drawMarker(atX: x)
+            if isDraggingMarker {
+                if let nowFraction { drawRuler(fromFraction: nowFraction) }
+                drawDragTooltip(atX: x, seconds: autoStopSeconds)
+            }
         }
+    }
+
+    /// The auto-stop marker sets a *time*, not a position on visible content — the audio past "now"
+    /// hasn't been captured yet, so there is nothing to preview there. An earlier version of this
+    /// view drew the same waveform line across the whole width regardless of how much had actually
+    /// recorded, which quietly implied you could see, and drag to, content that doesn't exist.
+    /// Marking the boundary and leaving everything past it blank keeps the marker honest: precise
+    /// about the number, upfront that it isn't a scrub position.
+    private func drawFutureZone(fromFraction fraction: CGFloat) {
+        let x = bounds.width * fraction
+        guard x < bounds.width else { return }
+        NSColor.labelColor.withAlphaComponent(0.03).setFill()
+        NSRect(x: x, y: 0, width: bounds.width - x, height: bounds.height).fill()
+
+        NSColor.secondaryLabelColor.setStroke()
+        let now = NSBezierPath()
+        now.lineWidth = 1.5
+        now.move(to: NSPoint(x: x, y: 0))
+        now.line(to: NSPoint(x: x, y: bounds.height))
+        now.stroke()
+    }
+
+    /// Second ticks along the future zone's floor, shown only while actively dragging the marker —
+    /// the rest of the time they'd be one more thing competing with the waveform for attention.
+    /// Major ticks every 10s give a reference a bare pixel-drag on a multi-minute view can't: without
+    /// them, every pixel of drag is several seconds and landing on an exact count-in is guesswork.
+    private func drawRuler(fromFraction startFraction: CGFloat) {
+        guard windowSeconds > 0 else { return }
+        let startSecond = Int((Double(startFraction) * windowSeconds).rounded(.up))
+        let endSecond = Int(windowSeconds)
+        guard endSecond > startSecond else { return }
+
+        let attributes: [NSAttributedString.Key: Any] = [
+            .font: NSFont.systemFont(ofSize: 9),
+            .foregroundColor: NSColor.secondaryLabelColor
+        ]
+        for second in stride(from: startSecond, through: endSecond, by: 1) {
+            let isMajor = second % 10 == 0
+            let x = bounds.width * CGFloat(Double(second) / windowSeconds)
+            let tickHeight: CGFloat = isMajor ? 10 : 5
+            NSColor.tertiaryLabelColor.setFill()
+            NSRect(x: x, y: bounds.height - tickHeight, width: 1, height: tickHeight).fill()
+            if isMajor {
+                Double(second).formattedAsDuration
+                    .draw(at: NSPoint(x: x + 3, y: bounds.height - tickHeight - 11), withAttributes: attributes)
+            }
+        }
+    }
+
+    /// Live readout that follows the marker while it's being dragged, snapped to the second — the
+    /// number you're about to release on, not just "wherever the pixel landed."
+    private func drawDragTooltip(atX x: CGFloat, seconds: Double) {
+        let text = seconds.formattedAsDuration
+        let attributes: [NSAttributedString.Key: Any] = [
+            .font: NSFont.monospacedDigitSystemFont(ofSize: 11, weight: .semibold),
+            .foregroundColor: NSColor.white
+        ]
+        let textSize = (text as NSString).size(withAttributes: attributes)
+        let bubbleSize = NSSize(width: textSize.width + 12, height: textSize.height + 6)
+        let bubbleX = min(max(x - bubbleSize.width / 2, 0), bounds.width - bubbleSize.width)
+        let bubbleRect = NSRect(x: bubbleX, y: 4, width: bubbleSize.width, height: bubbleSize.height)
+
+        NSColor.brandAccentDeep.setFill()
+        NSBezierPath(roundedRect: bubbleRect, xRadius: 5, yRadius: 5).fill()
+        text.draw(
+            at: NSPoint(x: bubbleRect.midX - textSize.width / 2, y: bubbleRect.midY - textSize.height / 2),
+            withAttributes: attributes
+        )
     }
 
     /// Two mirrored polylines around the vertical midline.

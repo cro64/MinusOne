@@ -9,32 +9,37 @@ import AppKit
 /// one nor subscribes to it: `MainWindowController` pushes `updateProgress`/`recordingStateChanged`
 /// in. That keeps the recorder's single-assignment callbacks claimed in exactly one place, and
 /// means the page can be entered, left and re-entered mid-recording without stealing them.
+///
+/// Composed as a single centered "stage" rather than a settings-style grid of bordered cards: the
+/// source picker is one dropdown chip (not an "Input source" card — a row of pills would've broken
+/// down past two or three devices), auto-stop is one compact toggle+time chip, and start/stop share
+/// one circular transport control instead of a wide rectangular CTA that becomes a different button
+/// once recording starts.
 @available(macOS 14.2, *)
 final class RecordPageViewController: NSViewController {
-    /// Width of the page's primary actions. Full-bleed would mean a ~930pt-wide button; this is
-    /// wide enough to read as the page's main CTA without becoming a banner.
-    private static let actionWidth: CGFloat = 260
+    /// Diameter of the circular transport control — the one button that means "start" idle and
+    /// "stop" while recording, so both states read as the same control rather than two.
+    private static let transportDiameter: CGFloat = 88
 
     private let recorder: ClipRecorder
     private let preferences: Preferences
     private let onFinished: (URL) -> Void
 
     // Idle state
-    private let modeTag = StatusTagView(text: "NOT RECORDING", color: .systemRed)
+    private let sourceChipButton = FlatButton(title: "", kind: .secondary)
     private let sourceDot = DotView(color: .secondaryLabelColor)
-    private let sourcePopUp = NSPopUpButton(frame: .zero, pullsDown: false)
     private let sourceStatusLabel = NSTextField(labelWithString: "")
     /// The dot + status line, kept as a property so the whole row can be hidden. It carries only
     /// problems (a denied mic, a failed start), so most of the time there is nothing to show.
     private var sourceStatusRow: NSView?
-    /// Input devices in the order they were put into `sourcePopUp`, so a selected index maps back
-    /// to a device without parsing the menu item's title.
+    /// Input devices in the order they're offered in the source menu, so a selected item maps back
+    /// to a device without parsing its title.
     private var sourceDevices: [AudioDevice] = []
     private let settingsButton = FlatButton(title: "Open System Settings…", kind: .secondary)
     private let autoStopToggle = ToggleSwitchView()
     private let minutesField = RecordPageViewController.makeTimeField()
     private let secondsField = RecordPageViewController.makeTimeField()
-    private let armButton = FlatButton(title: "●  Start recording", kind: .primary)
+    private let armButton = FlatButton(title: "", kind: .primary)
     private let idleTitleLabel = NSTextField(labelWithString: "Record system audio")
     private let idleSubtitleLabel = NSTextField(labelWithString: "")
 
@@ -44,7 +49,7 @@ final class RecordPageViewController: NSViewController {
     private let liveWaveform = LiveWaveformView()
     private let elapsedMetaLabel = NSTextField(labelWithString: "elapsed 0:00")
     private let targetMetaLabel = NSTextField(labelWithString: "auto-stop off")
-    private let stopButton = FlatButton(title: "■  Stop now", kind: .secondary)
+    private let stopButton = FlatButton(title: "", kind: .primary)
 
     /// The two states are built once and swapped through this container, rather than being kept as
     /// hidden siblings the way the popover did it. At popover scale a hidden sibling cost nothing;
@@ -79,7 +84,7 @@ final class RecordPageViewController: NSViewController {
 
         // Same breakable width preference the Live tab carries, for the same measured reason: AppKit
         // refits the window to the installed content's intrinsic width, and without this the page's
-        // own content (a 260pt button and a card of small labels) collapses the window.
+        // own content (a centered column of small controls) collapses the window.
         preferredSize(root.widthAnchor, 980).isActive = true
 
         refreshState(recording: recorder.isRecording)
@@ -135,120 +140,162 @@ final class RecordPageViewController: NSViewController {
     private func idleView() -> NSView {
         if let cachedIdleView { return cachedIdleView }
 
+        sourceChipButton.target = self
+        sourceChipButton.action = #selector(sourceChipClicked)
+        sourceChipButton.cornerStyle = .capsule
+        sourceChipButton.pointSize = 11
+        sourceChipButton.heightAnchor.constraint(equalToConstant: 26).isActive = true
+
         idleTitleLabel.font = .systemFont(ofSize: 22, weight: .black)
         idleTitleLabel.textColor = .labelColor
+        idleTitleLabel.alignment = .center
         idleSubtitleLabel.font = .systemFont(ofSize: 13)
         idleSubtitleLabel.textColor = .secondaryLabelColor
-
+        idleSubtitleLabel.alignment = .center
         let titles = Layout.verticalStack([idleTitleLabel, idleSubtitleLabel], spacing: 4)
-        let header = Layout.horizontalStack([titles, Layout.flexibleSpacer(), modeTag], spacing: 8)
+        titles.alignment = .centerX
 
         armButton.target = self
         armButton.action = #selector(armClicked)
-        armButton.constrainSize(width: Self.actionWidth, height: 44)
+        armButton.cornerStyle = .capsule
+        armButton.imagePosition = .imageOnly
+        armButton.imageScaling = .scaleProportionallyDown
+        armButton.setIcon("circle.fill", pointSize: 26, label: "Start recording")
+        armButton.constrainSize(width: Self.transportDiameter, height: Self.transportDiameter)
 
-        let heroBody = Layout.verticalStack([header, armButton], spacing: WindowUI.Metrics.sectionSpacing)
-        heroBody.setCustomSpacing(WindowUI.Metrics.padding, after: header)
-        header.widthAnchor.constraint(equalTo: heroBody.widthAnchor).isActive = true
-        let heroCard = WindowUI.card(content: heroBody)
-
-        // Same grid as the Live tab: a hero that absorbs the window's slack, and two equal cards
-        // beneath it. The first cut of this page stacked full-width rows instead, which is the
-        // popover's own layout at 3× the width — a 900pt-wide "Input source" bar with its label and
-        // its status dot at opposite ends of the window, and 250pt of dead space below everything.
-        let bottomCards = [sourceCard(), WindowUI.card(title: "Auto-stop", rows: autoStopRows())]
-        let bottomRow = NSStackView(views: bottomCards)
-        bottomRow.orientation = .horizontal
-        bottomRow.alignment = .top
-        bottomRow.distribution = .fill
-        bottomRow.spacing = WindowUI.Metrics.cardSpacing
-        bottomRow.translatesAutoresizingMaskIntoConstraints = false
-        bottomRow.setContentHuggingPriority(.defaultHigh, for: .vertical)
-        // Explicit equal width/height rather than `.fillEqually` — see the same constraint in
-        // `LiveTabViewController`, where the distribution measurably lost to intrinsic widths.
-        if let first = bottomCards.first {
-            for card in bottomCards.dropFirst() {
-                card.widthAnchor.constraint(equalTo: first.widthAnchor).isActive = true
-                card.heightAnchor.constraint(equalTo: first.heightAnchor).isActive = true
-            }
-        }
-
-        let content = Layout.verticalStack([heroCard, bottomRow], spacing: WindowUI.Metrics.cardSpacing)
-        NSLayoutConstraint.activate([
-            heroCard.widthAnchor.constraint(equalTo: content.widthAnchor),
-            bottomRow.widthAnchor.constraint(equalTo: content.widthAnchor)
-        ])
-
-        // Centered rather than stretched. There genuinely isn't a window's worth of content in
-        // "press this to start" — stretching the hero to fill 640pt leaves a ~250pt hole between
-        // the title and the CTA, which reads as a layout accident. A short composition centered in
-        // the page reads as deliberate. The recording state, which has a waveform worth the space,
-        // does fill.
-        let wrapper = AutoLayoutView()
-        wrapper.addSubview(content)
-        NSLayoutConstraint.activate([
-            content.leadingAnchor.constraint(equalTo: wrapper.leadingAnchor),
-            content.trailingAnchor.constraint(equalTo: wrapper.trailingAnchor),
-            content.centerYAnchor.constraint(equalTo: wrapper.centerYAnchor),
-            content.topAnchor.constraint(greaterThanOrEqualTo: wrapper.topAnchor)
-        ])
-
-        updateIdleCopy()
-        cachedIdleView = wrapper
-        return wrapper
-    }
-
-    private func sourceCard() -> NSView {
         sourceDot.constrainSize(width: 7, height: 7)
-        sourceStatusLabel.font = .systemFont(ofSize: NSFont.systemFontSize)
+        sourceStatusLabel.font = .systemFont(ofSize: 11)
         sourceStatusLabel.textColor = .secondaryLabelColor
+        sourceStatusLabel.alignment = .center
         sourceStatusLabel.lineBreakMode = .byWordWrapping
         sourceStatusLabel.maximumNumberOfLines = 2
-
-        WindowUI.configurePopUp(sourcePopUp)
-        sourcePopUp.target = self
-        sourcePopUp.action = #selector(sourceChanged)
-        reloadSourceMenu()
 
         settingsButton.target = self
         settingsButton.action = #selector(openSettingsClicked)
         settingsButton.isHidden = true
 
-        let status = Layout.horizontalStack([sourceDot, sourceStatusLabel, Layout.flexibleSpacer()], spacing: 8)
-        sourceStatusRow = status
-        return WindowUI.card(title: "Input source", rows: [sourcePopUp, status, settingsButton])
+        let statusRow = Layout.horizontalStack([sourceDot, sourceStatusLabel], spacing: 6)
+        sourceStatusRow = statusRow
+
+        let content = Layout.verticalStack(
+            [sourceChipButton, titles, armButton, autoStopChipRow(), statusRow, settingsButton],
+            spacing: WindowUI.Metrics.sectionSpacing
+        )
+        content.alignment = .centerX
+        content.setCustomSpacing(6, after: statusRow)
+
+        // Centered rather than stretched. There genuinely isn't a window's worth of content in
+        // "press this to start" — stretching it to fill 900pt would leave dead space between the
+        // title and the button. The recording state, which has a waveform worth the space, does
+        // fill instead (see `recordingView()`).
+        let wrapper = AutoLayoutView()
+        wrapper.addSubview(content)
+        NSLayoutConstraint.activate([
+            content.centerXAnchor.constraint(equalTo: wrapper.centerXAnchor),
+            content.centerYAnchor.constraint(equalTo: wrapper.centerYAnchor),
+            content.topAnchor.constraint(greaterThanOrEqualTo: wrapper.topAnchor),
+            content.leadingAnchor.constraint(greaterThanOrEqualTo: wrapper.leadingAnchor, constant: 20),
+            content.trailingAnchor.constraint(lessThanOrEqualTo: wrapper.trailingAnchor, constant: -20)
+        ])
+
+        reloadSourceMenu()
+        updateIdleCopy()
+        cachedIdleView = wrapper
+        return wrapper
     }
 
-    /// Rebuilds the picker from the devices present *now*. Called on every appearance rather than
+    /// One capsule row: a label, the toggle, and the minute/second fields it governs — replacing
+    /// what used to be a full "Auto-stop" card. Worth a sentence, not a quarter of the page.
+    private func autoStopChipRow() -> NSView {
+        let label = NSTextField(labelWithString: "Auto-stop")
+        label.font = .systemFont(ofSize: 11, weight: .medium)
+        label.textColor = .secondaryLabelColor
+
+        autoStopToggle.translatesAutoresizingMaskIntoConstraints = false
+        autoStopToggle.onToggle = { [weak self] isOn in self?.autoStopToggleChanged(isOn) }
+
+        let colon = NSTextField(labelWithString: ":")
+        colon.font = .monospacedDigitSystemFont(ofSize: 12, weight: .regular)
+        colon.textColor = .secondaryLabelColor
+
+        minutesField.target = self
+        minutesField.action = #selector(timeFieldChanged)
+        secondsField.target = self
+        secondsField.action = #selector(timeFieldChanged)
+
+        let inner = Layout.horizontalStack([label, autoStopToggle, minutesField, colon, secondsField], spacing: 8)
+        inner.translatesAutoresizingMaskIntoConstraints = false
+
+        let chip = ThemedView(fill: .clear, stroke: .flatDivider)
+        chip.layer?.borderWidth = 1
+        chip.heightAnchor.constraint(equalToConstant: 34).isActive = true
+        chip.layer?.cornerRadius = 17
+        chip.addSubview(inner)
+        Layout.pin(inner, to: chip, insets: NSEdgeInsets(top: 6, left: 14, bottom: 6, right: 14))
+        return chip
+    }
+
+    /// Rebuilds the device list from what's present *now*. Called on every appearance rather than
     /// once at build time, because mics get plugged in and unplugged while the app is running and a
     /// stale menu would offer a device that no longer exists.
     private func reloadSourceMenu() {
         sourceDevices = CoreAudioDevices.inputDevices()
-        sourcePopUp.removeAllItems()
-        sourcePopUp.addItem(withTitle: "System audio")
-        for device in sourceDevices {
-            sourcePopUp.addItem(withTitle: device.name)
+        if case .inputDevice(let uid) = preferences.recordingSource, !sourceDevices.contains(where: { $0.uid == uid }) {
+            // The saved device is gone. Fall back to system audio rather than leaving a selection
+            // pointing at nothing — and persist it, so the next launch doesn't resurrect a device
+            // that isn't there.
+            preferences.recordingSource = .systemAudio
         }
-
-        let selected = preferences.recordingSource
-        var index = 0
-        if case .inputDevice(let uid) = selected {
-            if let position = sourceDevices.firstIndex(where: { $0.uid == uid }) {
-                index = position + 1
-            } else {
-                // The saved device is gone. Fall back to system audio rather than leaving a
-                // selection pointing at nothing — and persist it, so the next launch doesn't
-                // resurrect a device that isn't there.
-                preferences.recordingSource = .systemAudio
-            }
-        }
-        sourcePopUp.selectItem(at: index)
+        updateSourceChipTitle()
         updateSourceStatus()
     }
 
+    private func updateSourceChipTitle() {
+        sourceChipButton.title = "\(preferences.recordingSource.displayName)  ⌄"
+    }
+
+    /// A single dropdown chip rather than a row of pills or a boxed "Input source" card — a pill for
+    /// every device stops scaling past two or three, and several audio interfaces or mics plugged in
+    /// at once is a real case, not an edge case.
+    @objc private func sourceChipClicked() {
+        let menu = NSMenu()
+        let current = preferences.recordingSource
+
+        let systemItem = NSMenuItem(title: "System audio", action: #selector(sourceMenuItemSelected(_:)), keyEquivalent: "")
+        systemItem.target = self
+        systemItem.state = current.isMicrophone ? .off : .on
+        menu.addItem(systemItem)
+
+        if !sourceDevices.isEmpty {
+            menu.addItem(.separator())
+            for device in sourceDevices {
+                let item = NSMenuItem(title: device.name, action: #selector(sourceMenuItemSelected(_:)), keyEquivalent: "")
+                item.target = self
+                item.representedObject = device.uid
+                if case .inputDevice(let uid) = current, uid == device.uid {
+                    item.state = .on
+                }
+                menu.addItem(item)
+            }
+        }
+
+        menu.popUp(positioning: nil, at: NSPoint(x: 0, y: sourceChipButton.bounds.height + 4), in: sourceChipButton)
+    }
+
+    @objc private func sourceMenuItemSelected(_ sender: NSMenuItem) {
+        if let uid = sender.representedObject as? String {
+            preferences.recordingSource = .inputDevice(uid: uid)
+        } else {
+            preferences.recordingSource = .systemAudio
+        }
+        updateSourceChipTitle()
+        updateSourceStatus()
+        updateIdleCopy()
+    }
+
     /// Shows what is *wrong* with the current selection, and nothing at all when nothing is. The
-    /// picker's own item titles already say what each source is; restating "records whatever your
-    /// Mac is playing" under a menu that says "System audio" is a definition nobody asked for.
+    /// chip's own title already says what source is picked; restating "records whatever your Mac is
+    /// playing" under a title that says "System audio" is a definition nobody asked for.
     ///
     /// Deliberately not a permission *check* — macOS only reports microphone authorization once
     /// asked, and prompting on mere selection would be a prompt the user didn't ask for. The real
@@ -269,17 +316,6 @@ final class RecordPageViewController: NSViewController {
         settingsButton.isHidden = false
     }
 
-    @objc private func sourceChanged() {
-        let index = sourcePopUp.indexOfSelectedItem
-        if index <= 0 {
-            preferences.recordingSource = .systemAudio
-        } else if sourceDevices.indices.contains(index - 1) {
-            preferences.recordingSource = .inputDevice(uid: sourceDevices[index - 1].uid)
-        }
-        updateSourceStatus()
-        updateIdleCopy()
-    }
-
     /// Keeps the hero's title/subtitle honest about the selected source — "Record system audio"
     /// over a mic selection would be plainly wrong.
     private func updateIdleCopy() {
@@ -294,64 +330,40 @@ final class RecordPageViewController: NSViewController {
         }
     }
 
-    private func autoStopRows() -> [NSView] {
-        let timerLabel = NSTextField(labelWithString: "Stop automatically")
-        timerLabel.font = .systemFont(ofSize: NSFont.systemFontSize)
-        timerLabel.textColor = .labelColor
-        let timerSub = NSTextField(labelWithString: "Recording stops and processing begins on its own.")
-        timerSub.font = .systemFont(ofSize: 11)
-        timerSub.textColor = .secondaryLabelColor
-        let timerTitles = Layout.verticalStack([timerLabel, timerSub], spacing: 2)
-
-        autoStopToggle.translatesAutoresizingMaskIntoConstraints = false
-        autoStopToggle.onToggle = { [weak self] isOn in self?.autoStopToggleChanged(isOn) }
-        let toggleRow = Layout.horizontalStack([timerTitles, Layout.flexibleSpacer(), autoStopToggle], spacing: 8)
-
-        let colon = NSTextField(labelWithString: ":")
-        colon.font = .monospacedDigitSystemFont(ofSize: 14, weight: .regular)
-        colon.textColor = .secondaryLabelColor
-        let unit = NSTextField(labelWithString: "min : sec")
-        unit.font = .systemFont(ofSize: 11)
-        unit.textColor = .secondaryLabelColor
-        minutesField.target = self
-        minutesField.action = #selector(timeFieldChanged)
-        secondsField.target = self
-        secondsField.action = #selector(timeFieldChanged)
-        let timeRow = Layout.horizontalStack(
-            [minutesField, colon, secondsField, unit, Layout.flexibleSpacer()],
-            spacing: 8
-        )
-
-        return [toggleRow, timeRow]
-    }
-
     // MARK: - Recording state UI
 
     private func recordingView() -> NSView {
         if let cachedRecordingView { return cachedRecordingView }
 
-        recDot.constrainSize(width: 10, height: 10)
+        recDot.constrainSize(width: 8, height: 8)
         recDot.startPulsing()
         let recLabel = NSTextField(labelWithString: "RECORDING")
-        recLabel.font = .systemFont(ofSize: 13, weight: .semibold)
+        recLabel.font = .systemFont(ofSize: 11, weight: .bold)
         recLabel.textColor = .brandAccentDeep
-        let recIndicator = Layout.horizontalStack([recDot, recLabel], spacing: 8)
+        let recIndicator = Layout.horizontalStack([recDot, recLabel], spacing: 6)
 
-        // 44pt where the popover used 20: at page scale this is the one number you glance at from
-        // across the room, the same role the Live tab gives its status header.
-        elapsedLabel.font = .monospacedDigitSystemFont(ofSize: 44, weight: .medium)
+        // 52pt where the popover used 20 and the first page pass used 44: at page scale, with the
+        // settings cards gone, this is the one number you glance at from across the room.
+        elapsedLabel.font = .monospacedDigitSystemFont(ofSize: 52, weight: .bold)
         elapsedLabel.textColor = .labelColor
-
-        let recHead = Layout.horizontalStack([recIndicator, Layout.flexibleSpacer(), elapsedLabel], spacing: 8)
+        elapsedLabel.alignment = .center
 
         liveWaveform.translatesAutoresizingMaskIntoConstraints = false
         liveWaveform.heightAnchor.constraint(greaterThanOrEqualToConstant: 180).isActive = true
-        // Near-zero vertical hugging so the waveform, not empty card padding, takes the window's
-        // slack — the trick `LiveTabViewController` uses for its level meter.
+        // Near-zero vertical hugging so the waveform, not empty space below the button, takes the
+        // window's slack — the trick `LiveTabViewController` uses for its level meter.
         liveWaveform.setContentHuggingPriority(.init(1), for: .vertical)
         liveWaveform.onDragAutoStop = { [weak self] seconds in
             self?.setAutoStop(seconds: seconds)
         }
+
+        stopButton.target = self
+        stopButton.action = #selector(stopClicked)
+        stopButton.cornerStyle = .capsule
+        stopButton.imagePosition = .imageOnly
+        stopButton.imageScaling = .scaleProportionallyDown
+        stopButton.setIcon("square.fill", pointSize: 22, label: "Stop recording")
+        stopButton.constrainSize(width: Self.transportDiameter, height: Self.transportDiameter)
 
         elapsedMetaLabel.font = .monospacedDigitSystemFont(ofSize: 11, weight: .regular)
         elapsedMetaLabel.textColor = .secondaryLabelColor
@@ -359,19 +371,20 @@ final class RecordPageViewController: NSViewController {
         targetMetaLabel.textColor = .brandAccentDeep
         let metaRow = Layout.horizontalStack([elapsedMetaLabel, Layout.flexibleSpacer(), targetMetaLabel], spacing: 8)
 
-        let heroBody = Layout.verticalStack([recHead, liveWaveform, metaRow], spacing: WindowUI.Metrics.rowSpacing)
-        for row in [recHead, liveWaveform, metaRow] as [NSView] {
-            row.widthAnchor.constraint(equalTo: heroBody.widthAnchor).isActive = true
-        }
-        let heroCard = WindowUI.card(content: heroBody)
-        heroCard.setContentHuggingPriority(.init(1), for: .vertical)
+        let content = Layout.verticalStack(
+            [recIndicator, elapsedLabel, liveWaveform, metaRow, stopButton],
+            spacing: WindowUI.Metrics.rowSpacing
+        )
+        content.alignment = .centerX
+        content.setCustomSpacing(WindowUI.Metrics.sectionSpacing, after: elapsedLabel)
+        content.setCustomSpacing(WindowUI.Metrics.rowSpacing, after: liveWaveform)
+        content.setCustomSpacing(WindowUI.Metrics.sectionSpacing, after: metaRow)
 
-        stopButton.target = self
-        stopButton.action = #selector(stopClicked)
-        stopButton.constrainSize(width: Self.actionWidth, height: 40)
-
-        let content = Layout.verticalStack([heroCard, stopButton], spacing: WindowUI.Metrics.cardSpacing)
-        heroCard.widthAnchor.constraint(equalTo: content.widthAnchor).isActive = true
+        // `.centerX`-aligned stacks size arranged views to their own intrinsic width; the waveform
+        // and its meta row need the page's full width instead, matched to whatever width the pinned
+        // `content` ends up with.
+        liveWaveform.widthAnchor.constraint(equalTo: content.widthAnchor).isActive = true
+        metaRow.widthAnchor.constraint(equalTo: content.widthAnchor).isActive = true
 
         cachedRecordingView = content
         return content
@@ -565,45 +578,5 @@ final class DotView: NSView {
         animation.repeatCount = .infinity
         animation.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
         layer?.add(animation, forKey: "pulse")
-    }
-}
-
-/// Small bordered status pill — the "Not recording" mode tag. Flat (zero corner radius) to match
-/// the rest of the window's chrome instead of `RecordingTheme`'s retired rounded-pill look.
-final class StatusTagView: NSTextField {
-    private let tagColor: NSColor
-
-    init(text: String, color: NSColor) {
-        tagColor = color
-        super.init(frame: .zero)
-        stringValue = text
-        isEditable = false
-        isBordered = false
-        drawsBackground = false
-        alignment = .center
-        font = .systemFont(ofSize: 10, weight: .semibold)
-        textColor = color
-        wantsLayer = true
-        layer?.borderWidth = 1
-        translatesAutoresizingMaskIntoConstraints = false
-        applyBorderColor()
-    }
-
-    @available(*, unavailable)
-    required init?(coder: NSCoder) {
-        fatalError("init(coder:) has not been implemented")
-    }
-
-    /// `textColor` holds the `NSColor` and re-resolves itself; the border is a frozen `CGColor` in
-    /// a layer and doesn't.
-    override func viewDidChangeEffectiveAppearance() {
-        super.viewDidChangeEffectiveAppearance()
-        applyBorderColor()
-    }
-
-    private func applyBorderColor() {
-        resolvingEffectiveAppearance {
-            layer?.borderColor = tagColor.withAlphaComponent(0.4).cgColor
-        }
     }
 }
