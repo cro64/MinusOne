@@ -60,7 +60,11 @@ final class OfflineSeparationEngine {
         let model = try loadModelIfNeeded()
         let modelSampleRate = model.modelSampleRate
         let windowSampleCount = max(1, Int((model.preferredWindowSeconds * modelSampleRate).rounded()))
-        let hop = max(1, windowSampleCount / 2)
+        // 75%, not 50%: fewer overlapping inference calls (1.5x fewer than a 50% hop) for less
+        // redundant compute, while still leaving a wide enough crossfade region for the Hann-window
+        // overlap-add below to hide seams. Below ~50% the two windows barely overlap and boundary
+        // artifacts start to show; above ~85% the crossfade gets too thin to smooth a bad window.
+        let hop = max(1, windowSampleCount * 3 / 4)
 
         let (left, right) = try Self.decodeToModelFormat(sourceURL: sourceURL, sampleRate: modelSampleRate)
         let totalSamples = left.count
