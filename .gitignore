@@ -18,6 +18,9 @@ DerivedData/
 # Editor
 .vscode/
 
+# Python
+__pycache__/
+
 # Local task tracking
 TASKS.md
 
