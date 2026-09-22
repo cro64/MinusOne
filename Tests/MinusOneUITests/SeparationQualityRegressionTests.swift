@@ -4,16 +4,14 @@ import XCTest
 @testable import MinusOne
 
 /// Drives `OfflineSeparationEngine` directly against synthetic, perfectly-isolated stems and
-/// scores the result with SI-SDR (scale-invariant signal-to-distortion ratio) — the same metric
-/// family Demucs's own paper and the MUSDB18 leaderboard report, ported from
-/// `Scripts/evaluate_separation.py` so this runs in-process with no Python invocation and no app
+/// scores the result with SI-SDR via `SeparationQualityHarness` — no Python invocation, no app
 /// launch: `swift test --filter SeparationQualityRegressionTests` is the whole loop.
 ///
 /// This is a fast smoke test against synthetic tones/noise, not a substitute for scoring against
-/// real music — see `Scripts/make_synthetic_mix.py` + `evaluate_separation.py` for a MUSDB18-based
-/// deep pass. What this guards against is a pipeline change (windowing, hop, resampling,
-/// normalization) silently breaking reconstruction, which synthetic signals catch just as well as
-/// real ones and without a multi-GB dataset dependency.
+/// real music — see `SeparationQualityBenchmarkTests` (real MUSDB18 tracks via
+/// `Scripts/fetch_musdb18.py`) for the deep pass. What this guards against is a pipeline change
+/// (windowing, hop, resampling, normalization) silently breaking reconstruction, which synthetic
+/// signals catch just as well as real ones and without a multi-GB dataset dependency.
 final class SeparationQualityRegressionTests: XCTestCase {
     private var root: URL!
     private var libraryStore: ClipLibraryStore!
@@ -55,43 +53,19 @@ final class SeparationQualityRegressionTests: XCTestCase {
         libraryStore.add(clip)
 
         let engine = OfflineSeparationEngine(libraryStore: libraryStore)
-        let expectation = expectation(description: "offline separation completes")
-        var finished: PracticeClip?
-        var failure: Error?
-
-        engine.process(
-            clip: clip,
-            sourceURL: mixURL,
-            onUpdate: { updated in
-                if updated.isFullyProcessed {
-                    finished = updated
-                    expectation.fulfill()
-                }
-            },
-            onFailure: { _, error in
-                failure = error
-                expectation.fulfill()
-            }
-        )
-
         // CPU-bound CoreML inference over ~18s of audio across several windows — generous but
         // bounded, so a genuine hang (not just "slow machine") still fails instead of blocking CI.
-        wait(for: [expectation], timeout: 300)
-
-        if let failure {
-            XCTFail("Separation failed: \(failure.localizedDescription)")
-            return
-        }
-        let updated = try XCTUnwrap(finished, "onUpdate never reported completion")
+        let updated = try SeparationQualityHarness.runSeparation(
+            engine: engine, clip: clip, sourceURL: mixURL, timeout: 300
+        )
 
         var scores: [SeparationStem: Double] = [:]
         for stem in SeparationStem.allCases {
             let fileName = try XCTUnwrap(updated.stemFileNames[stem.rawValue], "\(stem.rawValue) never wrote a file")
             let url = libraryStore.stemFileURL(clipID: clip.id, fileName: fileName)
-            let estimate = try Self.readStereo(url)
+            let estimate = try SeparationQualityHarness.readStereo(url)
             let reference = references[stem]!
-            let score = Self.siSDR(reference: reference, estimate: estimate)
-            scores[stem] = score
+            scores[stem] = SeparationQualityHarness.siSDR(reference: reference, estimate: estimate)
         }
 
         let report = scores.map { "\($0.key.rawValue)=\(String(format: "%.2f", $0.value))dB" }.joined(separator: ", ")
@@ -173,75 +147,6 @@ final class SeparationQualityRegressionTests: XCTestCase {
             vDSP_vsmul(right, 1, &scale, &right, 1, vDSP_Length(count))
         }
 
-        try writeStereo(left: left, right: right, to: url, sampleRate: sampleRate)
-    }
-
-    private static func writeStereo(left: [Float], right: [Float], to url: URL, sampleRate: Double) throws {
-        let format = try XCTUnwrap(AVAudioFormat(
-            commonFormat: .pcmFormatFloat32,
-            sampleRate: sampleRate,
-            channels: 2,
-            interleaved: false
-        ))
-        let file = try AVAudioFile(forWriting: url, settings: format.settings)
-        let frameCount = AVAudioFrameCount(left.count)
-        let buffer = try XCTUnwrap(AVAudioPCMBuffer(pcmFormat: format, frameCapacity: frameCount))
-        buffer.frameLength = frameCount
-        left.withUnsafeBufferPointer { buffer.floatChannelData![0].update(from: $0.baseAddress!, count: left.count) }
-        right.withUnsafeBufferPointer { buffer.floatChannelData![1].update(from: $0.baseAddress!, count: right.count) }
-        try file.write(from: buffer)
-    }
-
-    private static func readStereo(_ url: URL) throws -> (left: [Float], right: [Float]) {
-        let file = try AVAudioFile(forReading: url)
-        let buffer = try XCTUnwrap(AVAudioPCMBuffer(pcmFormat: file.processingFormat, frameCapacity: AVAudioFrameCount(file.length)))
-        try file.read(into: buffer)
-        let count = Int(buffer.frameLength)
-        let channelCount = Int(buffer.format.channelCount)
-        let left = Array(UnsafeBufferPointer(start: buffer.floatChannelData![0], count: count))
-        let right = channelCount > 1
-            ? Array(UnsafeBufferPointer(start: buffer.floatChannelData![1], count: count))
-            : left
-        return (left, right)
-    }
-
-    // MARK: - SI-SDR
-
-    /// Same formula as `Scripts/evaluate_separation.py`'s `si_sdr` — kept in lockstep intentionally
-    /// so the fast in-process check and the deep MUSDB18 pass report comparable numbers.
-    private static func siSDR(
-        reference: (left: [Float], right: [Float]),
-        estimate: (left: [Float], right: [Float]),
-        eps: Float = 1e-10
-    ) -> Double {
-        let n = min(reference.left.count, estimate.left.count)
-        var ref = [Float](repeating: 0, count: n * 2)
-        var est = [Float](repeating: 0, count: n * 2)
-        ref.replaceSubrange(0..<n, with: reference.left.prefix(n))
-        ref.replaceSubrange(n..<(2 * n), with: reference.right.prefix(n))
-        est.replaceSubrange(0..<n, with: estimate.left.prefix(n))
-        est.replaceSubrange(n..<(2 * n), with: estimate.right.prefix(n))
-
-        var refEnergy: Float = 0
-        vDSP_dotpr(ref, 1, ref, 1, &refEnergy, vDSP_Length(ref.count))
-        refEnergy += eps
-
-        var crossTerm: Float = 0
-        vDSP_dotpr(est, 1, ref, 1, &crossTerm, vDSP_Length(ref.count))
-        let alpha = crossTerm / refEnergy
-
-        var projection = ref
-        var alphaVar = alpha
-        vDSP_vsmul(ref, 1, &alphaVar, &projection, 1, vDSP_Length(ref.count))
-
-        var noise = [Float](repeating: 0, count: ref.count)
-        vDSP_vsub(projection, 1, est, 1, &noise, 1, vDSP_Length(ref.count))
-
-        var projectionEnergy: Float = 0
-        vDSP_dotpr(projection, 1, projection, 1, &projectionEnergy, vDSP_Length(ref.count))
-        var noiseEnergy: Float = 0
-        vDSP_dotpr(noise, 1, noise, 1, &noiseEnergy, vDSP_Length(ref.count))
-
-        return 10 * log10(Double(projectionEnergy + eps) / Double(noiseEnergy + eps))
+        try SeparationQualityHarness.writeStereo(left: left, right: right, to: url, sampleRate: sampleRate)
     }
 }

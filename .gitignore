@@ -21,6 +21,9 @@ DerivedData/
 # Python
 __pycache__/
 
+# MUSDB18 (Scripts/fetch_musdb18.py) — CC-BY-NC-SA licensed dataset, never belongs in git
+.musdb18/
+
 # Local task tracking
 TASKS.md
 
