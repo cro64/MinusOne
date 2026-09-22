@@ -4,11 +4,15 @@ import Accelerate
 /// Drives full-quality, non-realtime 4-stem separation over an entire clip using proper
 /// Hann-window overlap-add (unlike the live path's causal hop-splice crossfade).
 ///
-/// Processes one clip at a time on a serial background queue. As each analysis window's
-/// contribution to the output becomes final (no later window can still touch it), that newly
-/// finalized prefix is normalized, written to the stem files on disk, and reported via `onUpdate`
-/// — this is what lets the deck start playback on the first few seconds while the rest of the
-/// clip keeps processing in the background.
+/// Processes one clip at a time on a serial background queue. Within a clip, CoreML inference for
+/// several windows runs concurrently (one model instance per window, see `loadModelPool`), but
+/// everything downstream of inference — accumulating into the output buffers, normalizing, writing
+/// to disk, and reporting progress — stays strictly serial and in original window order, so this
+/// produces the same output the fully-serial version did. As each analysis window's contribution
+/// to the output becomes final (no later window can still touch it), that newly finalized prefix
+/// is normalized, written to the stem files on disk, and reported via `onUpdate` — this is what
+/// lets the deck start playback on the first few seconds while the rest of the clip keeps
+/// processing in the background.
 final class OfflineSeparationEngine {
     enum SeparationError: Error, LocalizedError {
         case silentAudio
@@ -24,7 +28,7 @@ final class OfflineSeparationEngine {
 
     private let queue = DispatchQueue(label: "com.minusone.app.practice-offline-separation", qos: .utility)
     private let libraryStore: ClipLibraryStore
-    private var cachedModel: AudioSeparationModel?
+    private var modelPool: [AudioSeparationModel] = []
 
     init(libraryStore: ClipLibraryStore) {
         self.libraryStore = libraryStore
@@ -57,7 +61,8 @@ final class OfflineSeparationEngine {
         sourceURL: URL,
         onUpdate: @escaping (PracticeClip) -> Void
     ) throws {
-        let model = try loadModelIfNeeded()
+        let pool = try loadModelPool(size: Self.desiredConcurrency())
+        let model = pool[0]
         let modelSampleRate = model.modelSampleRate
         let windowSampleCount = max(1, Int((model.preferredWindowSeconds * modelSampleRate).rounded()))
         // 75%, not 50%: fewer overlapping inference calls (1.5x fewer than a 50% hop) for less
@@ -134,95 +139,137 @@ final class OfflineSeparationEngine {
         var flushedFrames = 0
         var windowStart = 0
 
+        // Windows within a batch (up to `pool.count` of them, one model instance per slot) run
+        // their CoreML calls concurrently via `concurrentPerform` — the actual parallelism.
+        // Everything after that (accumulate into `outputs`/`weight`, normalize, write to disk,
+        // `onUpdate`) stays a strictly serial loop over the batch in original window order, exactly
+        // as it was before batching existed. That's deliberate: it means this produces the same
+        // output, in the same order, via the same math as the old fully-serial loop — only *when*
+        // each window's CoreML compute happens is different, not the result.
         while windowStart < totalSamples {
-            let copyCount = min(windowSampleCount, totalSamples - windowStart)
-            var winLeft = [Float](repeating: 0, count: windowSampleCount)
-            var winRight = [Float](repeating: 0, count: windowSampleCount)
-            winLeft.withUnsafeMutableBufferPointer { dst in
-                left.withUnsafeBufferPointer { src in
-                    dst.baseAddress!.update(from: src.baseAddress! + windowStart, count: copyCount)
-                }
-            }
-            winRight.withUnsafeMutableBufferPointer { dst in
-                right.withUnsafeBufferPointer { src in
-                    dst.baseAddress!.update(from: src.baseAddress! + windowStart, count: copyCount)
-                }
+            var batchStarts: [Int] = []
+            var cursor = windowStart
+            while batchStarts.count < pool.count, cursor < totalSamples {
+                batchStarts.append(cursor)
+                cursor += hop
             }
 
-            let stems = try winLeft.withUnsafeBufferPointer { leftPtr -> [SeparationStem: StemChannels] in
-                try winRight.withUnsafeBufferPointer { rightPtr in
-                    try model.separateAllStems(
-                        left: leftPtr.baseAddress!,
-                        right: rightPtr.baseAddress!,
-                        frameCount: windowSampleCount,
-                        sampleRate: modelSampleRate
-                    )
-                }
-            }
-
-            let usableCount = min(windowSampleCount, totalSamples - windowStart)
-            for (stem, channels) in stems {
-                outputs[stem]!.left.withUnsafeMutableBufferPointer { out in
-                    channels.left.withUnsafeBufferPointer { src in
-                        for i in 0..<usableCount {
-                            out[windowStart + i] += src[i] * hann[i]
+            var batchResults = [Result<[SeparationStem: StemChannels], Error>?](repeating: nil, count: batchStarts.count)
+            batchResults.withUnsafeMutableBufferPointer { results in
+                DispatchQueue.concurrentPerform(iterations: batchStarts.count) { slot in
+                    let start = batchStarts[slot]
+                    let copyCount = min(windowSampleCount, totalSamples - start)
+                    var winLeft = [Float](repeating: 0, count: windowSampleCount)
+                    var winRight = [Float](repeating: 0, count: windowSampleCount)
+                    winLeft.withUnsafeMutableBufferPointer { dst in
+                        left.withUnsafeBufferPointer { src in
+                            dst.baseAddress!.update(from: src.baseAddress! + start, count: copyCount)
                         }
                     }
-                }
-                outputs[stem]!.right.withUnsafeMutableBufferPointer { out in
-                    channels.right.withUnsafeBufferPointer { src in
-                        for i in 0..<usableCount {
-                            out[windowStart + i] += src[i] * hann[i]
+                    winRight.withUnsafeMutableBufferPointer { dst in
+                        right.withUnsafeBufferPointer { src in
+                            dst.baseAddress!.update(from: src.baseAddress! + start, count: copyCount)
                         }
                     }
-                }
-            }
-            weight.withUnsafeMutableBufferPointer { out in
-                for i in 0..<usableCount {
-                    out[windowStart + i] += hann[i]
-                }
-            }
 
-            windowStart += hop
-            let finalizedEnd = min(totalSamples, windowStart)
-
-            if finalizedEnd > flushedFrames {
-                let range = flushedFrames..<finalizedEnd
-                for stem in SeparationStem.allCases {
-                    Self.normalize(&outputs[stem]!.left, weight: weight, range: range)
-                    Self.normalize(&outputs[stem]!.right, weight: weight, range: range)
-                    try Self.appendChunk(
-                        writer: writers[stem]!,
-                        format: targetFormat,
-                        left: outputs[stem]!.left,
-                        right: outputs[stem]!.right,
-                        range: range
-                    )
-
-                    // Never fatal: a missing sidecar is regenerable by `PeakSidecarMigrator.backfill`,
-                    // which Phase 2 will invoke when a clip is opened, whereas a thrown error here
-                    // would abandon the separation itself.
                     do {
-                        try peakWriters[stem]?.append(
-                            Self.monoDownmix(left: outputs[stem]!.left, right: outputs[stem]!.right, range: range)
-                        )
+                        // `pool[slot]`, not a shared `model` — each CoreMLSeparationModel instance
+                        // owns one mutable input buffer, so two windows sharing an instance across
+                        // threads would race on it and corrupt output. Disjoint slots, disjoint
+                        // instances, no shared mutable state between concurrent tasks.
+                        let stems = try winLeft.withUnsafeBufferPointer { leftPtr -> [SeparationStem: StemChannels] in
+                            try winRight.withUnsafeBufferPointer { rightPtr in
+                                try pool[slot].separateAllStems(
+                                    left: leftPtr.baseAddress!,
+                                    right: rightPtr.baseAddress!,
+                                    frameCount: windowSampleCount,
+                                    sampleRate: modelSampleRate
+                                )
+                            }
+                        }
+                        results[slot] = .success(stems)
                     } catch {
-                        AppLogger.shared.warning("Peak append failed for \(stem.rawValue): \(error.localizedDescription)")
+                        results[slot] = .failure(error)
                     }
                 }
-                flushedFrames = finalizedEnd
-
-                workingClip.readyDurationSeconds = Double(flushedFrames) / modelSampleRate
-                workingClip.stemFileNames = fileNames
-                workingClip.peakFileNames = peakFileNames
-                // Spec §6: the user can set a tempo or drag the downbeat at any point during
-                // separation. `workingClip` is a snapshot from before separation began, so without
-                // this it would silently overwrite that edit — and leave `isBeatGridUserSet` false,
-                // letting the final `detectBeatGrid` call below clobber it again.
-                workingClip = withCurrentBeatGrid(workingClip)
-                libraryStore.updateExisting(workingClip)
-                onUpdate(workingClip)
             }
+
+            for (slot, start) in batchStarts.enumerated() {
+                let stems: [SeparationStem: StemChannels]
+                switch batchResults[slot] {
+                case .success(let value):
+                    stems = value
+                case .failure(let error):
+                    throw error
+                case .none:
+                    continue // concurrentPerform covers every slot; unreachable in practice.
+                }
+
+                let usableCount = min(windowSampleCount, totalSamples - start)
+                for (stem, channels) in stems {
+                    outputs[stem]!.left.withUnsafeMutableBufferPointer { out in
+                        channels.left.withUnsafeBufferPointer { src in
+                            for i in 0..<usableCount {
+                                out[start + i] += src[i] * hann[i]
+                            }
+                        }
+                    }
+                    outputs[stem]!.right.withUnsafeMutableBufferPointer { out in
+                        channels.right.withUnsafeBufferPointer { src in
+                            for i in 0..<usableCount {
+                                out[start + i] += src[i] * hann[i]
+                            }
+                        }
+                    }
+                }
+                weight.withUnsafeMutableBufferPointer { out in
+                    for i in 0..<usableCount {
+                        out[start + i] += hann[i]
+                    }
+                }
+
+                let finalizedEnd = min(totalSamples, start + hop)
+
+                if finalizedEnd > flushedFrames {
+                    let range = flushedFrames..<finalizedEnd
+                    for stem in SeparationStem.allCases {
+                        Self.normalize(&outputs[stem]!.left, weight: weight, range: range)
+                        Self.normalize(&outputs[stem]!.right, weight: weight, range: range)
+                        try Self.appendChunk(
+                            writer: writers[stem]!,
+                            format: targetFormat,
+                            left: outputs[stem]!.left,
+                            right: outputs[stem]!.right,
+                            range: range
+                        )
+
+                        // Never fatal: a missing sidecar is regenerable by `PeakSidecarMigrator.backfill`,
+                        // which Phase 2 will invoke when a clip is opened, whereas a thrown error here
+                        // would abandon the separation itself.
+                        do {
+                            try peakWriters[stem]?.append(
+                                Self.monoDownmix(left: outputs[stem]!.left, right: outputs[stem]!.right, range: range)
+                            )
+                        } catch {
+                            AppLogger.shared.warning("Peak append failed for \(stem.rawValue): \(error.localizedDescription)")
+                        }
+                    }
+                    flushedFrames = finalizedEnd
+
+                    workingClip.readyDurationSeconds = Double(flushedFrames) / modelSampleRate
+                    workingClip.stemFileNames = fileNames
+                    workingClip.peakFileNames = peakFileNames
+                    // Spec §6: the user can set a tempo or drag the downbeat at any point during
+                    // separation. `workingClip` is a snapshot from before separation began, so without
+                    // this it would silently overwrite that edit — and leave `isBeatGridUserSet` false,
+                    // letting the final `detectBeatGrid` call below clobber it again.
+                    workingClip = withCurrentBeatGrid(workingClip)
+                    libraryStore.updateExisting(workingClip)
+                    onUpdate(workingClip)
+                }
+            }
+
+            windowStart = cursor
         }
 
         for (stem, writer) in peakWriters {
@@ -298,11 +345,44 @@ final class OfflineSeparationEngine {
         }
     }
 
-    private func loadModelIfNeeded() throws -> AudioSeparationModel {
-        if let cachedModel { return cachedModel }
-        let model = try SeparationModelFactory.loadModel(variant: .balanced, captureSampleRate: 44_100)
-        cachedModel = model
-        return model
+    /// One `CoreMLSeparationModel` instance per concurrent slot: each instance owns its own input
+    /// buffer and scratch pointers (`CoreMLSeparationModel`'s `inputArray`, `modelLeftScratch`,
+    /// `modelRightScratch`), so it is NOT safe for two windows to call into one shared instance
+    /// concurrently — that's what actually makes the batched loop above safe, not a lock or queue.
+    /// Cached and reused across separations for this engine's lifetime, same as the single cached
+    /// model before pooling existed.
+    ///
+    /// Grows to `size` lazily and settles for fewer if a later instance fails to load (memory
+    /// pressure from a second ~200MB model is the realistic failure mode) rather than failing the
+    /// whole separation over a concurrency nice-to-have — but the first instance failing is fatal,
+    /// exactly as before pooling existed.
+    private func loadModelPool(size: Int) throws -> [AudioSeparationModel] {
+        if modelPool.isEmpty {
+            modelPool.append(try SeparationModelFactory.loadModel(variant: .balanced, captureSampleRate: 44_100))
+        }
+        while modelPool.count < size {
+            guard let extra = try? SeparationModelFactory.loadModel(variant: .balanced, captureSampleRate: 44_100) else {
+                break
+            }
+            modelPool.append(extra)
+        }
+        return modelPool
+    }
+
+    /// Concurrent CoreML instances, not CPU threads: any win comes from CoreML/ANE overlapping
+    /// work across instances, or CPU-side pre/post-processing (window copy, stem extraction,
+    /// resampling) for one window overlapping another's compute — not from more CPU cores. So this
+    /// is deliberately small and NOT tied to `ProcessInfo.activeProcessorCount`. Each extra
+    /// instance costs a full extra model load in memory, and the Neural Engine is shared hardware
+    /// that may simply serialize concurrent submissions rather than overlap them — this needs
+    /// measuring on real hardware, not assumed. Override with
+    /// MINUSONE_OFFLINE_INFERENCE_CONCURRENCY=<n> to test other values before changing the default.
+    private static func desiredConcurrency() -> Int {
+        if let raw = ProcessInfo.processInfo.environment["MINUSONE_OFFLINE_INFERENCE_CONCURRENCY"],
+           let value = Int(raw), value > 0 {
+            return value
+        }
+        return 2
     }
 
     // MARK: - Decoding
